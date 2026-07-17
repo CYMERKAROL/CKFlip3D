@@ -1,0 +1,38 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.DiagnosticsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Runtime status">
+                <StackPanel x:Name="RuntimeRows"/>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Display environment">
+                <StackPanel x:Name="DisplayRows"/>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Configuration">
+                <StackPanel x:Name="ConfigRows"/>
+            </HeaderedContentControl>
+
+            <Grid Margin="0,2,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="CopyFeedback" VerticalAlignment="Center" Opacity="0"
+                           FontFamily="Segoe UI" FontSize="12" FontStyle="Italic"
+                           Foreground="{DynamicResource AccentBrush}" Text="Copied to clipboard."/>
+                <Button Grid.Column="1" Style="{StaticResource AeroButton}" Margin="0,0,8,0"
+                        Content="Refresh" Click="Refresh_Click"/>
+                <Button Grid.Column="2" Style="{StaticResource AccentButton}"
+                        Content="Copy diagnostics" Click="Copy_Click"/>
+            </Grid>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

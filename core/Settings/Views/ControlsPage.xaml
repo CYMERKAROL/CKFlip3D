@@ -1,0 +1,107 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.ControlsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Hotkeys">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Activation hotkey"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="The combination that opens the 3D cascade — keyboard keys, mouse buttons or both. With a held modifier (Ctrl/Shift/Alt/Win), releasing it commits the selection; single-key bindings toggle instead (Enter commits, Esc cancels). Click to record a new combination."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" x:Name="HotkeyButton" Style="{StaticResource AeroButton}"
+                                VerticalAlignment="Center" MinWidth="120"
+                                Click="ChangeHotkey_Click">
+                            <TextBlock Style="{StaticResource MonoValueText}"
+                                       Text="{Binding ActivationHotkey}"/>
+                        </Button>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Ignore in fullscreen applications"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="When a fullscreen app (game, video, presentation) is in the foreground, Win + Tab is passed through to Windows instead of opening the cascade — nothing gets blocked."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding IgnoreFullscreen}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Ignored applications"/>
+                            <TextBlock x:Name="IgnoredSummary" Style="{StaticResource SettingHintText}"
+                                       Text="Win + Tab is passed through to Windows while any of these programs is in the foreground."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Manage list…" Click="ManageIgnored_Click"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Navigation">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Mouse wheel cycling"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Scroll the wheel to flip through the cascade."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding MouseWheelCycle}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Arrow keys navigation"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Arrow keys cycle windows while the cascade is open."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding KeyboardNav}"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Defaults">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Restore the default trigger behaviour and clear the ignore list."/>
+                    <Button Grid.Column="1" Style="{StaticResource AeroButton}"
+                            Content="Restore default bindings" Click="RestoreDefaults_Click"/>
+                </Grid>
+            </HeaderedContentControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

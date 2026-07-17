@@ -1,0 +1,471 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:v="clr-namespace:CKFlip3D.Settings.Views">
+
+    <!-- ====================================================================
+         Sidebar navigation, back orb and caption (min/max/close) buttons.
+         Nav items use the attached v:NavBehavior.IsPressed flag — the page
+         switch is committed on MouseUp (see MainWindow), so the pressed
+         visual must be drivable independently of selection.
+         ==================================================================== -->
+
+    <!-- NavIconBrush is theme-provided (Theme/Themes/*.xaml). -->
+
+    <!-- Sidebar list -->
+    <Style x:Key="NavListBox" TargetType="ListBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="KeyboardNavigation.TabNavigation" Value="Cycle"/>
+        <Setter Property="ItemContainerStyle">
+            <Setter.Value>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="Margin" Value="8,1.5"/>
+                    <Setter Property="Cursor" Value="Hand"/>
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <Grid>
+                                    <!-- hover layer: top-lit glass (Vista start-menu reference) -->
+                                    <Border x:Name="Hover" CornerRadius="4" Opacity="0"
+                                            Background="{DynamicResource NavHoverBrush}"
+                                            BorderBrush="#30FFFFFF" BorderThickness="1">
+                                        <Grid>
+                                            <!-- top-half sheen -->
+                                            <Border CornerRadius="3.5,3.5,0,0" VerticalAlignment="Top"
+                                                    Height="15" Margin="1,1,1,0"
+                                                    Background="{DynamicResource ControlSheenBrush}" Opacity="0.5"/>
+                                            <!-- bright lip -->
+                                            <Border CornerRadius="3.5" BorderThickness="1"
+                                                    BorderBrush="{DynamicResource ControlGlassLipBrush}"/>
+                                        </Grid>
+                                    </Border>
+                                    <!-- pressed layer: glass depresses, surface darkens -->
+                                    <Border x:Name="Pressed" CornerRadius="4" Opacity="0"
+                                            Background="#33060B12"
+                                            BorderBrush="#2A000000" BorderThickness="1"/>
+                                    <!-- soft glow behind the active pill -->
+                                    <Border x:Name="ActiveGlow" CornerRadius="6" Margin="-2" Opacity="0"
+                                            Background="#1E63C6FF"/>
+                                    <!-- active layer: raised glass capsule -->
+                                    <Border x:Name="Active" CornerRadius="4" Opacity="0"
+                                            Background="{DynamicResource NavActiveBrush}"
+                                            BorderBrush="{DynamicResource NavActiveBorderBrush}" BorderThickness="1">
+                                        <Grid>
+                                            <Border CornerRadius="3,3,0,0" VerticalAlignment="Top"
+                                                    Height="14" Margin="1,1,1,0"
+                                                    Background="{DynamicResource ControlSheenBrush}" Opacity="0.45"/>
+                                            <Border CornerRadius="3" BorderThickness="1" BorderBrush="#2EFFFFFF"/>
+                                        </Grid>
+                                    </Border>
+                                    <!-- left accent bar for the active item -->
+                                    <Rectangle x:Name="AccentBar" Width="3" RadiusX="1.5" RadiusY="1.5"
+                                               HorizontalAlignment="Left" Margin="2,6"
+                                               Fill="{DynamicResource AccentBrush}" Opacity="0"/>
+                                    <ContentPresenter Margin="12,7,10,7">
+                                        <ContentPresenter.RenderTransform>
+                                            <TranslateTransform x:Name="NavContentShift" Y="0"/>
+                                        </ContentPresenter.RenderTransform>
+                                    </ContentPresenter>
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <MultiTrigger>
+                                        <MultiTrigger.Conditions>
+                                            <Condition Property="IsMouseOver" Value="True"/>
+                                            <Condition Property="IsSelected" Value="False"/>
+                                        </MultiTrigger.Conditions>
+                                        <MultiTrigger.EnterActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity"
+                                                                     To="1" Duration="0:0:0.13"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </MultiTrigger.EnterActions>
+                                        <MultiTrigger.ExitActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity"
+                                                                     To="0" Duration="0:0:0.25"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </MultiTrigger.ExitActions>
+                                    </MultiTrigger>
+                                    <Trigger Property="v:NavBehavior.IsPressed" Value="True">
+                                        <Trigger.EnterActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="Pressed" Storyboard.TargetProperty="Opacity"
+                                                                     To="1" Duration="0:0:0.06"/>
+                                                    <DoubleAnimation Storyboard.TargetName="NavContentShift" Storyboard.TargetProperty="Y"
+                                                                     To="1" Duration="0:0:0.06"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.EnterActions>
+                                        <Trigger.ExitActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="Pressed" Storyboard.TargetProperty="Opacity"
+                                                                     To="0" Duration="0:0:0.12"/>
+                                                    <DoubleAnimation Storyboard.TargetName="NavContentShift" Storyboard.TargetProperty="Y"
+                                                                     To="0" Duration="0:0:0.12"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.ExitActions>
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Trigger.EnterActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity"
+                                                                     To="1" Duration="0:0:0.15"/>
+                                                    <DoubleAnimation Storyboard.TargetName="ActiveGlow" Storyboard.TargetProperty="Opacity"
+                                                                     To="1" Duration="0:0:0.2"/>
+                                                    <DoubleAnimation Storyboard.TargetName="AccentBar" Storyboard.TargetProperty="Opacity"
+                                                                     To="1" Duration="0:0:0.15"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.EnterActions>
+                                        <Trigger.ExitActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="Active" Storyboard.TargetProperty="Opacity"
+                                                                     To="0" Duration="0:0:0.20"/>
+                                                    <DoubleAnimation Storyboard.TargetName="ActiveGlow" Storyboard.TargetProperty="Opacity"
+                                                                     To="0" Duration="0:0:0.20"/>
+                                                    <DoubleAnimation Storyboard.TargetName="AccentBar" Storyboard.TargetProperty="Opacity"
+                                                                     To="0" Duration="0:0:0.20"/>
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.ExitActions>
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter Property="Opacity" Value="0.38"/>
+                                        <Setter Property="Cursor" Value="Arrow"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="NavItemText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextOnGlassBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Margin" Value="10,0,0,0"/>
+    </Style>
+
+    <!-- Back orb: round blue glass button, inspired by (not copied from) the
+         Windows 7 explorer back button. Drawn entirely with gradients. -->
+    <Style x:Key="BackOrbButton" TargetType="Button">
+        <Setter Property="Width" Value="30"/>
+        <Setter Property="Height" Value="30"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Ellipse x:Name="Glow" Margin="-3" Opacity="0">
+                            <Ellipse.Fill>
+                                <RadialGradientBrush>
+                                    <GradientStop Color="#8063C6FF" Offset="0.55"/>
+                                    <GradientStop Color="#0063C6FF" Offset="1"/>
+                                </RadialGradientBrush>
+                            </Ellipse.Fill>
+                        </Ellipse>
+                        <Grid x:Name="OrbBody" RenderTransformOrigin="0.5,0.5">
+                            <Grid.RenderTransform>
+                                <ScaleTransform x:Name="OrbScale" ScaleX="1" ScaleY="1"/>
+                            </Grid.RenderTransform>
+                            <Ellipse x:Name="Body" Stroke="#FF1D5380" StrokeThickness="1">
+                                <Ellipse.Fill>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#FF7CC0EE" Offset="0"/>
+                                        <GradientStop Color="#FF3D8BC9" Offset="0.5"/>
+                                        <GradientStop Color="#FF2470AE" Offset="0.51"/>
+                                        <GradientStop Color="#FF3F90CE" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <!-- top glass reflection -->
+                            <Ellipse x:Name="OrbSheen" Margin="4,2.5,4,16">
+                                <Ellipse.Fill>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#C8FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#20FFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <!-- arrow -->
+                            <Path HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Data="M5.5,0 L0,5 L5.5,10 M0.5,5 H12"
+                                  Stroke="White" StrokeThickness="2"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                        </Grid>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.15"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.25"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <!-- orb sinks and its highlight dims -->
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="OrbScale" Storyboard.TargetProperty="ScaleX"
+                                                         To="0.93" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="OrbScale" Storyboard.TargetProperty="ScaleY"
+                                                         To="0.93" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="OrbSheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.35" Duration="0:0:0.06"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="OrbScale" Storyboard.TargetProperty="ScaleX"
+                                                         To="1" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="OrbScale" Storyboard.TargetProperty="ScaleY"
+                                                         To="1" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="OrbSheen" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Caption buttons (procedural glyphs, Aero-like glass hover).
+         Slightly larger cluster per the v2 aesthetic plan: 34x22, close 46x22. -->
+    <Style x:Key="CaptionButton" TargetType="Button">
+        <Setter Property="Width" Value="34"/>
+        <Setter Property="Height" Value="22"/>
+        <Setter Property="Foreground" Value="{DynamicResource CaptionGlyphBrush}"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid Background="Transparent">
+                        <!-- subtle aero halo hugging the button edge -->
+                        <Border x:Name="Glow" Margin="-4,-2,-4,-5" Opacity="0" CornerRadius="6">
+                            <Border.Background>
+                                <RadialGradientBrush RadiusX="0.62" RadiusY="0.8">
+                                    <GradientStop Color="#5C63C6FF" Offset="0.25"/>
+                                    <GradientStop Color="#2A63C6FF" Offset="0.6"/>
+                                    <GradientStop Color="#0063C6FF" Offset="1"/>
+                                </RadialGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <Border x:Name="HoverBg" CornerRadius="0" Opacity="0"
+                                BorderBrush="#66BFE2FF" BorderThickness="1,0,1,1">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#88FFFFFF" Offset="0"/>
+                                    <GradientStop Color="#4493C2E8" Offset="0.5"/>
+                                    <GradientStop Color="#6671A8D8" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <!-- pressed: darker glass, gradient shifted down, inner top shadow -->
+                        <Border x:Name="PressedBg" CornerRadius="0" Opacity="0"
+                                BorderBrush="#50A9CCE8" BorderThickness="1,0,1,1">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#553A5870" Offset="0"/>
+                                    <GradientStop Color="#704A6E92" Offset="0.6"/>
+                                    <GradientStop Color="#7E5F90BC" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Border Height="3" VerticalAlignment="Top" Background="#28000000"/>
+                        </Border>
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <ContentPresenter.RenderTransform>
+                                <TranslateTransform x:Name="GlyphShift" Y="0"/>
+                            </ContentPresenter.RenderTransform>
+                        </ContentPresenter>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Foreground" Value="White"/>
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverBg" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.13"/>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.13"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverBg" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.21"/>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.21"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <!-- PressedBg sits ABOVE HoverBg, so the hover layer is
+                             never animated here — animating the same property
+                             from two triggers left a held storyboard that
+                             permanently hid the hover filament after a
+                             press-and-drag-off (restart-persistent bug). -->
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedBg" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.05"/>
+                                        <DoubleAnimation Storyboard.TargetName="GlyphShift" Storyboard.TargetProperty="Y"
+                                                         To="1" Duration="0:0:0.05"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedBg" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="GlyphShift" Storyboard.TargetProperty="Y"
+                                                         To="0" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="CaptionCloseButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+        <Setter Property="Width" Value="46"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid Background="Transparent">
+                        <!-- subtle red halo hugging the close button edge -->
+                        <Border x:Name="Glow" Margin="-5,-2,-5,-6" Opacity="0" CornerRadius="8">
+                            <Border.Background>
+                                <RadialGradientBrush RadiusX="0.62" RadiusY="0.8">
+                                    <GradientStop Color="#70FF5A40" Offset="0.25"/>
+                                    <GradientStop Color="#34FF5A40" Offset="0.6"/>
+                                    <GradientStop Color="#00FF5A40" Offset="1"/>
+                                </RadialGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <Border x:Name="HoverBg" Opacity="0" CornerRadius="0,0,0,4"
+                                BorderBrush="#80FFB8A8" BorderThickness="1,0,1,1">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#FFF2A09A" Offset="0"/>
+                                    <GradientStop Color="#FFD9534A" Offset="0.45"/>
+                                    <GradientStop Color="#FFB52E24" Offset="0.55"/>
+                                    <GradientStop Color="#FFD96A55" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <!-- pressed: dark inner red, stronger top shadow, less reflection -->
+                        <Border x:Name="PressedBg" Opacity="0" CornerRadius="0,0,0,4"
+                                BorderBrush="#70D98C7A" BorderThickness="1,0,1,1">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#FF8E2C24" Offset="0"/>
+                                    <GradientStop Color="#FF7E1F18" Offset="0.5"/>
+                                    <GradientStop Color="#FFA03A2C" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Border Height="4" VerticalAlignment="Top" Background="#38000000"/>
+                        </Border>
+                        <ContentPresenter x:Name="Glyph" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <ContentPresenter.RenderTransform>
+                                <TranslateTransform x:Name="GlyphShift" Y="0"/>
+                            </ContentPresenter.RenderTransform>
+                        </ContentPresenter>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverBg" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.13"/>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.13"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="HoverBg" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.21"/>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.21"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <!-- HoverBg is intentionally NOT animated here (see
+                             CaptionButton note — held-storyboard conflict). -->
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Foreground" Value="White"/>
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedBg" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.05"/>
+                                        <DoubleAnimation Storyboard.TargetName="GlyphShift" Storyboard.TargetProperty="Y"
+                                                         To="1" Duration="0:0:0.05"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedBg" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="GlyphShift" Storyboard.TargetProperty="Y"
+                                                         To="0" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

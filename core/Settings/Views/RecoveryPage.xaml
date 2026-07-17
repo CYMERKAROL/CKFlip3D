@@ -1,0 +1,123 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.RecoveryPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Emergency actions">
+                <StackPanel>
+                    <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Use these if CKFlip3D ever leaves the desktop in a bad state (cloaked windows, hidden taskbars). They act immediately, without Apply, and work even when the core process is dead."/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Panic Restore"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="One-click desktop repair: uncloaks every window, restores all taskbars and the desktop icons."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource DangerButton}" VerticalAlignment="Center"
+                                Content="Panic Restore" Tag="panic" Click="RecoveryAction_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Force quit CKFlip3D"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Terminates the core process immediately, then repairs the desktop state."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource DangerButton}" VerticalAlignment="Center"
+                                Content="Force quit" Tag="forcequit" Click="RecoveryAction_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Force uncloak all windows"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Clears the DWM cloak flag on every top-level window."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Uncloak windows" Tag="uncloak" Click="RecoveryAction_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Restore taskbars"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Re-shows the primary and all secondary taskbars."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Restore taskbars" Tag="taskbars" Click="RecoveryAction_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Restore desktop icons"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Re-shows desktop icons if a flip hid them."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Restore icons" Tag="icons" Click="RecoveryAction_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Safe Mode launch"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Restarts CKFlip3D with --safe-mode: animations and motion blur forced off, regardless of config."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Launch Safe Mode" Tag="safemode" Click="RecoveryAction_Click"/>
+                    </Grid>
+
+                    <TextBlock x:Name="ActionStatus" Margin="0,14,0,0" Opacity="0" TextWrapping="Wrap"
+                               FontFamily="Segoe UI" FontSize="12" FontStyle="Italic"
+                               Foreground="{DynamicResource AccentBrush}"/>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Reset">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="200"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="0,0,20,0">
+                        <TextBlock Style="{StaticResource SettingLabelText}" Text="Reset configuration to defaults"/>
+                        <TextBlock Style="{StaticResource SettingHintText}"
+                                   Text="Restores every setting to its factory value and saves config.json."/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Style="{StaticResource DangerButton}" VerticalAlignment="Center"
+                            Content="Reset config…" Click="ResetConfig_Click"/>
+                </Grid>
+            </HeaderedContentControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

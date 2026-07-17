@@ -1,0 +1,37 @@
+<UserControl x:Class="CKFlip3D.Installer.Views.ProgressPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="36,24,36,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TitleBlock" Grid.Row="0" FontSize="21" FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextPrimaryBrush}"/>
+
+        <StackPanel Grid.Row="1" VerticalAlignment="Center">
+            <Grid>
+                <TextBlock x:Name="StatusBlock" FontSize="14"
+                           Foreground="{DynamicResource TextPrimaryBrush}" Text="Preparing…"/>
+                <TextBlock x:Name="PercentBlock" FontSize="14" FontWeight="SemiBold"
+                           HorizontalAlignment="Right"
+                           Foreground="{DynamicResource AccentLightBrush}" Text="0%"/>
+            </Grid>
+            <ProgressBar x:Name="Bar" Style="{StaticResource AeroProgressBar}"
+                         Height="8" Margin="0,12,0,0"/>
+            <TextBlock x:Name="DetailBlock" FontSize="12" Margin="0,10,0,0"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource TextFaintBrush}"/>
+            <TextBlock FontSize="11.5" Margin="0,26,0,0" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFaintBrush}"
+                       Text="If setup is cancelled or fails, every change made so far is rolled back automatically."/>
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <Button x:Name="BtnCancel" Content="Cancel" Style="{StaticResource DangerButton}"
+                    MinWidth="92" HorizontalAlignment="Right" Click="BtnCancel_Click"/>
+        </Grid>
+    </Grid>
+</UserControl>

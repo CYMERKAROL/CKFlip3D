@@ -1,0 +1,106 @@
+<Window x:Class="CKFlip3D.Installer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CKFlip3D Setup"
+        Width="760" Height="540"
+        WindowStyle="None" ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen"
+        Background="Transparent"
+        FontFamily="Segoe UI"
+        TextOptions.TextRenderingMode="ClearType">
+
+    <Border x:Name="WindowBorder" CornerRadius="8" BorderThickness="1"
+            BorderBrush="{DynamicResource WindowOuterBorderBrush}"
+            Background="{DynamicResource WindowGlassBrush}">
+        <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+            <Grid.RenderTransform>
+                <ScaleTransform x:Name="RootScale"/>
+            </Grid.RenderTransform>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- ================= Title bar ================= -->
+            <Grid Grid.Row="0" Background="Transparent"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Image x:Name="TitleIcon"
+                           Source="pack://application:,,,/Assets/CKFlip3D.Setup.png"
+                           Width="20" Height="20" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock x:Name="TitleText" Text="CKFlip3D Setup" Margin="10,0,0,0"
+                               VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TitleTextBrush}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center" Margin="0,0,8,0">
+                    <Button Style="{StaticResource CaptionButton}" Content="&#xE921;"
+                            Click="BtnMinimize_Click"/>
+                    <Button Style="{StaticResource CaptionCloseButton}" Content="&#xE8BB;"
+                            FontFamily="Segoe MDL2 Assets" FontSize="10"
+                            Foreground="{DynamicResource CaptionGlyphBrush}"
+                            Click="BtnClose_Click"/>
+                </StackPanel>
+                <Rectangle Height="1" VerticalAlignment="Bottom"
+                           Fill="{DynamicResource SeparatorBrush}" Opacity="0.7"/>
+            </Grid>
+
+            <!-- ================= Page host ================= -->
+            <Grid Grid.Row="1" ClipToBounds="True">
+                <ContentControl x:Name="PageHost" Focusable="False">
+                    <ContentControl.RenderTransform>
+                        <TranslateTransform x:Name="PageShift"/>
+                    </ContentControl.RenderTransform>
+                </ContentControl>
+            </Grid>
+
+            <!-- ================= Modal layer (update prompt etc.) ================= -->
+            <Grid x:Name="ModalLayer" Grid.Row="0" Grid.RowSpan="3" Visibility="Collapsed"
+                  Background="{DynamicResource ModalOverlayBrush}" Panel.ZIndex="10">
+                <Border MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{DynamicResource CardBrush}" CornerRadius="8"
+                        BorderBrush="{DynamicResource ModalBorderBrush}" BorderThickness="1"
+                        Padding="22,18" RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <ScaleTransform x:Name="ModalScale"/>
+                    </Border.RenderTransform>
+                    <StackPanel>
+                        <TextBlock x:Name="ModalTitle" FontSize="15" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock x:Name="ModalBody" FontSize="12.5" Margin="0,10,0,0"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <StackPanel x:Name="ModalButtons" Orientation="Horizontal"
+                                    HorizontalAlignment="Right" Margin="0,18,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- ================= Status bar (install progress) ================= -->
+            <Border Grid.Row="2" x:Name="StatusBar" Height="0" ClipToBounds="True"
+                    Background="{DynamicResource ApplyBarBrush}" CornerRadius="0,0,8,8">
+                <Grid VerticalAlignment="Bottom" Height="44">
+                    <ProgressBar x:Name="StatusBarProgress" Style="{StaticResource AeroProgressBar}"
+                                 Height="3" VerticalAlignment="Top" Margin="0,0,0,0"/>
+                    <Grid Margin="16,0,16,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="StatusBarText" Grid.Column="0" VerticalAlignment="Center"
+                                   FontSize="12" Foreground="{DynamicResource TextPrimaryBrush}"
+                                   Text="Preparing…"/>
+                        <TextBlock x:Name="StatusBarDetail" Grid.Column="1" VerticalAlignment="Center"
+                                   Margin="10,0,10,0" FontSize="12" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextFaintBrush}"/>
+                        <TextBlock x:Name="StatusBarPercent" Grid.Column="2" VerticalAlignment="Center"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource AccentLightBrush}"/>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

@@ -1,0 +1,386 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.AppearancePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:CKFlip3D.Settings.Views">
+
+    <UserControl.Resources>
+        <v:ScaleConverter x:Key="Scale"/>
+    </UserControl.Resources>
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Visual style">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Application theme"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="The look of this settings window. Switches instantly with a smooth fade."/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" x:Name="ThemeCombo" Style="{StaticResource AeroComboBox}"
+                                  VerticalAlignment="Center" MinWidth="210"
+                                  SelectionChanged="ThemeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Skeuomorphic Dark Mode"/>
+                            <ComboBoxItem Content="Skeuomorphic White Mode"/>
+                            <ComboBoxItem Content="Minimalism Dark Mode"/>
+                            <ComboBoxItem Content="Minimalism White Mode"/>
+                            <ComboBoxItem Content="Glassmorphism"/>
+                        </ComboBox>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Visual preset"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Alternative looks for the 3D switcher."/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
+                                   FontFamily="Segoe UI" FontSize="11" FontStyle="Italic"
+                                   Foreground="{DynamicResource TextFaintBrush}" Text="Coming soon..."/>
+                        <ComboBox Grid.Column="2" Style="{StaticResource AeroComboBox}" IsEnabled="False"
+                                  VerticalAlignment="Center" SelectedIndex="0">
+                            <ComboBoxItem Content="Cascade"/>
+                        </ComboBox>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="220"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Background opacity"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="How strongly the desktop shows behind the cascade — on every monitor. 0% fades to black, 100% keeps it fully visible. 28% is the classic cascade look."/>
+                        </StackPanel>
+                        <DockPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
+                                       Style="{StaticResource MonoValueText}"
+                                       Text="{Binding BackgroundOpacity, StringFormat={}{0}%}"/>
+                            <Slider Style="{StaticResource AeroSlider}" Minimum="0" Maximum="100"
+                                    IsSnapToTickEnabled="True" TickFrequency="1"
+                                    Value="{Binding BackgroundOpacity}" Margin="0,0,10,0"/>
+                        </DockPanel>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="220"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Background blur intensity"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Softens the wallpaper while flipping."/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
+                                   FontFamily="Segoe UI" FontSize="11" FontStyle="Italic"
+                                   Foreground="{DynamicResource TextFaintBrush}" Text="Coming soon..."/>
+                        <DockPanel Grid.Column="2" VerticalAlignment="Center" IsEnabled="False" Opacity="0.45">
+                            <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
+                                       Style="{StaticResource MonoValueText}"
+                                       Text="{Binding BackgroundBlur, StringFormat={}{0}%}"/>
+                            <Slider Style="{StaticResource AeroSlider}" Minimum="0" Maximum="100"
+                                    IsSnapToTickEnabled="True" TickFrequency="5"
+                                    Value="{Binding BackgroundBlur}" Margin="0,0,10,0"/>
+                        </DockPanel>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Rendering">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Antialiasing"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Smooths tile edges with anisotropic filtering. Off switches to raw point sampling."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding Antialiasing}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Motion blur"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Adds a subtle blur while the cascade is in motion."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding MotionBlur}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Animations"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="All cascade motion — cycling, the enter/exit morph and the window-close transition. Off snaps everything instantly. Use Customize to keep only selected animations enabled."/>
+                        </StackPanel>
+                        <!-- Custom per-animation selection: an AeroComboToggle-faced
+                             dropdown (same glass face + popup chrome as AeroComboBox)
+                             holding one AeroToggle row per animation.  Disabled while
+                             the master toggle is off — the master always wins. -->
+                        <Grid Grid.Column="1" Margin="0,0,14,0" VerticalAlignment="Center"
+                              IsEnabled="{Binding Animations}">
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Opacity" Value="0.45"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
+                            <ToggleButton x:Name="AnimCustomizeToggle"
+                                          Style="{StaticResource AeroComboToggle}"
+                                          Width="150" Height="28"
+                                          ClickMode="Press" Focusable="False"/>
+                            <TextBlock Margin="10,0,26,0" VerticalAlignment="Center"
+                                       IsHitTestVisible="False"
+                                       FontFamily="Segoe UI" FontSize="12.5"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       Text="Customize..."/>
+                            <Popup PlacementTarget="{Binding ElementName=AnimCustomizeToggle}"
+                                   Placement="Bottom" AllowsTransparency="True"
+                                   PopupAnimation="Slide" StaysOpen="False"
+                                   IsOpen="{Binding IsChecked, ElementName=AnimCustomizeToggle, Mode=TwoWay}">
+                                <Border Margin="4,2,4,6" CornerRadius="4" Width="312"
+                                        Background="{DynamicResource ComboPopupBrush}"
+                                        BorderBrush="{DynamicResource ComboPopupBorderBrush}"
+                                        BorderThickness="1">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.55"/>
+                                    </Border.Effect>
+                                    <Grid>
+                                        <!-- glass sheet: top sheen, same as the combo popup -->
+                                        <Border Height="12" VerticalAlignment="Top" Margin="1,1,1,0"
+                                                CornerRadius="3,3,0,0"
+                                                Background="{DynamicResource CardHeaderBandBrush}"
+                                                IsHitTestVisible="False"/>
+                                        <StackPanel Margin="14,12,14,12">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Enter / Exit morph"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="Flat ↔ 3D cascade on open and dismiss."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding AnimEntryExit}"/>
+                                            </Grid>
+                                            <Rectangle Style="{StaticResource RowSeparator}"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Cycle animation"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="Tab / Shift-Tab rotation through the stack."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding AnimCycle}"/>
+                                            </Grid>
+                                            <Rectangle Style="{StaticResource RowSeparator}"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Close animation"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="Windows closed while the cascade is open slide out smoothly."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding AnimClose}"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <CheckBox Grid.Column="2" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding Animations}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Enable live preview"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Streams live window contents into the cascade. Off shows static snapshots instead - Lighter on the GPU."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding LivePreview}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="V-Sync Live preview"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Paces live preview updates to your monitor's refresh rate, so every refresh shows a fresh frame."/>
+                            <StackPanel x:Name="VsyncWarning" Orientation="Horizontal"
+                                        Visibility="Collapsed" Margin="0,5,0,0">
+                                <Path Width="13" Height="12" Margin="0,1,7,0" VerticalAlignment="Top"
+                                      Stroke="#FFE8A33D" StrokeThickness="1.3"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Data="M6.5,1.2 L12.2,11 H0.8 Z M6.5,4.8 V7.6 M6.5,9.2 V9.7"/>
+                                <TextBlock FontFamily="Segoe UI" FontSize="11" TextWrapping="Wrap" MaxWidth="430"
+                                           Foreground="#FFE8A33D"
+                                           Text="May reduce performance on high-refresh-rate monitors — the cascade renders once per refresh, which costs more GPU time at 120 Hz and above."/>
+                            </StackPanel>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding VsyncLivePreview}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Taskbar preview"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Shows a taskbar preview inside the cascade. Off simply hides the real taskbar behind the overlay and draws nothing in its place."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding TaskbarPreview}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid IsEnabled="{Binding TaskbarPreview}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Taskbar live preview"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Captures the taskbar live while the cascade is open, instead of a frozen snapshot. On Windows builds with an incompatible taskbar capture, CKFlip3D falls back to the snapshot automatically. Requires Taskbar preview."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding TaskbarLivePreview}"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Preview">
+                <Grid HorizontalAlignment="Left">
+                    <!-- miniature mock of the flip cascade; reacts to the sliders
+                         above.  Layout mirrors the real FlipScene geometry: the
+                         front window sits bottom-right, the stack recedes to the
+                         upper-left while rising, with heavy overlap and the
+                         farthest tiles fading (BuildSlots: x = baseX - spread·dt,
+                         y = baseY + rise·dt, minAlpha 0.88 + far-tile fade). -->
+                    <Border Width="380" Height="170" CornerRadius="5" ClipToBounds="True"
+                            BorderBrush="#FF44617C" BorderThickness="1" Background="#FF05080C">
+                        <Grid>
+                            <!-- fake wallpaper -->
+                            <Border Opacity="{Binding BackgroundOpacity, Converter={StaticResource Scale}, ConverterParameter=0.01}">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#FF1E5A8E" Offset="0"/>
+                                        <GradientStop Color="#FF3E8CC2" Offset="0.45"/>
+                                        <GradientStop Color="#FF77B8DD" Offset="0.75"/>
+                                        <GradientStop Color="#FF2B6E55" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <Border.Effect>
+                                    <BlurEffect Radius="{Binding BackgroundBlur, Converter={StaticResource Scale}, ConverterParameter=0.18}"/>
+                                </Border.Effect>
+                            </Border>
+                            <!-- cascade tiles: back (upper-left, faded) → front (lower-right) -->
+                            <Canvas>
+                                <Border Canvas.Left="6"  Canvas.Top="14" Width="150" Height="84" CornerRadius="1.5"
+                                        Background="#5ECBDDEA" BorderBrush="#7E8FB0C8" BorderThickness="1" Opacity="0.62">
+                                    <Border.RenderTransform>
+                                        <SkewTransform AngleY="-4"/>
+                                    </Border.RenderTransform>
+                                </Border>
+                                <Border Canvas.Left="40" Canvas.Top="20" Width="170" Height="96" CornerRadius="1.5"
+                                        Background="#74D2E2EE" BorderBrush="#9097B6CC" BorderThickness="1" Opacity="0.74">
+                                    <Border.RenderTransform>
+                                        <SkewTransform AngleY="-4"/>
+                                    </Border.RenderTransform>
+                                </Border>
+                                <Border Canvas.Left="80" Canvas.Top="27" Width="192" Height="108" CornerRadius="1.5"
+                                        Background="#8CD9E7F1" BorderBrush="#A89FBDD2" BorderThickness="1" Opacity="0.86">
+                                    <Border.RenderTransform>
+                                        <SkewTransform AngleY="-4"/>
+                                    </Border.RenderTransform>
+                                </Border>
+                                <!-- front window with mock content -->
+                                <Border Canvas.Left="128" Canvas.Top="35" Width="216" Height="122" CornerRadius="1.5"
+                                        BorderBrush="#FF89A8C2" BorderThickness="1">
+                                    <Border.RenderTransform>
+                                        <SkewTransform AngleY="-4"/>
+                                    </Border.RenderTransform>
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#F2F4F9FD" Offset="0"/>
+                                            <GradientStop Color="#E6DCE8F2" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <StackPanel Margin="9,7">
+                                        <Rectangle Height="6" Width="72" HorizontalAlignment="Left" RadiusX="2" RadiusY="2" Fill="#FF7FA3C0"/>
+                                        <Rectangle Height="3" Width="160" HorizontalAlignment="Left" Margin="0,9,0,0" Fill="#FFB9CCDD"/>
+                                        <Rectangle Height="3" Width="138" HorizontalAlignment="Left" Margin="0,5,0,0" Fill="#FFB9CCDD"/>
+                                        <Rectangle Height="3" Width="150" HorizontalAlignment="Left" Margin="0,5,0,0" Fill="#FFB9CCDD"/>
+                                        <Rectangle Height="3" Width="120" HorizontalAlignment="Left" Margin="0,5,0,0" Fill="#FFB9CCDD"/>
+                                    </StackPanel>
+                                </Border>
+                            </Canvas>
+                            <!-- floor reflection sheen -->
+                            <Border VerticalAlignment="Bottom" Height="36" IsHitTestVisible="False">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#00FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#28FFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </HeaderedContentControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

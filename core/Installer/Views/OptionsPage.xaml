@@ -1,0 +1,99 @@
+<UserControl x:Class="CKFlip3D.Installer.Views.OptionsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="36,24,36,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="Install options" FontSize="21" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+            <TextBlock Text="Choose where CKFlip3D is installed and which shortcuts are created."
+                       FontSize="12.5" Margin="0,6,0,0"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,20,0,0">
+
+            <!-- Install location -->
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="6"
+                    BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+                    Padding="16,13">
+                <StackPanel>
+                    <TextBlock Text="Install location" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource CardHeaderBrush}"/>
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="PathBox" Grid.Column="0" Style="{StaticResource AeroTextBox}"
+                                 TextChanged="PathBox_TextChanged"/>
+                        <Button Grid.Column="1" Content="Browse…" Style="{StaticResource AeroButton}"
+                                Margin="10,0,0,0" MinWidth="92" Click="BtnBrowse_Click"/>
+                    </Grid>
+                    <TextBlock x:Name="SpaceInfo" FontSize="11.5" Margin="0,8,0,0"
+                               Foreground="{DynamicResource TextFaintBrush}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Shortcuts -->
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="6"
+                    BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+                    Padding="16,13" Margin="0,14,0,0">
+                <StackPanel>
+                    <TextBlock Text="Shortcuts" FontSize="12.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource CardHeaderBrush}"/>
+
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Start Menu folder" FontSize="12.5"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <TextBlock Text="Adds CKFlip3D, its Settings and the uninstaller to the Start Menu."
+                                       FontSize="11.5" Margin="0,2,0,0"
+                                       Foreground="{DynamicResource TextFaintBrush}"/>
+                        </StackPanel>
+                        <CheckBox x:Name="StartMenuToggle" Grid.Column="1"
+                                  Style="{StaticResource AeroToggle}" IsChecked="True"/>
+                    </Grid>
+
+                    <Rectangle Height="1" Fill="{DynamicResource RowSeparatorBrush}" Margin="0,12,0,12"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Desktop shortcut" FontSize="12.5"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+                            <TextBlock Text="Places a CKFlip3D shortcut on the desktop."
+                                       FontSize="11.5" Margin="0,2,0,0"
+                                       Foreground="{DynamicResource TextFaintBrush}"/>
+                        </StackPanel>
+                        <CheckBox x:Name="DesktopToggle" Grid.Column="1"
+                                  Style="{StaticResource AeroToggle}" IsChecked="True"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <Button Content="Back" Style="{StaticResource AeroButton}" MinWidth="92"
+                    HorizontalAlignment="Left" Click="BtnBack_Click"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Style="{StaticResource AeroButton}" MinWidth="92"
+                        Click="BtnCancel_Click"/>
+                <Button x:Name="BtnInstall" Content="Install" Style="{StaticResource AccentButton}"
+                        MinWidth="112" Margin="10,0,0,0" Click="BtnInstall_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

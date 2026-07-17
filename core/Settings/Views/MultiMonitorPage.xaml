@@ -1,0 +1,76 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.MultiMonitorPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Secondary monitors">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Path Width="16" Height="16" Margin="0,1,10,0" VerticalAlignment="Top"
+                              Stroke="{DynamicResource AccentBrush}" StrokeThickness="1.6"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              Data="M8,1.5 A6.5,6.5 0 1 1 7.99,1.5 M8,7 V11.5 M8,4.6 V4.9"/>
+                        <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap" MaxWidth="540"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Text="While the cascade is open, every monitor dims together with the desktop background. Use “Background opacity” on the Appearance page to control how dark all screens get."/>
+                    </StackPanel>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Secondary taskbar appearance"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="What happens to taskbars on secondary monitors during the flip. The core currently always dims them with the monitor."/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
+                                   FontFamily="Segoe UI" FontSize="11" FontStyle="Italic"
+                                   Foreground="{DynamicResource TextFaintBrush}" Text="Coming soon..."/>
+                        <ComboBox Grid.Column="2" x:Name="TaskbarCombo" Style="{StaticResource AeroComboBox}"
+                                  IsEnabled="False" VerticalAlignment="Center"
+                                  SelectionChanged="TaskbarCombo_SelectionChanged">
+                            <ComboBoxItem Content="Dim with monitor"/>
+                            <ComboBoxItem Content="Hide completely"/>
+                            <ComboBoxItem Content="Keep visible"/>
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Cascade monitor">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="0,0,20,0">
+                        <TextBlock Style="{StaticResource SettingLabelText}" Text="Where the 3D cascade appears"/>
+                        <TextBlock x:Name="CascadeSummary" Style="{StaticResource SettingHintText}"
+                                   Text="Currently: Primary monitor (fixed in this version)"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
+                               FontFamily="Segoe UI" FontSize="11" FontStyle="Italic"
+                               Foreground="{DynamicResource TextFaintBrush}" Text="Coming soon..."/>
+                    <Button Grid.Column="2" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                            IsEnabled="False" Content="Choose monitor…" Click="ChooseMonitor_Click"/>
+                </Grid>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Current setup">
+                <StackPanel>
+                    <TextBlock x:Name="SetupSummary" FontFamily="Segoe UI" FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                               Text="Detecting monitors…"/>
+                </StackPanel>
+            </HeaderedContentControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

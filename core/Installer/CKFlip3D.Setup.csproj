@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET 10 (LTS until Nov 2028), same target as the Settings app. The
+         setup exe is published self-contained single-file so it runs on a
+         machine with no .NET installed (see build_installer.bat). -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CKFlip3D.Setup</AssemblyName>
+    <RootNamespace>CKFlip3D.Installer</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <Product>CKFlip3D Setup</Product>
+    <Copyright>CYMERKAROL</Copyright>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <ApplicationIcon>..\..\assets\icons\CKFlip3D.Setup.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\icons\CKFlip3D.png" Link="Assets\CKFlip3D.png" />
+    <Resource Include="..\..\assets\icons\CKFlip3D.Setup.png" Link="Assets\CKFlip3D.Setup.png" />
+    <Resource Include="..\..\assets\icons\CKFlip3D.Uninstall.png" Link="Assets\CKFlip3D.Uninstall.png" />
+    <!-- Application payload, produced by build_installer.bat (zip of the
+         build\ output). The project still compiles without it for UI work;
+         the engine reports a friendly error when the payload is missing. -->
+    <EmbeddedResource Include="Payload\payload.zip"
+                      Condition="Exists('Payload\payload.zip')"
+                      LogicalName="CKFlip3D.Installer.payload.zip" />
+  </ItemGroup>
+
+</Project>

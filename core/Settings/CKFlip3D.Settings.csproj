@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET 10 (LTS, supported until Nov 2028) — migrated from net8.0
+         ahead of the .NET 8/9 end-of-support on 10 Nov 2026. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CKFlip3D.Settings</AssemblyName>
+    <RootNamespace>CKFlip3D.Settings</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <Product>CKFlip3D Settings</Product>
+    <Copyright>CYMERKAROL</Copyright>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <ApplicationIcon>..\..\assets\icons\CKFlip3D.Settings.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- CKLogo (owner avatar) is used ONLY on the About/Credits page; the
+         window chrome uses the generated app icon from assets\icons. -->
+    <Resource Include="Resources\CKLogo.png" />
+    <Resource Include="..\..\assets\icons\CKFlip3D.Settings.png" Link="Assets\CKFlip3D.Settings.png" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,54 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.AboutPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="About CKFlip3D">
+                <StackPanel HorizontalAlignment="Center" Margin="0,26,0,18">
+                    <Image Source="../Resources/CKLogo.png" Width="104" Height="104"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           HorizontalAlignment="Center">
+                        <Image.Effect>
+                            <DropShadowEffect BlurRadius="18" ShadowDepth="2" Direction="270"
+                                              Color="#FF2D6FA8" Opacity="0.35"/>
+                        </Image.Effect>
+                    </Image>
+
+                    <TextBlock Text="CKFlip3D" HorizontalAlignment="Center" Margin="0,18,0,0"
+                               FontFamily="Segoe UI Light" FontSize="30"
+                               Foreground="{DynamicResource TextPrimaryBrush}"/>
+                    <TextBlock Text="Version 1.0" HorizontalAlignment="Center" Margin="0,2,0,0"
+                               FontFamily="Segoe UI" FontSize="13"
+                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <TextBlock Text="A modern Flip 3D-style window switcher for Windows 11."
+                               HorizontalAlignment="Center" Margin="0,10,0,0"
+                               FontFamily="Segoe UI" FontSize="12" FontStyle="Italic"
+                               Foreground="{DynamicResource TextFaintBrush}"/>
+                    <TextBlock Text="Copyright © 2026 Karol Cymerman | Not affiliated with Microsoft Corporation."
+                               HorizontalAlignment="Center" Margin="0,6,0,0"
+                               FontFamily="Segoe UI" FontSize="10.5"
+                               Foreground="{DynamicResource TextFaintBrush}"/>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,24,0,0">
+                        <Button Style="{StaticResource AeroButton}" Content="License" MinWidth="110"
+                                Margin="0,0,12,0" Click="License_Click"/>
+                        <Button Style="{StaticResource AeroButton}" MinWidth="110" Click="GitHub_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <!-- simple external-link glyph, drawn procedurally -->
+                                <Path Width="12" Height="12" Margin="0,1,7,0"
+                                      Stroke="{DynamicResource TextPrimaryBrush}" StrokeThickness="1.4"
+                                      StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      Data="M5,2 H1.5 V10.5 H10 V7 M7,1 H11 V5 M11,1 L5.5,6.5"/>
+                                <TextBlock Text="GitHub" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </HeaderedContentControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

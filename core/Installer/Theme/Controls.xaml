@@ -1,0 +1,552 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ====================================================================
+         Trimmed copy of the Settings app control set (core\Settings\Theme\
+         Controls.xaml) — only what the installer uses, plus setup-specific
+         styles (progress bar, text field, caption buttons). Kept separate so
+         the Installer folder stays self-contained/modular.
+         ==================================================================== -->
+
+    <Style x:Key="AeroFocusVisual">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Margin="-2" RadiusX="4" RadiusY="4"
+                               Stroke="#805A9FD4" StrokeThickness="1" StrokeDashArray="1 2"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Buttons ================= -->
+
+    <Style x:Key="AeroButton" TargetType="Button">
+        <Setter Property="FontFamily" Value="Segoe UI"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+        <Setter Property="Padding" Value="16,6"/>
+        <Setter Property="MinHeight" Value="29"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AeroFocusVisual}"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Glow" CornerRadius="4" Margin="-2" Opacity="0"
+                                Background="#3863C6FF" BorderThickness="1" BorderBrush="#5063C6FF"/>
+                        <Border x:Name="Face" CornerRadius="3"
+                                Background="{DynamicResource ButtonFaceBrush}"
+                                BorderBrush="{DynamicResource ButtonBorderBrush}" BorderThickness="1">
+                            <Grid>
+                                <Border x:Name="HoverFace" CornerRadius="2.5" Opacity="0"
+                                        Background="{DynamicResource ButtonHoverBrush}"/>
+                                <Border x:Name="PressedFace" CornerRadius="2.5" Opacity="0"
+                                        Background="{DynamicResource ButtonPressedBrush}"/>
+                                <Border x:Name="Sheen" VerticalAlignment="Top" Height="14"
+                                        CornerRadius="2.5,2.5,0,0" Margin="1,1,1,0" Opacity="0.85"
+                                        Background="{DynamicResource ControlSheenBrush}"/>
+                                <Border CornerRadius="2.5" BorderThickness="1"
+                                        BorderBrush="{DynamicResource ControlGlassLipBrush}"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  RecognizesAccessKey="True">
+                                    <ContentPresenter.RenderTransform>
+                                        <TranslateTransform x:Name="ContentShift" Y="0"/>
+                                    </ContentPresenter.RenderTransform>
+                                </ContentPresenter>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Face" Property="BorderBrush" Value="{DynamicResource ButtonHoverBorderBrush}"/>
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                        <DoubleAnimation Storyboard.TargetName="HoverFace" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.24"/>
+                                        <DoubleAnimation Storyboard.TargetName="HoverFace" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.24"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.85" Duration="0:0:0.24"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedFace" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.25" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="ContentShift" Storyboard.TargetProperty="Y"
+                                                         To="1" Duration="0:0:0.06"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedFace" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.85" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="ContentShift" Storyboard.TargetProperty="Y"
+                                                         To="0" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Face" Property="Opacity" Value="0.45"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextFaintBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource AeroButton}">
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Glow" CornerRadius="4" Margin="-2" Opacity="0"
+                                Background="#4063C6FF" BorderThickness="1" BorderBrush="#8063C6FF"/>
+                        <Border x:Name="Face" CornerRadius="3"
+                                Background="{DynamicResource AccentButtonBrush}"
+                                BorderBrush="#FF1D5F99" BorderThickness="1">
+                            <Grid>
+                                <Border x:Name="HoverFace" CornerRadius="2.5" Opacity="0"
+                                        Background="{DynamicResource AccentButtonHoverBrush}"/>
+                                <Border x:Name="PressedFace" CornerRadius="2.5" Opacity="0"
+                                        Background="{DynamicResource AccentBrush}"/>
+                                <Border x:Name="Sheen" VerticalAlignment="Top" Height="14"
+                                        CornerRadius="2.5,2.5,0,0" Margin="1,1,1,0" Opacity="0.9">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#80FFFFFF" Offset="0"/>
+                                            <GradientStop Color="#30FFFFFF" Offset="0.78"/>
+                                            <GradientStop Color="#14FFFFFF" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <Border CornerRadius="2.5" BorderThickness="1"
+                                        BorderBrush="{DynamicResource ControlGlassLipBrush}"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  RecognizesAccessKey="True">
+                                    <ContentPresenter.RenderTransform>
+                                        <TranslateTransform x:Name="ContentShift" Y="0"/>
+                                    </ContentPresenter.RenderTransform>
+                                </ContentPresenter>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                        <DoubleAnimation Storyboard.TargetName="HoverFace" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.24"/>
+                                        <DoubleAnimation Storyboard.TargetName="HoverFace" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.24"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.9" Duration="0:0:0.24"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedFace" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.3" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="ContentShift" Storyboard.TargetProperty="Y"
+                                                         To="1" Duration="0:0:0.06"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedFace" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.9" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="ContentShift" Storyboard.TargetProperty="Y"
+                                                         To="0" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Face" Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource AeroButton}">
+        <Setter Property="Foreground" Value="{DynamicResource DangerTextBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Glow" CornerRadius="4" Margin="-2" Opacity="0"
+                                Background="#30E86F5E" BorderThickness="1" BorderBrush="#60E86F5E"/>
+                        <Border x:Name="Face" CornerRadius="3"
+                                Background="{DynamicResource DangerButtonBrush}"
+                                BorderBrush="{DynamicResource DangerBorderBrush}" BorderThickness="1">
+                            <Grid>
+                                <Border x:Name="HoverFace" CornerRadius="2.5" Opacity="0"
+                                        Background="{DynamicResource DangerButtonHoverBrush}"/>
+                                <Border x:Name="PressedFace" CornerRadius="2.5" Opacity="0"
+                                        Background="#FF2E1D1F"/>
+                                <Border x:Name="Sheen" VerticalAlignment="Top" Height="14"
+                                        CornerRadius="2.5,2.5,0,0" Margin="1,1,1,0" Opacity="0.7"
+                                        Background="{DynamicResource ControlSheenBrush}"/>
+                                <Border CornerRadius="2.5" BorderThickness="1"
+                                        BorderBrush="{DynamicResource ControlGlassLipBrush}"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  RecognizesAccessKey="True">
+                                    <ContentPresenter.RenderTransform>
+                                        <TranslateTransform x:Name="ContentShift" Y="0"/>
+                                    </ContentPresenter.RenderTransform>
+                                </ContentPresenter>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Face" Property="BorderBrush" Value="#FFA86058"/>
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                        <DoubleAnimation Storyboard.TargetName="HoverFace" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.14"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.95" Duration="0:0:0.14"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.24"/>
+                                        <DoubleAnimation Storyboard.TargetName="HoverFace" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.24"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.7" Duration="0:0:0.24"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedFace" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.2" Duration="0:0:0.06"/>
+                                        <DoubleAnimation Storyboard.TargetName="ContentShift" Storyboard.TargetProperty="Y"
+                                                         To="1" Duration="0:0:0.06"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="PressedFace" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity"
+                                                         To="0.7" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="ContentShift" Storyboard.TargetProperty="Y"
+                                                         To="0" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Face" Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Toggle switch (styled CheckBox) ================= -->
+
+    <Style x:Key="AeroToggle" TargetType="CheckBox">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AeroFocusVisual}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <Grid Width="44" Height="20">
+                        <Border x:Name="OnGlow" CornerRadius="12" Margin="-3" Opacity="0"
+                                Background="#3863C6FF"/>
+                        <Border CornerRadius="10" Background="{DynamicResource ToggleOffBrush}"
+                                BorderBrush="{DynamicResource ToggleOffBorderBrush}" BorderThickness="1"/>
+                        <Border x:Name="OnTrack" CornerRadius="10" Opacity="0"
+                                Background="{DynamicResource ToggleOnBrush}"
+                                BorderBrush="{DynamicResource ToggleOnBorderBrush}" BorderThickness="1"/>
+                        <Border CornerRadius="10,10,4,4" Height="9" VerticalAlignment="Top" Margin="2,1.5,2,0">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#48FFFFFF" Offset="0"/>
+                                    <GradientStop Color="#0AFFFFFF" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <Border x:Name="Knob" Width="16" Height="16" CornerRadius="8"
+                                HorizontalAlignment="Left" VerticalAlignment="Center" Margin="2,0,0,0"
+                                Background="{DynamicResource ToggleKnobBrush}"
+                                BorderBrush="{DynamicResource ToggleKnobBorderBrush}" BorderThickness="1"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform>
+                                <TranslateTransform x:Name="KnobShift" X="0"/>
+                            </Border.RenderTransform>
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="3" ShadowDepth="0.5" Opacity="0.35"/>
+                            </Border.Effect>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Trigger.EnterActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="KnobShift" Storyboard.TargetProperty="X"
+                                                         To="24" Duration="0:0:0.18">
+                                            <DoubleAnimation.EasingFunction>
+                                                <QuadraticEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="OnTrack" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.18"/>
+                                        <DoubleAnimation Storyboard.TargetName="OnGlow" Storyboard.TargetProperty="Opacity"
+                                                         To="1" Duration="0:0:0.18"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="KnobShift" Storyboard.TargetProperty="X"
+                                                         To="0" Duration="0:0:0.18">
+                                            <DoubleAnimation.EasingFunction>
+                                                <QuadraticEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="OnTrack" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.18"/>
+                                        <DoubleAnimation Storyboard.TargetName="OnGlow" Storyboard.TargetProperty="Opacity"
+                                                         To="0" Duration="0:0:0.18"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Knob" Property="BorderBrush" Value="{DynamicResource ButtonHoverBorderBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Text field (install path) ================= -->
+
+    <Style x:Key="AeroTextBox" TargetType="TextBox">
+        <Setter Property="FontFamily" Value="Segoe UI"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+        <Setter Property="CaretBrush" Value="{DynamicResource AccentLightBrush}"/>
+        <Setter Property="SelectionBrush" Value="{DynamicResource AccentButtonBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource InsetFieldBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorderBrush}"/>
+        <Setter Property="Padding" Value="9,6"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Face" CornerRadius="3"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Face" Property="BorderBrush" Value="{DynamicResource ButtonHoverBorderBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Face" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Progress bar ================= -->
+
+    <Style x:Key="AeroProgressBar" TargetType="ProgressBar">
+        <Setter Property="Height" Value="8"/>
+        <Setter Property="Minimum" Value="0"/>
+        <Setter Property="Maximum" Value="100"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Grid x:Name="TemplateRoot" SnapsToDevicePixels="True">
+                        <Border CornerRadius="4" Background="{DynamicResource SliderTrackBrush}"
+                                BorderBrush="{DynamicResource ButtonBorderBrush}" BorderThickness="1"/>
+                        <!-- PART names are required by the ProgressBar chrome:
+                             the control sizes PART_Indicator itself. -->
+                        <Rectangle x:Name="PART_Track" Fill="Transparent"/>
+                        <Grid ClipToBounds="True" Margin="1">
+                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
+                                    CornerRadius="3.5" Background="{DynamicResource SliderFillBrush}">
+                                <Grid ClipToBounds="True">
+                                    <!-- top-half sheen over the fill -->
+                                    <Border VerticalAlignment="Top" Height="4" CornerRadius="3.5,3.5,0,0">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Color="#50FFFFFF" Offset="0"/>
+                                                <GradientStop Color="#10FFFFFF" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                    <!-- travelling shimmer so progress reads as alive -->
+                                    <Rectangle x:Name="Shimmer" Width="60" HorizontalAlignment="Left" Opacity="0.55">
+                                        <Rectangle.Fill>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#00FFFFFF" Offset="0"/>
+                                                <GradientStop Color="#60FFFFFF" Offset="0.5"/>
+                                                <GradientStop Color="#00FFFFFF" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Rectangle.Fill>
+                                        <Rectangle.RenderTransform>
+                                            <TranslateTransform x:Name="ShimmerShift" X="-70"/>
+                                        </Rectangle.RenderTransform>
+                                    </Rectangle>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <EventTrigger RoutedEvent="Loaded">
+                            <BeginStoryboard>
+                                <Storyboard RepeatBehavior="Forever">
+                                    <DoubleAnimation Storyboard.TargetName="ShimmerShift"
+                                                     Storyboard.TargetProperty="X"
+                                                     From="-70" To="820" Duration="0:0:2.4"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================= Caption buttons (minimize / close) ================= -->
+
+    <Style x:Key="CaptionButton" TargetType="Button">
+        <Setter Property="Width" Value="40"/>
+        <Setter Property="Height" Value="30"/>
+        <Setter Property="Foreground" Value="{DynamicResource CaptionGlyphBrush}"/>
+        <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Face" Background="Transparent" CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Face" Property="Background" Value="#22FFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Face" Property="Background" Value="#33FFFFFF"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="CaptionCloseButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Face" Background="Transparent" CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Face" Property="Background" Value="#D0E81123"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Face" Property="Background" Value="#F0C50F1F"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

@@ -1,0 +1,153 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.GeneralPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
+                  Padding="24,4,16,20">
+        <StackPanel>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Startup">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource SettingLabelText}" Text="Start on System boot"/>
+                                <!-- stock Windows UAC shield (SHGetStockIconInfo, not an extracted asset) -->
+                                <Image x:Name="UacShield" Width="14" Height="14" Margin="8,0,0,0"
+                                       VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Launches CKFLIP3D right after sign-in via a scheduled task with elevated rights."/>
+                            <TextBlock x:Name="StartupWarning" Style="{StaticResource SettingHintText}"
+                                       Foreground="#FFE8A33D" Visibility="Collapsed"/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="2" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding StartWithWindows}"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Performance">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Auto performance tune"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Automatic quality change depending on your device performance."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="2" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding AutoPerfTune}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Performance profile"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Auto adapts at runtime. Low forces motion blur, antialiasing and live previews off, Medium forces motion blur off, High always keeps your quality toggles."/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="2" x:Name="PerfCombo" Style="{StaticResource AeroComboBox}"
+                                  VerticalAlignment="Center"
+                                  SelectionChanged="PerfCombo_SelectionChanged">
+                            <ComboBoxItem Content="Auto"/>
+                            <ComboBoxItem Content="Low"/>
+                            <ComboBoxItem Content="Medium"/>
+                            <ComboBoxItem Content="High"/>
+                        </ComboBox>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="220"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Start delay"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="How long activation waits for Windows Graphics Capture to deliver the first window frames before the cascade shows. It always leaves early once every capture is ready, so higher values only ever wait as long as needed. Chosen automatically from your device's speed while Auto performance tune is on."/>
+                            <StackPanel x:Name="StartDelayWarning" Orientation="Horizontal"
+                                        Visibility="Collapsed" Margin="0,5,0,0">
+                                <Path Width="13" Height="12" Margin="0,1,7,0" VerticalAlignment="Top"
+                                      Stroke="#FFE8A33D" StrokeThickness="1.3"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Data="M6.5,1.2 L12.2,11 H0.8 Z M6.5,4.8 V7.6 M6.5,9.2 V9.7"/>
+                                <TextBlock FontFamily="Segoe UI" FontSize="11" TextWrapping="Wrap" MaxWidth="430"
+                                           Foreground="#FFE8A33D"
+                                           Text="Very low delays may not give window capture enough time to keep up — tiles can show stale or empty content and fall back to slower snapshot paths."/>
+                            </StackPanel>
+                        </StackPanel>
+                        <DockPanel Grid.Column="1" x:Name="StartDelayPanel" VerticalAlignment="Center">
+                            <TextBlock x:Name="StartDelayValue" DockPanel.Dock="Right" Width="52" TextAlignment="Right"
+                                       Style="{StaticResource MonoValueText}"/>
+                            <Slider x:Name="StartDelaySlider" Style="{StaticResource AeroSlider}"
+                                    Minimum="1" Maximum="1000"
+                                    IsSnapToTickEnabled="True" TickFrequency="1"
+                                    Value="{Binding StartDelayMs}" Margin="0,0,10,0"/>
+                        </DockPanel>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="200"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Maximum windows in the stack"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="How many windows the 3D cascade shows at once (2–10)."/>
+                        </StackPanel>
+                        <DockPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock DockPanel.Dock="Right" Width="24" TextAlignment="Right"
+                                       Style="{StaticResource MonoValueText}"
+                                       Text="{Binding MaxWindows}"/>
+                            <Slider Style="{StaticResource AeroSlider}" Minimum="2" Maximum="10"
+                                    IsSnapToTickEnabled="True" TickFrequency="1"
+                                    Value="{Binding MaxWindows}" Margin="0,0,10,0"/>
+                        </DockPanel>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Show debug info"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Emit debug output for troubleshooting."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding ShowDebugInfo}"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Applying changes">
+                <StackPanel Orientation="Horizontal">
+                    <Path Width="16" Height="16" Margin="0,1,10,0" VerticalAlignment="Top"
+                          Stroke="{DynamicResource AccentBrush}" StrokeThickness="1.6"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                          Data="M8,1.5 A6.5,6.5 0 1 1 7.99,1.5 M8,7 V11.5 M8,4.6 V4.9"/>
+                    <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap" MaxWidth="560"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Text="Settings are saved to config.json when you press Apply. A running CKFlip3D reloads the configuration immediately and then restarts itself automatically."/>
+                </StackPanel>
+            </HeaderedContentControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

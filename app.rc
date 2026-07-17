@@ -1,0 +1,36 @@
+// CKFlip3D.exe resources — compiled by rc.exe in build.bat and linked in.
+#include "core/resource.h"
+#include <winver.h>
+
+IDI_APP           ICON "assets/icons/CKFlip3D.ico"
+IDI_MENU_SETTINGS ICON "assets/icons/menu_settings.ico"
+IDI_MENU_EXIT     ICON "assets/icons/menu_exit.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION     1,0,0,0
+ PRODUCTVERSION  1,0,0,0
+ FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+ FILEFLAGS       0x0L
+ FILEOS          VOS_NT_WINDOWS32
+ FILETYPE        VFT_APP
+ FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "CYMERKAROL"
+            VALUE "FileDescription",  "CKFlip3D for Windows 11"
+            VALUE "FileVersion",      "1.0.0"
+            VALUE "InternalName",     "CKFlip3D"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 CYMERKAROL"
+            VALUE "OriginalFilename", "CKFlip3D.exe"
+            VALUE "ProductName",      "CKFlip3D"
+            VALUE "ProductVersion",   "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

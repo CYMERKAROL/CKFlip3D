@@ -1,0 +1,74 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- THEME: Minimalism White — flat light surfaces, muted glass, acrylic-led. -->
+
+    <Color x:Key="AccentColor">#FF1F6FB4</Color>
+    <SolidColorBrush x:Key="AccentBrush" Color="#FF1F6FB4"/>
+    <SolidColorBrush x:Key="AccentLightBrush" Color="#FF5AA4DE"/>
+    <SolidColorBrush x:Key="AccentGlowBrush" Color="#FF1F6FB4"/>
+
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#FF15191D"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#FF4A5258"/>
+    <SolidColorBrush x:Key="TextFaintBrush" Color="#FF7C848B"/>
+    <SolidColorBrush x:Key="TextOnGlassBrush" Color="#FF1C2126"/>
+    <SolidColorBrush x:Key="TitleTextBrush" Color="#FF15191D"/>
+    <SolidColorBrush x:Key="FooterTextBrush" Color="#904A5258"/>
+    <SolidColorBrush x:Key="CaptionGlyphBrush" Color="#FF3C444B"/>
+    <SolidColorBrush x:Key="NavIconBrush" Color="#FF5A646D"/>
+
+    <SolidColorBrush x:Key="WindowGlassBrush" Color="#C4FAFBFC"/>
+    <SolidColorBrush x:Key="WindowGlassFallbackBrush" Color="#FFF5F6F8"/>
+    <SolidColorBrush x:Key="TitleSheenBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="WindowReflectionBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="BackgroundRadialGlowBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="BackgroundVignetteBrush" Color="#00FFFFFF"/>
+
+    <SolidColorBrush x:Key="ContentSurfaceBrush" Color="#B8FFFFFF"/>
+    <SolidColorBrush x:Key="ContentBorderBrush" Color="#28465058"/>
+    <SolidColorBrush x:Key="CardBrush" Color="#E4FFFFFF"/>
+    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFDDE2E7"/>
+    <SolidColorBrush x:Key="CardHeaderBrush" Color="#FF1F6FB4"/>
+    <SolidColorBrush x:Key="CardTopGlassBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="CardHeaderBandBrush" Color="#10202830"/>
+    <SolidColorBrush x:Key="ControlSheenBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="ControlGlassLipBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="InsetFieldBrush" Color="#FFF0F2F4"/>
+    <SolidColorBrush x:Key="SeparatorBrush" Color="#FFE2E6EA"/>
+    <SolidColorBrush x:Key="GlassEdgeBrush" Color="#50FFFFFF"/>
+    <SolidColorBrush x:Key="WindowOuterBorderBrush" Color="#C0A4ACB4"/>
+    <SolidColorBrush x:Key="ApplyBarBrush" Color="#F0EDF0F3"/>
+    <SolidColorBrush x:Key="ModalOverlayBrush" Color="#5A2A3138"/>
+    <SolidColorBrush x:Key="ModalBorderBrush" Color="#FFC2C9D0"/>
+    <SolidColorBrush x:Key="ComboPopupBrush" Color="#F8FFFFFF"/>
+    <SolidColorBrush x:Key="ComboPopupBorderBrush" Color="#FFC2C9D0"/>
+    <SolidColorBrush x:Key="RowSeparatorBrush" Color="#FFE8ECEF"/>
+    <SolidColorBrush x:Key="CardSeamBrush" Color="#FFE8ECEF"/>
+
+    <SolidColorBrush x:Key="ButtonFaceBrush" Color="#FFF2F4F6"/>
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#FFE4EAF0"/>
+    <SolidColorBrush x:Key="ButtonPressedBrush" Color="#FFD5DCE2"/>
+    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#FFC4CCD3"/>
+    <SolidColorBrush x:Key="ButtonHoverBorderBrush" Color="#FF1F6FB4"/>
+    <SolidColorBrush x:Key="AccentButtonBrush" Color="#FF1F6FB4"/>
+    <SolidColorBrush x:Key="AccentButtonHoverBrush" Color="#FF2E82C8"/>
+    <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="#FF175C96"/>
+    <SolidColorBrush x:Key="DangerButtonBrush" Color="#FFF6E9E8"/>
+    <SolidColorBrush x:Key="DangerButtonHoverBrush" Color="#FFF0D6D3"/>
+    <SolidColorBrush x:Key="DangerBorderBrush" Color="#FFD3A8A2"/>
+    <SolidColorBrush x:Key="DangerTextBrush" Color="#FF96362C"/>
+
+    <SolidColorBrush x:Key="NavHoverBrush" Color="#12202830"/>
+    <SolidColorBrush x:Key="NavActiveBrush" Color="#241F6FB4"/>
+    <SolidColorBrush x:Key="NavActiveBorderBrush" Color="#581F6FB4"/>
+
+    <SolidColorBrush x:Key="SliderTrackBrush" Color="#FFD8DDE2"/>
+    <SolidColorBrush x:Key="SliderFillBrush" Color="#FF1F6FB4"/>
+    <SolidColorBrush x:Key="ToggleOnBrush" Color="#FF1F6FB4"/>
+    <SolidColorBrush x:Key="ToggleOffBrush" Color="#FFCBD2D8"/>
+    <SolidColorBrush x:Key="ToggleKnobBrush" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="ToggleOffBorderBrush" Color="#FFAAB3BB"/>
+    <SolidColorBrush x:Key="ToggleOnBorderBrush" Color="#FF175C96"/>
+    <SolidColorBrush x:Key="ToggleKnobBorderBrush" Color="#FF9AA4AD"/>
+
+</ResourceDictionary>

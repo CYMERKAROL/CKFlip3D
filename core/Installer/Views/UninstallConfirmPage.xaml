@@ -1,0 +1,49 @@
+<UserControl x:Class="CKFlip3D.Installer.Views.UninstallConfirmPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="36,24,36,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="Uninstall CKFlip3D" FontSize="21" FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+            <TextBlock FontSize="12.5" Margin="0,8,0,0" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       Text="This removes CKFlip3D, its Settings app, shortcuts, the startup entry and the Apps &amp; Features registration from this computer. Running instances will be closed."/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,20,0,0" VerticalAlignment="Top">
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="6"
+                    BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+                    Padding="16,13">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Also remove settings and configuration" FontSize="12.5"
+                                   Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock x:Name="AppDataInfo" FontSize="11.5" Margin="0,2,0,0"
+                                   Foreground="{DynamicResource TextFaintBrush}"/>
+                    </StackPanel>
+                    <CheckBox x:Name="RemoveDataToggle" Grid.Column="1"
+                              Style="{StaticResource AeroToggle}" IsChecked="False"/>
+                </Grid>
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Close" Style="{StaticResource AeroButton}" MinWidth="92"
+                        Click="BtnClose_Click"/>
+                <Button Content="Uninstall" Style="{StaticResource DangerButton}" MinWidth="112"
+                        Margin="10,0,0,0" Click="BtnUninstall_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

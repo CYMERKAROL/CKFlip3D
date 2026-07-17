@@ -1,0 +1,28 @@
+# ==== Local build scripts (developer tooling, not part of the repo) ====
+*.bat
+*.ps1
+# ...except the official build entry points referenced by the README:
+!/build.bat
+!/core/Settings/build_settings.bat
+!/core/Installer/build_installer.bat
+
+# ==== Build outputs ====
+build/
+dist/
+bin/
+obj/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.res
+*.log
+
+# ==== Installer intermediates ====
+core/Installer/Payload/
+
+# ==== IDE / local machine ====
+.vscode/
+.vs/
+*.user

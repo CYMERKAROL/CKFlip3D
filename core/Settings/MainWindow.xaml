@@ -1,0 +1,304 @@
+<Window x:Class="CKFlip3D.Settings.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CKFlip3D Settings"
+        Width="900" Height="640" MinWidth="780" MinHeight="540"
+        WindowStyle="None" Background="Transparent"
+        WindowStartupLocation="CenterScreen"
+        TextOptions.TextFormattingMode="Display" UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <!-- AllowsTransparency would force a layered window and kill the DWM
+         system backdrop (real acrylic).  WindowChrome gives us the same
+         borderless look while keeping the HWND composition-friendly;
+         GlassFrameThickness -1 extends the backdrop across the client area. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" CornerRadius="0"
+                      GlassFrameThickness="-1" ResizeBorderThickness="6"
+                      UseAeroCaptionButtons="False" NonClientFrameEdges="None"/>
+    </WindowChrome.WindowChrome>
+
+    <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5" Opacity="0">
+        <Grid.RenderTransform>
+            <ScaleTransform x:Name="RootScale" ScaleX="0.975" ScaleY="0.975"/>
+        </Grid.RenderTransform>
+
+        <!-- ============ window frame ============ -->
+        <!-- No margin: DWM rounds and shadows the real window surface
+             (DWMWA_WINDOW_CORNER_PREFERENCE), which also clips the accent blur. -->
+        <Border x:Name="WindowBorder" CornerRadius="8"
+                Background="{DynamicResource WindowGlassBrush}"
+                BorderBrush="{DynamicResource WindowOuterBorderBrush}" BorderThickness="1">
+
+            <Border CornerRadius="7" BorderThickness="1"
+                    BorderBrush="{DynamicResource GlassEdgeBrush}" ClipToBounds="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="34"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- ambient glass lighting: soft accent glow behind the nav,
+                         plus a vignette that darkens the corners. Felt, not seen. -->
+                    <Border Grid.RowSpan="2" IsHitTestVisible="False"
+                            Background="{DynamicResource BackgroundRadialGlowBrush}"/>
+                    <Border Grid.RowSpan="2" IsHitTestVisible="False"
+                            Background="{DynamicResource BackgroundVignetteBrush}"/>
+
+                    <!-- top sheen across title area -->
+                    <Border Grid.Row="0" Background="{DynamicResource TitleSheenBrush}"
+                            CornerRadius="6,6,0,0" IsHitTestVisible="False"/>
+                    <!-- blurred reflection band over the upper window glass -->
+                    <Border Grid.RowSpan="2" Height="64" VerticalAlignment="Top"
+                            Background="{DynamicResource WindowReflectionBrush}"
+                            CornerRadius="6,6,0,0" IsHitTestVisible="False"/>
+
+                    <!-- ============ title bar ============ -->
+                    <Grid Grid.Row="0" x:Name="TitleBar" Background="Transparent"
+                          MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                        <StackPanel Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center"
+                                    IsHitTestVisible="False">
+                            <Image Source="Assets/CKFlip3D.Settings.png" Width="16" Height="16"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <TextBlock Text="CKFlip3D Settings" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       FontFamily="Segoe UI" FontSize="12.5"
+                                       Foreground="{DynamicResource TitleTextBrush}">
+                                <TextBlock.Effect>
+                                    <DropShadowEffect Color="#FF06101A" BlurRadius="8" ShadowDepth="0" Opacity="0.9"/>
+                                </TextBlock.Effect>
+                            </TextBlock>
+                        </StackPanel>
+
+                        <!-- caption button cluster, hanging from the top edge -->
+                        <Border HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Margin="0,-1,8,0" CornerRadius="0,6,4,4"
+                                Background="#16FFFFFF" BorderBrush="#30FFFFFF" BorderThickness="1,0,1,1">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="BtnMinimize" Style="{StaticResource CaptionButton}"
+                                        Click="BtnMinimize_Click" ToolTip="Minimize">
+                                    <Path Data="M0,0 H9" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="2" Margin="0,7,0,0"/>
+                                </Button>
+                                <Button x:Name="BtnMaximize" Style="{StaticResource CaptionButton}"
+                                        Click="BtnMaximize_Click" ToolTip="Maximize">
+                                    <Path Data="M0,0 H9 V7.5 H0 Z" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="1.4"/>
+                                </Button>
+                                <Button x:Name="BtnClose" Style="{StaticResource CaptionCloseButton}"
+                                        Click="BtnClose_Click" ToolTip="Close">
+                                    <Path Data="M0,0 L8,8 M8,0 L0,8" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- ============ body ============ -->
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="196"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- left navigation (sits directly on the glass) -->
+                        <Grid Grid.Column="0" x:Name="NavPanel" Opacity="0">
+                            <Grid.RenderTransform>
+                                <TranslateTransform x:Name="NavShift" X="-18"/>
+                            </Grid.RenderTransform>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <ListBox x:Name="NavList" Style="{StaticResource NavListBox}"
+                                     Margin="0,6,0,0" SelectionChanged="NavList_SelectionChanged"
+                                     PreviewMouseLeftButtonDown="NavList_PreviewMouseLeftButtonDown"
+                                     PreviewMouseLeftButtonUp="NavList_PreviewMouseLeftButtonUp"
+                                     MouseLeave="NavList_MouseLeave">
+
+                                <ListBoxItem Tag="General">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M1.5,4 H14.5 M1.5,8 H14.5 M1.5,12 H14.5 M5,2 V6 M11,6 V10 M7,10 V14"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="General"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
+                                <ListBoxItem Tag="Appearance">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                  StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M10.5,2 L14,5.5 L6.5,13 L2.5,13.5 L3,9.5 Z M8.5,4 L12,7.5"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="Appearance"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
+                                <ListBoxItem Tag="MultiMonitor" x:Name="NavItemMultiMonitor">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                  StrokeLineJoin="Round"
+                                                  Data="M1,3 H10 V9 H1 Z M12,5 H15 V11 H6 V9.4"/>
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M4,12 H7 M10,13.6 H13"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="Multi-monitor"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
+                                <ListBoxItem Tag="Controls">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                  StrokeLineJoin="Round"
+                                                  Data="M1,4.5 H15 V11.5 H1 Z"/>
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.4"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M3.4,7 H4.4 M6,7 H7 M8.6,7 H9.6 M11.2,7 H12.2 M4.5,9.5 H11.5"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="Controls"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
+                                <ListBoxItem Tag="Diagnostics">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.6"
+                                                  StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M1,8.5 H4.2 L6.2,3.5 L9.4,13 L11.4,8.5 H15"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="Diagnostics"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
+                                <ListBoxItem Tag="Recovery">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.6"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M13.6,8 A5.6,5.6 0 1 1 8,2.4"/>
+                                            <Path Fill="{DynamicResource NavIconBrush}"
+                                                  Data="M8,0 L8,5 L11.2,2.5 Z"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="Recovery"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
+                                <ListBoxItem Tag="About">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Ellipse Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                     Margin="1"/>
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.8"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M8,7.2 V11.2 M8,4.6 V4.9"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="About"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+                            </ListBox>
+
+                            <TextBlock Grid.Row="1" Margin="22,0,0,12"
+                                       FontFamily="Segoe UI" FontSize="10.5"
+                                       Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.0"/>
+                        </Grid>
+
+                        <!-- right content surface -->
+                        <Border Grid.Column="1" x:Name="ContentPanel" Margin="0,2,8,8" CornerRadius="6"
+                                Background="{DynamicResource ContentSurfaceBrush}"
+                                BorderBrush="{DynamicResource ContentBorderBrush}" BorderThickness="1">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- page header: back orb (sub-pages only) + title -->
+                                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="24,18,24,4">
+                                    <Button x:Name="BackOrb" Style="{StaticResource BackOrbButton}"
+                                            Click="BackOrb_Click" Visibility="Collapsed"
+                                            Margin="0,0,12,0" ToolTip="Back"
+                                            RenderTransformOrigin="0.5,0.5">
+                                        <Button.RenderTransform>
+                                            <ScaleTransform x:Name="BackOrbScale" ScaleX="1" ScaleY="1"/>
+                                        </Button.RenderTransform>
+                                    </Button>
+                                    <TextBlock x:Name="PageTitle" Style="{StaticResource PageTitleText}"
+                                               VerticalAlignment="Center" Text="General"/>
+                                </StackPanel>
+
+                                <!-- page host -->
+                                <ContentControl Grid.Row="1" x:Name="PageHost" Margin="0,6,0,0"
+                                                Focusable="False">
+                                    <ContentControl.RenderTransform>
+                                        <TranslateTransform x:Name="PageShift" Y="0"/>
+                                    </ContentControl.RenderTransform>
+                                </ContentControl>
+
+                                <!-- apply bar: slides up when there are unsaved changes -->
+                                <Border Grid.Row="2" x:Name="ApplyBar" Height="0" ClipToBounds="True"
+                                        Background="{DynamicResource ApplyBarBrush}" BorderBrush="{DynamicResource SeparatorBrush}"
+                                        BorderThickness="0,1,0,0" CornerRadius="0,0,5,5">
+                                    <Grid Margin="20,0">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Ellipse Width="7" Height="7" Fill="#FFE8A33D" Margin="0,1,8,0"/>
+                                            <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       Text="You have unsaved changes. Apply to update CKFlip3D."/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource AeroButton}" Content="Revert"
+                                                    Click="BtnRevert_Click" Margin="0,0,8,0" Padding="14,4"/>
+                                            <Button Style="{StaticResource AccentButton}" Content="Apply"
+                                                    Click="BtnApply_Click" Padding="20,4"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Border>
+
+        <!-- ============ modal layer ============ -->
+        <Grid x:Name="ModalLayer" Visibility="Collapsed" Opacity="0">
+            <Border CornerRadius="8" Background="{DynamicResource ModalOverlayBrush}"/>
+            <Border x:Name="ModalCard" MaxWidth="520" MaxHeight="460"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    CornerRadius="6" Background="{DynamicResource CardBrush}"
+                    BorderBrush="{DynamicResource ModalBorderBrush}" BorderThickness="1"
+                    RenderTransformOrigin="0.5,0.5">
+                <Border.RenderTransform>
+                    <ScaleTransform x:Name="ModalScale" ScaleX="0.94" ScaleY="0.94"/>
+                </Border.RenderTransform>
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="22" ShadowDepth="3" Direction="270"
+                                      Color="#FF11293E" Opacity="0.5"/>
+                </Border.Effect>
+                <Grid Margin="22,18,22,18">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="ModalTitle" Style="{StaticResource PageTitleText}" FontSize="18"
+                               Margin="0,0,0,12"/>
+                    <ScrollViewer Grid.Row="1" Style="{StaticResource AeroScrollViewer}"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ContentControl x:Name="ModalBody" Focusable="False"/>
+                    </ScrollViewer>
+                    <StackPanel Grid.Row="2" x:Name="ModalButtons" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Margin="0,16,0,0"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
