@@ -6,7 +6,7 @@ namespace CKFlip3D.Installer.Engine;
 public sealed class InstallContext
 {
     public const string AppName = "CKFlip3D";
-    public const string AppVersion = "1.0.0";
+    public const string AppVersion = "1.1.0";
     public const string Publisher = "CYMERKAROL";
 
     /// <summary>Apps & Features registry key (HKLM).</summary>

@@ -52,6 +52,11 @@ public sealed class SettingsModel : INotifyPropertyChanged
     private bool _vsyncLivePreview;        // [Core] vsyncLivePreview — Present(1) pacing
     private bool _taskbarLivePreview;      // [Core] taskbarLivePreview — live Shell_TrayWnd capture
     private bool _taskbarPreview = true;   // [Core] taskbarPreview — draw a taskbar preview at all
+    private bool _showDesktopTile = true;  // [Core] showDesktopTile — desktop pseudo-window in the cascade
+    private bool _selectedLabel;           // [Core] selectedLabel — front-slot label master switch (default off)
+    private bool _selectedLabelTitle = true; // [Core] selectedLabelTitle — window title part
+    private bool _selectedLabelIcon = true;  // [Core] selectedLabelIcon — program icon part
+    private bool _selectedLabelBox = true;   // [Core] selectedLabelBox — aero-glass plate behind the label
 
     public int AppTheme          { get => _appTheme;          set => Set(ref _appTheme, Math.Clamp(value, 0, 4)); }
     public int VisualPreset      { get => _visualPreset;      set => Set(ref _visualPreset, value); }
@@ -67,6 +72,11 @@ public sealed class SettingsModel : INotifyPropertyChanged
     public bool VsyncLivePreview   { get => _vsyncLivePreview;   set => Set(ref _vsyncLivePreview, value); }
     public bool TaskbarLivePreview { get => _taskbarLivePreview; set => Set(ref _taskbarLivePreview, value); }
     public bool TaskbarPreview     { get => _taskbarPreview;     set => Set(ref _taskbarPreview, value); }
+    public bool ShowDesktopTile    { get => _showDesktopTile;    set => Set(ref _showDesktopTile, value); }
+    public bool SelectedLabel      { get => _selectedLabel;      set => Set(ref _selectedLabel, value); }
+    public bool SelectedLabelTitle { get => _selectedLabelTitle; set => Set(ref _selectedLabelTitle, value); }
+    public bool SelectedLabelIcon  { get => _selectedLabelIcon;  set => Set(ref _selectedLabelIcon, value); }
+    public bool SelectedLabelBox   { get => _selectedLabelBox;   set => Set(ref _selectedLabelBox, value); }
 
     // ---- Multi-monitor -----------------------------------------------------
     private int _cascadeMonitor = -1;      // [ComingSoon] -1 = primary
@@ -161,6 +171,11 @@ public sealed class SettingsModel : INotifyPropertyChanged
         VsyncLivePreview = s.VsyncLivePreview;
         TaskbarLivePreview = s.TaskbarLivePreview;
         TaskbarPreview = s.TaskbarPreview;
+        ShowDesktopTile = s.ShowDesktopTile;
+        SelectedLabel = s.SelectedLabel;
+        SelectedLabelTitle = s.SelectedLabelTitle;
+        SelectedLabelIcon = s.SelectedLabelIcon;
+        SelectedLabelBox = s.SelectedLabelBox;
         CascadeMonitor = s.CascadeMonitor;
         SecondaryTaskbarMode = s.SecondaryTaskbarMode;
         IgnoreFullscreen = s.IgnoreFullscreen;
@@ -191,6 +206,11 @@ public sealed class SettingsModel : INotifyPropertyChanged
         VsyncLivePreview == s.VsyncLivePreview &&
         TaskbarLivePreview == s.TaskbarLivePreview &&
         TaskbarPreview == s.TaskbarPreview &&
+        ShowDesktopTile == s.ShowDesktopTile &&
+        SelectedLabel == s.SelectedLabel &&
+        SelectedLabelTitle == s.SelectedLabelTitle &&
+        SelectedLabelIcon == s.SelectedLabelIcon &&
+        SelectedLabelBox == s.SelectedLabelBox &&
         CascadeMonitor == s.CascadeMonitor &&
         SecondaryTaskbarMode == s.SecondaryTaskbarMode &&
         IgnoreFullscreen == s.IgnoreFullscreen &&

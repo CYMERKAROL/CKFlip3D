@@ -8,7 +8,7 @@
 
 A native D3D11 window switcher in the spirit of the classic Flip 3D — a full 3D cascade, live window previews, and buttery entry/exit animations, running as a lightweight tray app on modern Windows.
 
-`v1.0` · Windows 11 · C++20 / Direct3D 11 · WPF Settings & Installer (.NET 10) · PolyForm Noncommercial 1.0.0
+`v1.1` · Windows 11 · C++20 / Direct3D 11 · WPF Settings & Installer (.NET 10) · PolyForm Noncommercial 1.0.0
 
 </div>
 
@@ -20,13 +20,17 @@ A native D3D11 window switcher in the spirit of the classic Flip 3D — a full 3
 
 **Live preview** — windows keep playing inside the cascade (video, OBS, anything):
 
-<img src="assets/Repo/preview_show.gif" alt="CKFlip3D live preview demo" width="850">
+<img src="assets/Repo/Live_preview.gif" alt="CKFlip3D live preview demo" width="850">
 
 **Cycling the stack** — Tab / Shift+Tab / mouse wheel rotation with motion blur:
 
-<img src="assets/Repo/move_show.gif" alt="CKFlip3D stack cycling demo" width="850">
+<img src="assets/Repo/Cycle_animation.gif" alt="CKFlip3D stack cycling demo" width="850">
 
-<sub>Full-quality 60 fps clips: [Preview_show.mp4](assets/Repo/Preview_show.mp4) · [move_show.mp4](assets/Repo/move_show.mp4)</sub>
+**Close animation** — windows closed mid-cascade fade out while the stack smoothly reflows:
+
+<img src="assets/Repo/close_animation.gif" alt="CKFlip3D close animation demo" width="850">
+
+<sub>3440x1440 resolution | 50 fps framerate</sub>
 
 </div>
 

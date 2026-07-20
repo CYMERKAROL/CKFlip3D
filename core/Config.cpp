@@ -154,6 +154,11 @@ AppConfig Config::Load()
     cfg.maxWindows    = static_cast<uint32_t>(FindInt(json, "maxWindows", static_cast<int>(cfg.maxWindows)));
     cfg.backgroundOpacity = static_cast<uint32_t>(
         FindInt(json, "backgroundOpacity", static_cast<int>(cfg.backgroundOpacity)));
+    cfg.showDesktopTile    = FindBool(json, "showDesktopTile",    cfg.showDesktopTile);
+    cfg.selectedLabel      = FindBool(json, "selectedLabel",      cfg.selectedLabel);
+    cfg.selectedLabelTitle = FindBool(json, "selectedLabelTitle", cfg.selectedLabelTitle);
+    cfg.selectedLabelIcon  = FindBool(json, "selectedLabelIcon",  cfg.selectedLabelIcon);
+    cfg.selectedLabelBox   = FindBool(json, "selectedLabelBox",   cfg.selectedLabelBox);
     cfg.autoPerfTune  = FindBool(json, "autoPerfTune",  cfg.autoPerfTune);
     cfg.perfProfile   = FindInt(json,  "perfProfile",   cfg.perfProfile);
     cfg.startDelayMs  = static_cast<uint32_t>(
@@ -164,8 +169,11 @@ AppConfig Config::Load()
     cfg.ignoredApps      = FindString(json, "ignoredApps",    cfg.ignoredApps);
     cfg.activationHotkey = FindString(json, "activationHotkey", cfg.activationHotkey);
     cfg.showDebugInfo = FindBool(json, "showDebugInfo", cfg.showDebugInfo);
+    cfg.appTheme      = FindInt(json,  "appTheme",      cfg.appTheme);
 
     // Clamp
+    if (cfg.appTheme < 0) cfg.appTheme = 0;
+    if (cfg.appTheme > 4) cfg.appTheme = 4;
     if (cfg.maxWindows < 2)  cfg.maxWindows = 2;
     if (cfg.maxWindows > 10) cfg.maxWindows = 10;
     if (static_cast<int>(cfg.backgroundOpacity) < 0) cfg.backgroundOpacity = 0;
@@ -203,6 +211,11 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"taskbarPreview\": %s,\n",     cfg.taskbarPreview     ? "true" : "false");
     fprintf(f, "  \"maxWindows\": %u,\n",    cfg.maxWindows);
     fprintf(f, "  \"backgroundOpacity\": %u,\n", cfg.backgroundOpacity);
+    fprintf(f, "  \"showDesktopTile\": %s,\n",    cfg.showDesktopTile    ? "true" : "false");
+    fprintf(f, "  \"selectedLabel\": %s,\n",      cfg.selectedLabel      ? "true" : "false");
+    fprintf(f, "  \"selectedLabelTitle\": %s,\n", cfg.selectedLabelTitle ? "true" : "false");
+    fprintf(f, "  \"selectedLabelIcon\": %s,\n",  cfg.selectedLabelIcon  ? "true" : "false");
+    fprintf(f, "  \"selectedLabelBox\": %s,\n",   cfg.selectedLabelBox   ? "true" : "false");
     fprintf(f, "  \"autoPerfTune\": %s,\n",  cfg.autoPerfTune ? "true" : "false");
     fprintf(f, "  \"perfProfile\": %d,\n",   cfg.perfProfile);
     fprintf(f, "  \"startDelayMs\": %u,\n",  cfg.startDelayMs);
@@ -211,7 +224,10 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"keyboardNav\": %s,\n",      cfg.keyboardNav      ? "true" : "false");
     fprintf(f, "  \"ignoredApps\": \"%s\",\n",  EscapeUtf8(cfg.ignoredApps).c_str());
     fprintf(f, "  \"activationHotkey\": \"%s\",\n", EscapeUtf8(cfg.activationHotkey).c_str());
-    fprintf(f, "  \"showDebugInfo\": %s\n",  cfg.showDebugInfo ? "true" : "false");
+    fprintf(f, "  \"showDebugInfo\": %s,\n",  cfg.showDebugInfo ? "true" : "false");
+    // Settings-app-owned key — persisted here too so a core-side save
+    // never drops the user's theme choice.
+    fprintf(f, "  \"appTheme\": %d\n",       cfg.appTheme);
     fprintf(f, "}\n");
     fclose(f);
 

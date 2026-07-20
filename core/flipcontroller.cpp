@@ -522,6 +522,8 @@ void FlipController::Shutdown()
     WindowCloaker::ForceUncloakEverything();
 
     m_captureCache.clear();
+    m_wallpaperCapture.reset();
+    ResetSelectedLabel();
     m_renderer.Shutdown();
 }
 
@@ -574,6 +576,7 @@ void FlipController::Activate()
     m_exitSelectedStableHwnd = nullptr;
     m_frozenTaskbarSRV = nullptr;
     m_taskbarDrawOnTop = false;
+    m_labelAnim.Reset();   // label anchor re-derives from this session's cascade
 
     // Detect "activated on desktop" before scanning windows so the entry
     // morph can fade the desktop tile in from α=0 (Win7 behaviour).  The
@@ -599,8 +602,17 @@ void FlipController::Activate()
     m_windows = WindowScanner::Enumerate(myPid);
 
     // 3. Exclude our overlay and inject desktop pseudo-window.
+    //    Desktop tile disabled (Appearance → Desktop in cascade off): no
+    //    tile is injected — the freed slot goes to the next real window —
+    //    but m_desktopHwnd is still resolved because the wallpaper
+    //    backdrop, the cloak exclude list and the backdrop geometry all
+    //    key off it.
+    m_desktopTileDisabled = m_config && !m_config->showDesktopTile;
     DeduplicateWindows();
-    InjectDesktopWindow();
+    if (m_desktopTileDisabled)
+        m_desktopHwnd = WindowScanner::FindDesktopWindow();
+    else
+        InjectDesktopWindow();
     UpdateDesktopCaptureGeometry();
 
     // 3b. Sort windows by program (grouped by PID, smaller first within group).
@@ -767,6 +779,12 @@ void FlipController::Activate()
                 if (!cap->HasCachedFrame())
                     allReady = false;
             }
+            if (m_wallpaperCapture && m_desktopTileDisabled) {
+                if (!m_wallpaperCapture->HasCachedFrame())
+                    m_wallpaperCapture->GetCurrentFrame();
+                if (!m_wallpaperCapture->HasCachedFrame())
+                    allReady = false;
+            }
             if (allReady)
                 break;
             QueryPerformanceCounter(&w1);
@@ -784,6 +802,13 @@ void FlipController::Activate()
             if (!cap->HasCachedFrame())
                 cap->EnsureFrame();   // DwmThumbnail → PrintWindow fallback
         }
+    }
+    // Wallpaper backdrop capture (desktop tile disabled) needs a frame too.
+    if (m_wallpaperCapture && m_desktopTileDisabled
+        && !m_wallpaperCapture->HasCachedFrame()) {
+        m_wallpaperCapture->GetCurrentFrame();
+        if (!m_wallpaperCapture->HasCachedFrame())
+            m_wallpaperCapture->EnsureFrame();
     }
     // Ensure taskbar has a frame too.
     if (m_taskbarCapture && !m_taskbarCapture->HasCachedFrame()) {
@@ -817,17 +842,35 @@ void FlipController::Activate()
                 tray.capture->DetectContentCenterV(tray.contentCenterY);
     }
 
-    // Taskbar live preview eligibility — only when the capture is already
-    // bar-sized (no content band detected, the Win11 25H2 behaviour).  On
-    // builds that deliver the tall 24H2-style capture, live taskbar frames
-    // have historically misrendered, so those sessions keep the frozen
-    // pre-hide snapshot instead.  Decided BEFORE HideRealTaskbar so the
-    // hide step can hold the bar visible for the live stream.
+    // Taskbar live preview eligibility — pure user opt-in.  Decided BEFORE
+    // HideRealTaskbar so the hide step can hold the bar visible for the
+    // live stream (a hidden Shell_TrayWnd stops delivering WGC frames,
+    // which is exactly the frozen-clock symptom).
+    //
+    // v1.1: the old "tall 24H2-style capture → keep the frozen snapshot"
+    // rule is gone.  It predated the HC13 shared content-band crop; today
+    // every draw site UV-crops live frames through the SAME
+    // ComputeTaskbarContentBandUV path as the frozen snapshot, so a tall
+    // capture renders identically live and frozen — while the rule itself
+    // made the option permanently dead on Win11 24H2 (and the previous
+    // !contentResolved form killed it on 25H2 as well, since icon/clock
+    // rows count as a "content band" on a bar-sized capture too).
     m_taskbarLiveActive = m_config && m_config->taskbarLivePreview
-        && m_taskbarCapture && !m_taskbarContentResolved;
+        && m_taskbarCapture != nullptr;
     for (auto& tray : m_secondaryTrays)
         tray.liveActive = m_config && m_config->taskbarLivePreview
-            && tray.capture && !tray.contentResolved;
+            && tray.capture != nullptr;
+    if (m_config && m_config->showDebugInfo && m_taskbarCapture) {
+        int texW = 0, texH = 0;
+        m_taskbarCapture->GetCapturedSize(texW, texH);
+        wchar_t buf[160];
+        swprintf_s(buf,
+            L"CKFlip TB-LIVE: live=%d tex=%dx%d barH=%ld contentResolved=%d centerY=%.3f\n",
+            m_taskbarLiveActive ? 1 : 0, texW, texH,
+            m_taskbarRect.bottom - m_taskbarRect.top,
+            m_taskbarContentResolved ? 1 : 0, m_taskbarContentCenterY);
+        CKLog::Log(buf);
+    }
 
     // Shell_TrayWnd is hidden for the whole CKFlip session, so its live WGC
     // stream can legitimately advance to transparent/empty frames. Keep the
@@ -880,35 +923,34 @@ void FlipController::Activate()
 
         m_quad.DrawDim(ctx, 1.0f);
 
-        // Wallpaper background.  Source = Progman/WorkerW WGC capture.
+        // Wallpaper background.  Source = Progman/WorkerW WGC capture —
+        // the desktop tile's capture, or the dedicated wallpaper capture
+        // when the desktop tile is disabled (WallpaperCaptureSource).
         // Drawn via DrawWallpaper() which uses a PS that fills any
         // transparent strip in the texture (Win11 < 25H2 leaves an α=0
         // band where the taskbar lives) by sampling the closest opaque
         // pixel above.  No-op on Win11 25H2 where the capture is fully
         // opaque.  Wallpaper-Engine and other dynamic-wallpaper apps
         // route their content through Progman, so this preserves them.
-        for (size_t i = 0; i < m_windows.size(); ++i) {
-            if (m_windows[i].hwnd == m_desktopHwnd && i < m_captures.size() && m_captures[i]) {
-                ID3D11ShaderResourceView* srv = m_captures[i]->GetCurrentFrame();
-                if (srv) {
-                    QuadDrawCall bgDraw;
-                    DirectX::XMStoreFloat4x4(&bgDraw.mvp,
-                        ComputeScreenRectMVPWithOrigin(m_desktopBackdropRect,
-                                                       vpW, vpH,
-                                                       m_overlayOriginX,
-                                                       m_overlayOriginY));
-                    // DimFactor 0 = wallpaper fully visible, 1 = full target dim.
-                    // Dim target comes from config (backgroundOpacity %, default
-                    // 28 == the original kBgAlpha look); only the endpoint
-                    // changes — the animation curve is untouched.
-                    const float bgAlpha = m_config
-                        ? static_cast<float>(m_config->backgroundOpacity) / 100.0f
-                        : kBgAlpha;
-                    bgDraw.alpha      = 1.0f - m_entryExitAnimator.DimFactor() * (1.0f - bgAlpha);
-                    bgDraw.blurAmount = 0.0f;
-                    m_quad.DrawWallpaper(ctx, srv, bgDraw);
-                }
-                break;
+        if (WGCCapture* wallCap = WallpaperCaptureSource()) {
+            ID3D11ShaderResourceView* srv = wallCap->GetCurrentFrame();
+            if (srv) {
+                QuadDrawCall bgDraw;
+                DirectX::XMStoreFloat4x4(&bgDraw.mvp,
+                    ComputeScreenRectMVPWithOrigin(m_desktopBackdropRect,
+                                                   vpW, vpH,
+                                                   m_overlayOriginX,
+                                                   m_overlayOriginY));
+                // DimFactor 0 = wallpaper fully visible, 1 = full target dim.
+                // Dim target comes from config (backgroundOpacity %, default
+                // 28 == the original kBgAlpha look); only the endpoint
+                // changes — the animation curve is untouched.
+                const float bgAlpha = m_config
+                    ? static_cast<float>(m_config->backgroundOpacity) / 100.0f
+                    : kBgAlpha;
+                bgDraw.alpha      = 1.0f - m_entryExitAnimator.DimFactor() * (1.0f - bgAlpha);
+                bgDraw.blurAmount = 0.0f;
+                m_quad.DrawWallpaper(ctx, srv, bgDraw);
             }
         }
 
@@ -1223,12 +1265,8 @@ void FlipController::ExecuteCycleForward(bool chained)
 
     // Freeze background layers.
     m_frozenDesktopSRV = nullptr;
-    for (size_t i = 0; i < m_windows.size(); ++i) {
-        if (m_windows[i].hwnd == m_desktopHwnd && i < m_captures.size() && m_captures[i]) {
-            m_frozenDesktopSRV = SrvRef(m_captures[i]->GetCurrentFrame());
-            break;
-        }
-    }
+    if (WGCCapture* wallCap = WallpaperCaptureSource())
+        m_frozenDesktopSRV = SrvRef(wallCap->GetCurrentFrame());
     if (!m_frozenTaskbarSRV && m_taskbarCapture)
         m_frozenTaskbarSRV = SrvRef(m_taskbarCapture->GetCurrentFrame());
     m_sessionFrozen = true;
@@ -1285,12 +1323,8 @@ void FlipController::ExecuteCycleBackward(bool chained)
     // "desktop's texture replaced by Explorer's mid-transition" symptom on
     // backward cycling but not forward.
     m_frozenDesktopSRV = nullptr;
-    for (size_t i = 0; i < m_windows.size(); ++i) {
-        if (m_windows[i].hwnd == m_desktopHwnd && i < m_captures.size() && m_captures[i]) {
-            m_frozenDesktopSRV = SrvRef(m_captures[i]->GetCurrentFrame());
-            break;
-        }
-    }
+    if (WGCCapture* wallCap = WallpaperCaptureSource())
+        m_frozenDesktopSRV = SrvRef(wallCap->GetCurrentFrame());
     if (!m_frozenTaskbarSRV && m_taskbarCapture)
         m_frozenTaskbarSRV = SrvRef(m_taskbarCapture->GetCurrentFrame());
     m_sessionFrozen = true;
@@ -1728,6 +1762,10 @@ void FlipController::FinishDismiss()
     DwmFlush();
 
     StopCaptures();
+    // Stop (don't destroy) the dedicated wallpaper capture — its cached
+    // frame is the warm start for the next tile-disabled session.
+    if (m_wallpaperCapture) m_wallpaperCapture->Stop();
+    ResetSelectedLabel();
     if (m_taskbarCapture) { m_taskbarCapture->Stop(); m_taskbarCapture.reset(); }
     for (auto& tray : m_secondaryTrays) {
         if (tray.capture)
@@ -1779,6 +1817,9 @@ void FlipController::FinishEscape()
     DwmFlush();
 
     StopCaptures();
+    // See FinishDismiss — warm-cached wallpaper capture, label teardown.
+    if (m_wallpaperCapture) m_wallpaperCapture->Stop();
+    ResetSelectedLabel();
     if (m_taskbarCapture) { m_taskbarCapture->Stop(); m_taskbarCapture.reset(); }
     for (auto& tray : m_secondaryTrays) {
         if (tray.capture)
@@ -1819,6 +1860,18 @@ void FlipController::StartCaptures()
     m_captures.resize(m_windows.size());
     auto* device = m_renderer.GetDevice();
 
+    // Desktop tile re-enabled since the last session: hand the dedicated
+    // wallpaper capture (with its warm cached frame) back to the cache so
+    // the loop below reuses it for the desktop tile instead of creating a
+    // second Progman capture.
+    if (!m_desktopTileDisabled && m_wallpaperCapture) {
+        HWND h = m_wallpaperCapture->GetHwnd();
+        if (h)
+            m_captureCache[h] = std::move(m_wallpaperCapture);
+        else
+            m_wallpaperCapture.reset();
+    }
+
     // NOTE: live-preview-off does NOT change anything here.  Sessions always
     // start normally (identical activation latency to live mode); RenderFrame
     // freezes each capture at its first delivered frame instead.  An earlier
@@ -1843,6 +1896,23 @@ void FlipController::StartCaptures()
         }
     }
 
+    // Desktop tile disabled: the wallpaper backdrop still needs a live
+    // Progman/WorkerW capture — start (or restart) the dedicated one.
+    // A warm object from a previous tile-enabled session may sit in the
+    // cache under the desktop HWND; adopt it to keep its cached frame.
+    if (m_desktopTileDisabled && m_desktopHwnd) {
+        if (!m_wallpaperCapture) {
+            auto it = m_captureCache.find(m_desktopHwnd);
+            if (it != m_captureCache.end()) {
+                m_wallpaperCapture = std::move(it->second);
+                m_captureCache.erase(it);
+            } else {
+                m_wallpaperCapture = std::make_unique<WGCCapture>();
+            }
+        }
+        m_wallpaperCapture->StartForWindow(m_desktopHwnd, device);
+    }
+
     // Discard any leftover cache entries for windows that no longer exist.
     m_captureCache.clear();
 }
@@ -1860,6 +1930,29 @@ void FlipController::StopCaptures()
         }
     }
     m_captures.clear();
+}
+
+// ---------------------------------------------------------------------------
+WGCCapture* FlipController::WallpaperCaptureSource()
+{
+    if (m_desktopTileDisabled) {
+        // The dedicated capture must be the one started for THIS session's
+        // desktop window — a stale object from a previous session (desktop
+        // window unresolved this time, or Progman/WorkerW recreated) could
+        // otherwise draw an old-resolution frame stretched into the
+        // current backdrop rect.
+        if (m_desktopHwnd && m_wallpaperCapture
+            && m_wallpaperCapture->GetHwnd() == m_desktopHwnd)
+            return m_wallpaperCapture.get();
+        return nullptr;
+    }
+    if (m_desktopHwnd) {
+        for (size_t i = 0; i < m_windows.size(); ++i) {
+            if (m_windows[i].hwnd == m_desktopHwnd && i < m_captures.size())
+                return m_captures[i].get();
+        }
+    }
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -2269,14 +2362,8 @@ void FlipController::RenderFrame()
         ID3D11ShaderResourceView* desktopSRV = nullptr;
         if (m_sessionFrozen) {
             desktopSRV = m_frozenDesktopSRV.get();
-        } else if (m_desktopHwnd) {
-            for (size_t i = 0; i < m_windows.size(); ++i) {
-                if (m_windows[i].hwnd == m_desktopHwnd
-                    && i < m_captures.size() && m_captures[i]) {
-                    desktopSRV = m_captures[i]->GetCurrentFrame();
-                    break;
-                }
-            }
+        } else if (WGCCapture* wallCap = WallpaperCaptureSource()) {
+            desktopSRV = wallCap->GetCurrentFrame();
         }
         if (desktopSRV) {
             QuadDrawCall bgDraw;
@@ -2716,6 +2803,16 @@ void FlipController::RenderFrame()
         DrawTaskbarLayer(ctx, m_quad, m_taskbarCapture.get(), tbSRV,
                          m_taskbarRect, m_taskbarContentResolved,
                          m_taskbarContentCenterY, vpW, vpH);
+    }
+
+    // Selected-window label (Appearance → Selected window label): title +
+    // program icon of the front-slot window, drawn topmost as a screen-
+    // space pill.  Hidden during the entry/exit morph — tiles are still
+    // travelling and the pill would float over mid-flight geometry.
+    if (!m_entryExitAnimator.IsActive() && !m_exitPending
+        && !finishAfterPresent) {
+        UpdateSelectedLabel();
+        DrawSelectedLabel(ctx, vpW, vpH, monRemap);
     }
 
     // Present.  Default path: non-blocking Present(0) + DwmFlush for frame
@@ -3204,10 +3301,12 @@ void FlipController::HideRealTaskbar()
 {
     m_taskbarWasVisible = false;
     m_taskbarHeld = false;
+    m_taskbarHeldPinPosition = false;
     m_heldPinCounter = 0;
     for (auto& tray : m_secondaryTrays) {
         tray.wasVisible = false;
         tray.held = false;
+        tray.heldPinPosition = false;
     }
 #ifdef CKFLIP_DEBUG_TASKBAR
     if (g_taskbarDebugMode == TaskbarDebugMode::NoHideRealTaskbar) {
@@ -3225,10 +3324,12 @@ void FlipController::HideRealTaskbar()
     // Held bars are disabled (no clicks through the click-through overlay)
     // and pinned below the overlay every frame (PinHeldTaskbars).
     if (m_taskbarHwnd && IsWindowVisible(m_taskbarHwnd)) {
-        const bool hold = (m_taskbarAutoHide && m_taskbarExtendedAtStart)
-                       || m_taskbarLiveActive;
+        const bool continuity = m_taskbarAutoHide && m_taskbarExtendedAtStart;
+        const bool hold = continuity || m_taskbarLiveActive;
         if (hold && ValidRect(m_taskbarHoldRectScreen)) {
             m_taskbarHeld = true;
+            m_taskbarHeldPinPosition = continuity;
+            m_taskbarLastSeenRect = m_taskbarHoldRectScreen;
             EnableWindow(m_taskbarHwnd, FALSE);
             SetWindowPos(m_taskbarHwnd, m_renderer.GetHwnd(),
                          m_taskbarHoldRectScreen.left,
@@ -3243,10 +3344,12 @@ void FlipController::HideRealTaskbar()
     }
     for (auto& tray : m_secondaryTrays) {
         if (tray.hwnd && IsWindowVisible(tray.hwnd)) {
-            const bool hold = (m_taskbarAutoHide && tray.extendedAtStart)
-                           || tray.liveActive;
+            const bool continuity = m_taskbarAutoHide && tray.extendedAtStart;
+            const bool hold = continuity || tray.liveActive;
             if (hold && ValidRect(tray.holdRectScreen)) {
                 tray.held = true;
+                tray.heldPinPosition = continuity;
+                tray.lastSeenRect = tray.holdRectScreen;
                 EnableWindow(tray.hwnd, FALSE);
                 SetWindowPos(tray.hwnd, m_renderer.GetHwnd(),
                              tray.holdRectScreen.left,
@@ -3273,17 +3376,38 @@ void FlipController::PinHeldTaskbars()
     }
 
     // The shell fights the hold (autohide retraction, edge-hover reveal
-    // raising the bar above the overlay).  Re-pin when the rect drifted;
-    // re-assert the below-overlay Z periodically as cheap insurance.
+    // raising the bar above the overlay).  Continuity holds re-pin the
+    // rect when it drifted; live-only holds deliberately DON'T — with
+    // autohide enabled the shell re-animates the retraction every frame,
+    // and answering each step with a cross-process SetWindowPos is a
+    // per-frame tug of war (measurable frame cost) for a position the
+    // live preview doesn't even need.  The below-overlay Z is re-asserted
+    // periodically for every held bar as cheap insurance.
     ++m_heldPinCounter;
     const bool reassertZ = (m_heldPinCounter % 30) == 0;
     HWND overlay = m_renderer.GetHwnd();
 
-    auto pin = [&](HWND bar, const RECT& hold) {
+    auto pin = [&](HWND bar, const RECT& hold, bool enforcePos,
+                   RECT& lastSeen) {
         if (!bar || !IsWindow(bar) || !ValidRect(hold))
             return;
         RECT cur{};
         GetWindowRect(bar, &cur);
+        if (!enforcePos) {
+            // Live-only hold: never fight the shell's position animation.
+            // But a rect in motion (edge-hover reveal / retraction) is
+            // exactly the moment the shell may also raise the bar above
+            // the overlay, so re-assert the Z IMMEDIATELY while moving —
+            // Z-only (SWP_NOMOVE|SWP_NOSIZE) never feeds the animation
+            // back, so the burst self-terminates in a few hundred ms.
+            const bool moving = !EqualRect(&cur, &lastSeen);
+            lastSeen = cur;
+            if (moving || reassertZ)
+                SetWindowPos(bar, overlay, 0, 0, 0, 0,
+                             SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            return;
+        }
+        lastSeen = cur;
         const bool moved = cur.left != hold.left || cur.top != hold.top
                         || cur.right != hold.right || cur.bottom != hold.bottom;
         if (!moved && !reassertZ)
@@ -3296,10 +3420,12 @@ void FlipController::PinHeldTaskbars()
     };
 
     if (m_taskbarHeld)
-        pin(m_taskbarHwnd, m_taskbarHoldRectScreen);
+        pin(m_taskbarHwnd, m_taskbarHoldRectScreen, m_taskbarHeldPinPosition,
+            m_taskbarLastSeenRect);
     for (auto& tray : m_secondaryTrays)
         if (tray.held)
-            pin(tray.hwnd, tray.holdRectScreen);
+            pin(tray.hwnd, tray.holdRectScreen, tray.heldPinPosition,
+                tray.lastSeenRect);
 }
 
 void FlipController::ShowRealTaskbar()
@@ -3328,6 +3454,7 @@ void FlipController::ShowRealTaskbar()
                      SWP_NOACTIVATE);
     }
     m_taskbarHeld = false;
+    m_taskbarHeldPinPosition = false;
     if (m_taskbarWasVisible && m_taskbarHwnd && IsWindow(m_taskbarHwnd)) {
         ShowWindow(m_taskbarHwnd, SW_SHOW);
     }
@@ -3344,6 +3471,7 @@ void FlipController::ShowRealTaskbar()
                          SWP_NOACTIVATE);
         }
         tray.held = false;
+        tray.heldPinPosition = false;
         if (tray.wasVisible && tray.hwnd && IsWindow(tray.hwnd))
             ShowWindow(tray.hwnd, SW_SHOW);
         tray.wasVisible = false;
@@ -3397,4 +3525,562 @@ void FlipController::RestoreDesktopIcons()
     }
     m_iconListView     = nullptr;
     m_iconsWereVisible = false;
+}
+
+// ---------------------------------------------------------------------------
+// Selected-window label (v1.1) — title + program icon of the front-slot
+// window, GDI-rendered once per selection change into a premultiplied BGRA
+// pill texture and drawn as a screen-space quad above the front tile.
+// ---------------------------------------------------------------------------
+
+// Best-available program icon for a window.  Returned icon is either shared
+// (window/class icon — must NOT be destroyed) or owned (stock desktop icon —
+// must be destroyed); outOwned tells the caller which.
+static HICON GetLabelIcon(HWND hwnd, HWND desktopHwnd, bool& outOwned)
+{
+    outOwned = false;
+    if (hwnd && hwnd == desktopHwnd) {
+        SHSTOCKICONINFO sii{};
+        sii.cbSize = sizeof(sii);
+        if (SUCCEEDED(SHGetStockIconInfo(SIID_DESKTOPPC,
+                                         SHGSI_ICON | SHGSI_LARGEICON, &sii))
+            && sii.hIcon) {
+            outOwned = true;   // stock icons are caller-owned
+            return sii.hIcon;
+        }
+        return nullptr;
+    }
+    if (!hwnd || !IsWindow(hwnd))
+        return nullptr;
+
+    // Class icon first — GetClassLongPtrW reads class data without any
+    // cross-process message, so the common path never waits on another
+    // process from the render thread.
+    if (HICON cls = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICON)))
+        return cls;
+    if (HICON cls = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICONSM)))
+        return cls;
+
+    // Rare fallback: WM_GETICON with a short timeout — SMTO_ABORTIFHUNG
+    // returns immediately for hung windows, so the render thread can never
+    // stall behind one.
+    DWORD_PTR result = 0;
+    if (SendMessageTimeoutW(hwnd, WM_GETICON, ICON_BIG, 0,
+                            SMTO_ABORTIFHUNG | SMTO_BLOCK, 60, &result)
+        && result)
+        return reinterpret_cast<HICON>(result);
+    if (SendMessageTimeoutW(hwnd, WM_GETICON, ICON_SMALL2, 0,
+                            SMTO_ABORTIFHUNG | SMTO_BLOCK, 60, &result)
+        && result)
+        return reinterpret_cast<HICON>(result);
+    return nullptr;
+}
+
+void FlipController::ResetSelectedLabel()
+{
+    m_labelSRV     = nullptr;
+    m_labelTexture = nullptr;
+    m_labelHwnd    = nullptr;
+    m_labelTitle.clear();
+    m_labelTexW = 0;
+    m_labelTexH = 0;
+    m_labelAnim.Reset();
+}
+
+void FlipController::UpdateSelectedLabel()
+{
+    const bool master    = !m_config || m_config->selectedLabel;
+    const bool showTitle = !m_config || m_config->selectedLabelTitle;
+    const bool showIcon  = !m_config || m_config->selectedLabelIcon;
+    const bool showBox   = !m_config || m_config->selectedLabelBox;
+    if (!master || (!showTitle && !showIcon) || m_windows.empty()) {
+        if (m_labelSRV)
+            ResetSelectedLabel();
+        return;
+    }
+
+    HWND selected = m_windows[0].hwnd;
+    // The scan-time title is used as the session-stable key — polling
+    // GetWindowTextW per frame would SendMessage into foreign (possibly
+    // hung) processes from the render loop.
+    const std::wstring& title =
+        (selected == m_desktopHwnd) ? L"Desktop" : m_windows[0].title;
+
+    const int theme = m_config ? std::clamp(m_config->appTheme, 0, 4) : 0;
+    if (m_labelSRV && selected == m_labelHwnd && title == m_labelTitle
+        && showTitle == m_labelShowTitle && showIcon == m_labelShowIcon
+        && showBox == m_labelShowBox && theme == m_labelTheme)
+        return;   // up to date
+
+    if (!BuildSelectedLabelTexture(selected, title, showTitle, showIcon,
+                                   showBox)) {
+        // Keep the smoothed anchor — only the texture failed; releasing
+        // the animator here would make the next successful build snap.
+        m_labelSRV     = nullptr;
+        m_labelTexture = nullptr;
+        m_labelHwnd    = nullptr;
+        m_labelTitle.clear();
+        m_labelTexW = 0;
+        m_labelTexH = 0;
+    }
+}
+
+// Per-theme plate/text styling for the selected-window label — matches the
+// CKSettings application themes (config appTheme).  Colors sampled from the
+// corresponding Theme/Themes/*.xaml brushes.
+namespace {
+struct LabelStyle {
+    float topR, topG, topB;        // fill gradient top (flat: == bottom)
+    float botR, botG, botB;        // fill gradient bottom
+    float fillAlpha;               // plate opacity
+    float sheenAdd;                // white added at the very top of the sheen
+    float sheenExtent;             // fraction of height the sheen covers (0 = flat)
+    float borderR, borderG, borderB;
+    float borderMix;               // color pull toward border tone at the edge
+    float borderAlphaBoost;
+    float radiusPx;                // corner radius at uiScale 1
+    float textR, textG, textB;
+    float shadowR, shadowG, shadowB;
+    float shadowBox, shadowNoBox;  // shadow strength with/without the plate
+};
+
+// Index = AppConfig::appTheme (0 Skeuo Dark, 1 Skeuo White, 2 Minimal
+// Dark, 3 Minimal White, 4 Glassmorphism).
+constexpr LabelStyle kLabelStyles[5] = {
+    // 0 — Skeuomorphic Dark: steel gradient + aero sheen (#202A36 family).
+    {  62.f,  74.f,  92.f,   26.f,  30.f,  40.f,  0.55f, 50.f, 0.45f,
+      215.f, 225.f, 238.f,  0.45f, 0.16f,  9.0f,
+      243.f, 246.f, 250.f,    0.f,   0.f,   0.f,  0.38f, 0.60f },
+    // 1 — Skeuomorphic White: bright glass (#FCFEFF cards, #B9C8D6 border).
+    { 252.f, 253.f, 255.f,  212.f, 220.f, 229.f,  0.70f, 26.f, 0.50f,
+      146.f, 162.f, 178.f,  0.50f, 0.12f,  9.0f,
+       27.f,  39.f,  51.f,  255.f, 255.f, 255.f,  0.42f, 0.62f },
+    // 2 — Minimalism Dark: flat near-black (#101214), hairline border.
+    {  22.f,  24.f,  27.f,   16.f,  18.f,  20.f,  0.66f,  0.f, 0.00f,
+      120.f, 126.f, 134.f,  0.30f, 0.08f,  4.5f,
+      242.f, 245.f, 248.f,    0.f,   0.f,   0.f,  0.30f, 0.60f },
+    // 3 — Minimalism White: flat white (#FFFFFF, #DDE2E7 border).
+    { 250.f, 251.f, 253.f,  243.f, 245.f, 248.f,  0.74f,  0.f, 0.00f,
+      178.f, 186.f, 195.f,  0.35f, 0.10f,  4.5f,
+       21.f,  25.f,  29.f,  255.f, 255.f, 255.f,  0.40f, 0.62f },
+    // 4 — Glassmorphism: highly translucent dark glass (#1A2430 base),
+    //     broad sheen, luminous white border, large radius.
+    {  46.f,  60.f,  78.f,   22.f,  32.f,  46.f,  0.46f, 58.f, 0.58f,
+      240.f, 246.f, 252.f,  0.55f, 0.20f, 13.0f,
+      250.f, 252.f, 255.f,    0.f,   0.f,   0.f,  0.44f, 0.62f },
+};
+} // namespace
+
+bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
+                                               const std::wstring& title,
+                                               bool showTitle, bool showIcon,
+                                               bool showBox)
+{
+    ID3D11Device* device = m_renderer.GetDevice();
+    if (!device)
+        return false;
+
+    const int theme = m_config ? std::clamp(m_config->appTheme, 0, 4) : 0;
+    const LabelStyle& st = kLabelStyles[theme];
+
+    // UI scale keys off the cascade host height so the label has the same
+    // physical presence at 1080p and 4K.
+    const float uiScale = std::clamp(m_cascadeH / 1080.0f, 1.0f, 2.5f);
+    const int padX     = static_cast<int>(16.0f * uiScale);
+    const int padY     = static_cast<int>(10.0f * uiScale);
+    const int iconSide = static_cast<int>(26.0f * uiScale);
+    const int gap      = static_cast<int>(10.0f * uiScale);
+    const int fontH    = static_cast<int>(17.0f * uiScale);
+    const int maxTextW = static_cast<int>(m_cascadeW * 0.45f);
+
+    bool iconOwned = false;
+    HICON icon = showIcon ? GetLabelIcon(hwnd, m_desktopHwnd, iconOwned)
+                          : nullptr;
+    const bool haveIcon = icon != nullptr;
+    const bool haveText = showTitle && !title.empty();
+    if (!haveIcon && !haveText) {
+        if (icon && iconOwned) DestroyIcon(icon);
+        return false;
+    }
+
+    HDC screenDC = GetDC(nullptr);
+    HDC memDC    = CreateCompatibleDC(screenDC);
+    // Grayscale antialiasing on purpose: the glyphs are rendered as a
+    // white-on-black coverage MASK and composited manually — ClearType's
+    // per-channel fringes would bleed color into the mask.
+    HFONT font   = CreateFontW(-fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                               FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                               CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HGDIOBJ oldFont = SelectObject(memDC, font);
+
+    int textW = 0, textH = 0;
+    if (haveText) {
+        RECT calc{ 0, 0, maxTextW, 0 };
+        DrawTextW(memDC, title.c_str(), -1, &calc,
+                  DT_SINGLELINE | DT_CALCRECT);
+        textW = std::min<int>(calc.right, maxTextW);
+        textH = calc.bottom;
+    }
+
+    const int contentH = (std::max)(haveIcon ? iconSide : 0, textH);
+    const int width  = padX + (haveIcon ? iconSide : 0)
+                     + ((haveIcon && haveText) ? gap : 0)
+                     + textW + padX;
+    const int height = padY + contentH + padY;
+
+    auto makeDib = [&](int w, int h, void** outBits) -> HBITMAP {
+        BITMAPINFO bmi = {};
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = w;
+        bmi.bmiHeader.biHeight      = -h;   // top-down
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        return CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, outBits,
+                                nullptr, 0);
+    };
+
+    // ---- Compose in a premultiplied float buffer (B,G,R,A per pixel) ----
+    const size_t pxCount = static_cast<size_t>(width) * height;
+    std::vector<float> out(pxCount * 4u, 0.0f);
+    auto over = [&](size_t idx, float b, float g, float r, float a) {
+        // Premultiplied source-over: dst = src + dst * (1 - srcA).
+        float* d = &out[idx * 4u];
+        const float inv = 1.0f - a;
+        d[0] = b + d[0] * inv;
+        d[1] = g + d[1] * inv;
+        d[2] = r + d[2] * inv;
+        d[3] = a + d[3] * inv;
+    };
+
+    // 1. Theme plate — vertical gradient with an optional top sheen, a
+    //    1-px border and rounded corners, all parameterised by the active
+    //    CKSettings theme (kLabelStyles).  Translucent so the cascade
+    //    shows through, tinted for text contrast.
+    if (showBox) {
+        const float radius   = st.radiusPx * uiScale;
+        const float borderPx = 1.4f * uiScale;
+        for (int yy = 0; yy < height; ++yy) {
+            const float t = height > 1
+                ? static_cast<float>(yy) / static_cast<float>(height - 1)
+                : 0.0f;
+            float fr = st.topR + (st.botR - st.topR) * t;
+            float fg = st.topG + (st.botG - st.topG) * t;
+            float fb = st.topB + (st.botB - st.topB) * t;
+            // Sheen band over the upper part (skeuo/glass themes only).
+            if (st.sheenExtent > 0.0f && t < st.sheenExtent) {
+                const float s = (st.sheenExtent - t) / st.sheenExtent;
+                fr += (st.sheenAdd + 4.0f) * s;
+                fg += (st.sheenAdd + 4.0f) * s;
+                fb += (st.sheenAdd + 8.0f) * s;
+            }
+            for (int xx = 0; xx < width; ++xx) {
+                const float fx = static_cast<float>(xx) + 0.5f;
+                const float fy = static_cast<float>(yy) + 0.5f;
+                const float cx = std::clamp(fx, radius,
+                                            static_cast<float>(width) - radius);
+                const float cy = std::clamp(fy, radius,
+                                            static_cast<float>(height) - radius);
+                const float dx = fx - cx, dy = fy - cy;
+                // Signed inside-distance to the rounded-rect boundary.
+                float inDist;
+                if (dx == 0.0f && dy == 0.0f) {
+                    inDist = (std::min)(
+                        (std::min)(fx, static_cast<float>(width)  - fx),
+                        (std::min)(fy, static_cast<float>(height) - fy));
+                } else {
+                    inDist = radius - std::sqrt(dx * dx + dy * dy);
+                }
+                const float cov = std::clamp(inDist + 0.5f, 0.0f, 1.0f);
+                if (cov <= 0.0f)
+                    continue;
+
+                float r = fr, g = fg, b = fb;
+                float a = st.fillAlpha;
+                // Border hugging the outer edge.
+                const float bi = std::clamp(
+                    (borderPx - inDist) / borderPx + 0.35f, 0.0f, 1.0f);
+                if (bi > 0.0f) {
+                    const float bw = bi * st.borderMix;
+                    r += (st.borderR - r) * bw;
+                    g += (st.borderG - g) * bw;
+                    b += (st.borderB - b) * bw;
+                    a += st.borderAlphaBoost * bi;
+                }
+                const float aa = a * cov;
+                over(static_cast<size_t>(yy) * width + xx,
+                     (b / 255.0f) * aa, (g / 255.0f) * aa,
+                     (r / 255.0f) * aa, aa);
+            }
+        }
+    }
+
+    // 2. Icon — drawn into its own zeroed DIB so DrawIconEx preserves the
+    //    icon's per-pixel alpha (same trick as the tray-menu bitmaps in
+    //    app.cpp), then composited premultiplied over the glass.
+    if (haveIcon) {
+        void* iconBits = nullptr;
+        HBITMAP iconDib = makeDib(iconSide, iconSide, &iconBits);
+        if (iconDib && iconBits) {
+            HGDIOBJ prev = SelectObject(memDC, iconDib);
+            DrawIconEx(memDC, 0, 0, icon, iconSide, iconSide, 0, nullptr,
+                       DI_NORMAL);
+            GdiFlush();
+            SelectObject(memDC, prev);
+
+            auto* ip = static_cast<uint8_t*>(iconBits);
+            // Legacy mask icons leave alpha at 0 while writing colors —
+            // detect that and fall back to "any color ⇒ opaque".
+            bool anyAlpha = false;
+            for (size_t i = 0; i < static_cast<size_t>(iconSide) * iconSide; ++i)
+                if (ip[i * 4u + 3]) { anyAlpha = true; break; }
+
+            const int ix0 = padX;
+            const int iy0 = (height - iconSide) / 2;
+            for (int yy = 0; yy < iconSide; ++yy) {
+                for (int xx = 0; xx < iconSide; ++xx) {
+                    const uint8_t* p =
+                        ip + (static_cast<size_t>(yy) * iconSide + xx) * 4u;
+                    float a = anyAlpha
+                        ? p[3] / 255.0f
+                        : ((p[0] | p[1] | p[2]) ? 1.0f : 0.0f);
+                    if (a <= 0.0f)
+                        continue;
+                    float b = p[0] / 255.0f;
+                    float g = p[1] / 255.0f;
+                    float r = p[2] / 255.0f;
+                    if (!anyAlpha) { /* straight color, a = 1 → already premult */ }
+                    over(static_cast<size_t>(iy0 + yy) * width + (ix0 + xx),
+                         b, g, r, a);
+                }
+            }
+        }
+        if (iconDib) DeleteObject(iconDib);
+    }
+
+    // 3. Title — rendered as a white-on-black coverage mask, composited as
+    //    a soft dark drop shadow (readability with the box off) plus the
+    //    white glyph pass.
+    if (haveText) {
+        void* textBits = nullptr;
+        HBITMAP textDib = makeDib(width, height, &textBits);
+        if (textDib && textBits) {
+            HGDIOBJ prev = SelectObject(memDC, textDib);
+            // DIB sections start zeroed = black background for the mask.
+            SetBkMode(memDC, TRANSPARENT);
+            SetTextColor(memDC, RGB(255, 255, 255));
+            const int tx = padX + (haveIcon ? iconSide + gap : 0);
+            RECT tr{ tx, padY, tx + textW, height - padY };
+            DrawTextW(memDC, title.c_str(), -1, &tr,
+                      DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS
+                      | DT_NOPREFIX);
+            GdiFlush();
+            SelectObject(memDC, prev);
+
+            auto* tp = static_cast<uint8_t*>(textBits);
+            auto maskAt = [&](int xx, int yy) -> float {
+                if (xx < 0 || yy < 0 || xx >= width || yy >= height)
+                    return 0.0f;
+                const uint8_t* p =
+                    tp + (static_cast<size_t>(yy) * width + xx) * 4u;
+                int mx = p[0];
+                if (p[1] > mx) mx = p[1];
+                if (p[2] > mx) mx = p[2];
+                return static_cast<float>(mx) / 255.0f;
+            };
+
+            const int   shadowOff      = (std::max)(1,
+                static_cast<int>(1.5f * uiScale));
+            const float shadowStrength = showBox ? st.shadowBox
+                                                 : st.shadowNoBox;
+            // Theme text + shadow (light themes cast a white halo so the
+            // dark glyphs stay readable without a plate).
+            const float tb = st.textB / 255.0f;
+            const float tg = st.textG / 255.0f;
+            const float tr2 = st.textR / 255.0f;
+            const float sb = st.shadowB / 255.0f;
+            const float sg = st.shadowG / 255.0f;
+            const float sr = st.shadowR / 255.0f;
+            for (int yy = 0; yy < height; ++yy) {
+                for (int xx = 0; xx < width; ++xx) {
+                    const size_t idx = static_cast<size_t>(yy) * width + xx;
+                    const float sh = maskAt(xx - shadowOff, yy - shadowOff)
+                                   * shadowStrength;
+                    if (sh > 0.0f)
+                        over(idx, sb * sh, sg * sh, sr * sh, sh);
+                    const float m = maskAt(xx, yy);
+                    if (m > 0.0f)
+                        over(idx, tb * m, tg * m, tr2 * m, m);
+                }
+            }
+        }
+        if (textDib) DeleteObject(textDib);
+    }
+
+    // ---- Pack to premultiplied BGRA bytes and upload -----------------------
+    std::vector<uint8_t> packed(pxCount * 4u);
+    for (size_t i = 0; i < pxCount * 4u; ++i)
+        packed[i] = static_cast<uint8_t>(
+            std::clamp(out[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width            = static_cast<UINT>(width);
+    desc.Height           = static_cast<UINT>(height);
+    desc.MipLevels        = 1;
+    desc.ArraySize        = 1;
+    desc.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage            = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init = {};
+    init.pSysMem     = packed.data();
+    init.SysMemPitch = static_cast<UINT>(width) * 4u;
+
+    winrt::com_ptr<ID3D11Texture2D> tex;
+    winrt::com_ptr<ID3D11ShaderResourceView> srv;
+    bool ok = SUCCEEDED(device->CreateTexture2D(&desc, &init, tex.put()))
+           && SUCCEEDED(device->CreateShaderResourceView(tex.get(), nullptr,
+                                                         srv.put()));
+
+    SelectObject(memDC, oldFont);
+    DeleteObject(font);
+    DeleteDC(memDC);
+    ReleaseDC(nullptr, screenDC);
+    if (icon && iconOwned) DestroyIcon(icon);
+
+    if (!ok)
+        return false;
+
+    m_labelTexture  = std::move(tex);
+    m_labelSRV      = std::move(srv);
+    m_labelHwnd     = hwnd;
+    m_labelTitle    = title;
+    m_labelShowTitle = showTitle;
+    m_labelShowIcon  = showIcon;
+    m_labelShowBox   = showBox;
+    m_labelTheme     = theme;
+    m_labelTexW = width;
+    m_labelTexH = height;
+    return true;
+}
+
+void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
+                                       float vpH, DirectX::XMMATRIX monRemap)
+{
+    if (!m_labelSRV || !ctx || vpW <= 0.0f || vpH <= 0.0f)
+        return;
+    if (m_scene.SlotCount() == 0)
+        return;
+
+    // Hold detection: held-key rapid cycling (queued commands or a chained
+    // animation) fades the label out instead of letting it dart between
+    // poses; it fades back in at the FINAL position once the hold ends —
+    // CycleStop clears the queue and SwitchToDecel drops the chained flag,
+    // so the fade-in already runs during the deceleration animation.
+    const bool suppressed = !m_cycleQueue.empty() || m_cycleAnim.IsChained();
+
+    // Target anchor: projected bounds of the front slot's REST pose.
+    // While a cycle is in flight the target is the cycle's destination
+    // slot 0 — projecting the live animated slot would ride the wrap
+    // tile's journey, and on backward cycles that path STARTS at the back
+    // of the cascade (the label dove toward the far end, then swept
+    // forward).  During the close reflow the previous target is kept.
+    {
+        using namespace DirectX;
+        XMMATRIX mvp{};
+        bool haveMvp = false;
+
+        if (m_cycleAnim.IsActive()) {
+            if (const TileSlot* t = m_cycleAnim.GetTargetSlot(0)) {
+                // Same inline MVP construction the overflow/dying tiles
+                // use — faithful to FlipScene::GetDrawCall geometry.
+                XMMATRIX world =
+                    XMMatrixScaling(t->scaleX, t->scaleY, 1.0f) *
+                    XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
+                    XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY())) *
+                    XMMatrixTranslation(t->x, t->y, t->z);
+                XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
+                XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
+                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+                XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
+                XMMATRIX proj   = XMMatrixPerspectiveFovLH(
+                    XMConvertToRadians(m_scene.GetFovDeg()), m_cascadeAspect,
+                    0.1f, 200.0f);
+                mvp = world * view * proj * monRemap;
+                haveMvp = true;
+            }
+        } else if (!m_closeAnim.IsActive()) {
+            QuadDrawCall probe;
+            float a = 0.0f;
+            m_scene.GetDrawCall(0, m_cascadeAspect, probe.mvp, a);
+            mvp = XMLoadFloat4x4(&probe.mvp) * monRemap;
+            haveMvp = true;
+        }
+
+        if (haveMvp) {
+            float minX = 0, minY = 0, maxX = 0, maxY = 0;
+            bool first = true, valid = true;
+            const float cx[4] = { -0.5f, -0.5f, 0.5f, 0.5f };
+            const float cy[4] = { -0.5f,  0.5f, 0.5f, -0.5f };
+            for (int i = 0; i < 4; ++i) {
+                XMVECTOR v = XMVector3TransformCoord(
+                    XMVectorSet(cx[i], cy[i], 0.0f, 1.0f), mvp);
+                const float ndcX = XMVectorGetX(v);
+                const float ndcY = XMVectorGetY(v);
+                if (!std::isfinite(ndcX) || !std::isfinite(ndcY)) {
+                    valid = false;
+                    break;
+                }
+                const float sx = (ndcX * 0.5f + 0.5f) * vpW;
+                const float sy = (0.5f - ndcY * 0.5f) * vpH;
+                if (first) { minX = maxX = sx; minY = maxY = sy; first = false; }
+                else {
+                    minX = (std::min)(minX, sx); maxX = (std::max)(maxX, sx);
+                    minY = (std::min)(minY, sy); maxY = (std::max)(maxY, sy);
+                }
+            }
+            if (valid && maxX > minX && maxY > minY)
+                m_labelAnim.Update((minX + maxX) * 0.5f, minY, suppressed);
+            else
+                haveMvp = false;
+        }
+        if (!haveMvp && m_labelAnim.HasPos()) {
+            // No fresh target this frame (close reflow / degenerate
+            // projection) — hold position, keep the fade advancing.
+            m_labelAnim.Update(m_labelAnim.X(), m_labelAnim.Y(), suppressed);
+        }
+    }
+    if (!m_labelAnim.HasPos() || m_labelAnim.Alpha() < 0.01f)
+        return;
+
+    const float uiScale = std::clamp(m_cascadeH / 1080.0f, 1.0f, 2.5f);
+    const float w = static_cast<float>(m_labelTexW);
+    const float h = static_cast<float>(m_labelTexH);
+
+    // Primary-monitor bounds in overlay space keep the pill on the cascade
+    // host regardless of virtual-screen origin.  Clamping happens on the
+    // SMOOTHED anchor so the clamp itself never causes a jump — the
+    // animator glides, the clamp merely bounds the result.
+    const float primL = static_cast<float>(m_monLayout.primary.left)  - m_overlayOriginX;
+    const float primT = static_cast<float>(m_monLayout.primary.top)   - m_overlayOriginY;
+    const float primR = static_cast<float>(m_monLayout.primary.right) - m_overlayOriginX;
+    const float margin = 8.0f * uiScale;
+
+    float left = m_labelAnim.X() - w * 0.5f;
+    left = std::clamp(left, primL + margin, (std::max)(primL + margin, primR - w - margin));
+    float top = m_labelAnim.Y() - h - 14.0f * uiScale;
+    if (top < primT + margin)
+        top = primT + margin;
+
+    QuadDrawCall draw;
+    DirectX::XMStoreFloat4x4(&draw.mvp,
+        DirectX::XMMatrixScaling((w / vpW) * 2.0f, (h / vpH) * 2.0f, 1.0f)
+        * DirectX::XMMatrixTranslation(
+              ((left + w * 0.5f) / vpW) * 2.0f - 1.0f,
+              1.0f - ((top + h * 0.5f) / vpH) * 2.0f, 0.0f));
+    draw.alpha      = m_labelAnim.Alpha();
+    draw.blurAmount = 0.0f;
+    m_quad.Draw(ctx, m_labelSRV.get(), draw);
 }

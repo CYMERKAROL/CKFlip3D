@@ -54,6 +54,11 @@ public static class ConfigService
                 m.TaskbarPreview    = GetBool(root, "taskbarPreview", m.TaskbarPreview);
                 m.MaxWindows        = (uint)GetInt(root, "maxWindows", (int)m.MaxWindows);
                 m.BackgroundOpacity = GetInt(root, "backgroundOpacity", m.BackgroundOpacity);
+                m.ShowDesktopTile    = GetBool(root, "showDesktopTile", m.ShowDesktopTile);
+                m.SelectedLabel      = GetBool(root, "selectedLabel", m.SelectedLabel);
+                m.SelectedLabelTitle = GetBool(root, "selectedLabelTitle", m.SelectedLabelTitle);
+                m.SelectedLabelIcon  = GetBool(root, "selectedLabelIcon", m.SelectedLabelIcon);
+                m.SelectedLabelBox   = GetBool(root, "selectedLabelBox", m.SelectedLabelBox);
                 m.AutoPerfTune      = GetBool(root, "autoPerfTune", m.AutoPerfTune);
                 m.PerfProfile       = GetInt(root, "perfProfile", m.PerfProfile);
                 m.StartDelayMs      = GetInt(root, "startDelayMs", m.StartDelayMs);
@@ -102,6 +107,11 @@ public static class ConfigService
         AppendBool(sb, "taskbarPreview", m.TaskbarPreview);
         AppendInt(sb, "maxWindows", (int)m.MaxWindows);
         AppendInt(sb, "backgroundOpacity", m.BackgroundOpacity);
+        AppendBool(sb, "showDesktopTile", m.ShowDesktopTile);
+        AppendBool(sb, "selectedLabel", m.SelectedLabel);
+        AppendBool(sb, "selectedLabelTitle", m.SelectedLabelTitle);
+        AppendBool(sb, "selectedLabelIcon", m.SelectedLabelIcon);
+        AppendBool(sb, "selectedLabelBox", m.SelectedLabelBox);
         AppendBool(sb, "autoPerfTune", m.AutoPerfTune);
         AppendInt(sb, "perfProfile", m.PerfProfile);
         AppendInt(sb, "startDelayMs", m.StartDelayMs);

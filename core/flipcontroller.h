@@ -12,6 +12,7 @@
 #include "../animation/CycleAnimator.h"
 #include "../animation/EntryExitAnimator.h"
 #include "../animation/CloseAnimator.h"
+#include "../animation/LabelAnimator.h"
 #include "Config.h"
 #include <vector>
 #include <memory>
@@ -67,8 +68,14 @@ private:
         // Hold-behind-overlay state (autohide continuity / live preview).
         bool extendedAtStart = false;  // autohide bar was slid out at Activate
         bool held = false;             // kept visible behind the overlay
+        // Enforce the hold position every frame (autohide-continuity only).
+        // A bar held solely for live preview skips it — its position is
+        // irrelevant to the WGC stream, and fighting the shell's autohide
+        // retraction costs a cross-process SetWindowPos per frame.
+        bool heldPinPosition = false;
         bool liveActive = false;       // sample live WGC frames this session
         RECT holdRectScreen{};         // SCREEN-space window rect to pin
+        RECT lastSeenRect{};           // last observed rect (motion detect)
     };
 
     static constexpr size_t     kMaxQueueSize = 3;       // max queued cycle commands
@@ -95,6 +102,20 @@ private:
     void ProcessCycleQueue();
     void HideDesktopIcons();
     void RestoreDesktopIcons();
+    /// Capture backing the wallpaper backdrop: the desktop tile's capture
+    /// when the tile is enabled, or the dedicated m_wallpaperCapture when
+    /// the desktop tile is disabled (config showDesktopTile = false).
+    WGCCapture* WallpaperCaptureSource();
+    /// Selected-window label (front slot): rebuild the GDI-rendered
+    /// title+icon texture when the selection/config changed, and draw it
+    /// as a screen-space pill anchored above the front tile.
+    void UpdateSelectedLabel();
+    bool BuildSelectedLabelTexture(HWND hwnd, const std::wstring& title,
+                                   bool showTitle, bool showIcon,
+                                   bool showBox);
+    void DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW, float vpH,
+                           DirectX::XMMATRIX monRemap);
+    void ResetSelectedLabel();
     void StartTaskbarCapture();
     void HideRealTaskbar();
     void ShowRealTaskbar();
@@ -136,6 +157,32 @@ private:
     bool                         m_active         = false;
     bool                         m_activatedOnDesktop = false; // FG was Progman/WorkerW at Activate
     HWND                         m_desktopHwnd    = nullptr;  // Progman/WorkerW
+    // Desktop tile disabled for THIS session (config showDesktopTile
+    // latched at Activate so a mid-session config reload can't desync the
+    // window/capture arrays).  The wallpaper backdrop then comes from the
+    // dedicated capture below instead of a desktop tile's capture.  One
+    // long-lived object, restarted per session (Stop() keeps the cached
+    // frame as a warm start) — no per-session texture accumulation, and
+    // WGC's pool-recreate path absorbs resolution changes.
+    bool                         m_desktopTileDisabled = false;
+    std::unique_ptr<WGCCapture>  m_wallpaperCapture;
+    // Selected-window label (front slot): GDI-rendered premultiplied BGRA
+    // pill texture (title + program icon), rebuilt only when the selected
+    // HWND / title / part-selection changes.
+    winrt::com_ptr<ID3D11Texture2D>          m_labelTexture;
+    winrt::com_ptr<ID3D11ShaderResourceView> m_labelSRV;
+    HWND                         m_labelHwnd = nullptr;
+    std::wstring                 m_labelTitle;
+    bool                         m_labelShowTitle = true;
+    bool                         m_labelShowIcon  = true;
+    bool                         m_labelShowBox   = true;
+    int                          m_labelTheme     = 0;   // appTheme the texture was built for
+    int                          m_labelTexW = 0;
+    int                          m_labelTexH = 0;
+    // Smooths the label anchor between the projected front-slot bounds of
+    // successive frames — differently sized windows swapping through the
+    // front slot glide instead of teleporting (animation/LabelAnimator).
+    LabelAnimator                m_labelAnim;
     HWND                         m_iconListView   = nullptr;  // Desktop SysListView32
     bool                         m_iconsWereVisible = false;  // Restore icons on dismiss
     std::unique_ptr<WGCCapture>  m_taskbarCapture;            // Live WGC for Shell_TrayWnd
@@ -157,8 +204,10 @@ private:
     bool                         m_taskbarAutoHide = false;        // ABS_AUTOHIDE at Activate
     bool                         m_taskbarExtendedAtStart = false; // autohide bar slid out at Activate
     bool                         m_taskbarHeld = false;            // bar kept visible behind overlay
+    bool                         m_taskbarHeldPinPosition = false; // enforce hold position per frame (continuity holds only)
     bool                         m_taskbarLiveActive = false;      // live taskbar sampling this session
     RECT                         m_taskbarHoldRectScreen{};        // SCREEN-space pin rect
+    RECT                         m_taskbarLastSeenRect{};          // last observed rect (motion detect)
     uint32_t                     m_heldPinCounter = 0;             // periodic Z re-assert divider
     // Frozen refs own the SRV (AddRef via com_ptr): WGCCapture recreates its
     // cached SRV on any size change, so a raw pointer here could dangle

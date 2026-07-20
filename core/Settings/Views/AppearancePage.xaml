@@ -97,6 +97,122 @@
                                     Value="{Binding BackgroundBlur}" Margin="0,0,10,0"/>
                         </DockPanel>
                     </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Desktop in cascade"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Shows the desktop as the last window of the stack, like the original Flip 3D. Off removes the desktop tile — its slot goes to the next window — while the wallpaper backdrop stays."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding ShowDesktopTile}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Selected window label"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Shows the selected window's title and program icon above the front tile for better readability. Use Customize to enable the text and the icon independently."/>
+                        </StackPanel>
+                        <!-- Per-part selection: same AeroComboToggle-faced dropdown
+                             pattern as the Animations row — one AeroToggle row per
+                             label part.  Disabled while the master toggle is off. -->
+                        <Grid Grid.Column="1" Margin="0,0,14,0" VerticalAlignment="Center"
+                              IsEnabled="{Binding SelectedLabel}">
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Opacity" Value="0.45"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
+                            <ToggleButton x:Name="LabelCustomizeToggle"
+                                          Style="{StaticResource AeroComboToggle}"
+                                          Width="150" Height="28"
+                                          ClickMode="Press" Focusable="False"/>
+                            <TextBlock Margin="10,0,26,0" VerticalAlignment="Center"
+                                       IsHitTestVisible="False"
+                                       FontFamily="Segoe UI" FontSize="12.5"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       Text="Customize..."/>
+                            <Popup PlacementTarget="{Binding ElementName=LabelCustomizeToggle}"
+                                   Placement="Bottom" AllowsTransparency="True"
+                                   PopupAnimation="Slide" StaysOpen="False"
+                                   IsOpen="{Binding IsChecked, ElementName=LabelCustomizeToggle, Mode=TwoWay}">
+                                <Border Margin="4,2,4,6" CornerRadius="4" Width="312"
+                                        Background="{DynamicResource ComboPopupBrush}"
+                                        BorderBrush="{DynamicResource ComboPopupBorderBrush}"
+                                        BorderThickness="1">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.55"/>
+                                    </Border.Effect>
+                                    <Grid>
+                                        <!-- glass sheet: top sheen, same as the combo popup -->
+                                        <Border Height="12" VerticalAlignment="Top" Margin="1,1,1,0"
+                                                CornerRadius="3,3,0,0"
+                                                Background="{DynamicResource CardHeaderBandBrush}"
+                                                IsHitTestVisible="False"/>
+                                        <StackPanel Margin="14,12,14,12">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Window title"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="The selected window's title text."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding SelectedLabelTitle}"/>
+                                            </Grid>
+                                            <Rectangle Style="{StaticResource RowSeparator}"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="App icon"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="The selected program's icon next to the title."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding SelectedLabelIcon}"/>
+                                            </Grid>
+                                            <Rectangle Style="{StaticResource RowSeparator}"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Background box"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="Aero-glass plate behind the label. Off draws the text and icon directly with a soft shadow."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding SelectedLabelBox}"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <CheckBox Grid.Column="2" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding SelectedLabel}"/>
+                    </Grid>
                 </StackPanel>
             </HeaderedContentControl>
 

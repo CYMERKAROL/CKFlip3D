@@ -40,6 +40,17 @@ public:
     float GetRawT() const { return m_rawT; }
     float GetMotionIntensity() const;
 
+    /// Read-only destination pose of a slot — the rest pose this cycle is
+    /// animating toward (captured by SetTarget after the array rotation).
+    /// nullptr when idle or out of range.  Used by the selected-window
+    /// label to aim at the final position instead of riding the wrap
+    /// tile's journey (which starts at the BACK of the cascade on
+    /// backward cycles).
+    const TileSlot* GetTargetSlot(uint32_t i) const {
+        return (m_active && i < m_targetSlots.size()) ? &m_targetSlots[i]
+                                                      : nullptr;
+    }
+
 private:
     static constexpr float kDurationMs       = 220.0f;   // normal animation length
     static constexpr float kChainDurationMs  = 170.0f;   // first chained animation length

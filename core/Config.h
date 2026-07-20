@@ -38,6 +38,21 @@ struct AppConfig {
     // 0 = fully black backdrop, 100 = wallpaper fully visible.
     // 28 matches the original kBgAlpha = 0.28f cascade look.
     uint32_t backgroundOpacity = 28;
+    // Include the desktop pseudo-window as the last tile of the cascade
+    // (the classic Win7 Flip3D behaviour).  Off removes the tile — the
+    // freed slot goes to the next real window — while the wallpaper
+    // backdrop keeps working through a dedicated capture.
+    bool     showDesktopTile  = true;
+    // Selected-window label on the front slot (title + program icon) for
+    // readability.  `selectedLabel` is the master switch (default OFF —
+    // the classic clean cascade look); the flags below select the parts
+    // independently (Appearance → Customize) once it's enabled.
+    bool     selectedLabel      = false;
+    bool     selectedLabelTitle = true;
+    bool     selectedLabelIcon  = true;
+    // Aero-glass plate behind the label.  Off draws the text/icon directly
+    // with a stronger drop shadow instead.
+    bool     selectedLabelBox   = true;
 
     // --- Performance ---
     bool     autoPerfTune     = true;     // Auto-detect and lower quality if needed
@@ -62,6 +77,11 @@ struct AppConfig {
 
     // --- Misc ---
     bool     showDebugInfo    = false;    // Output debug strings
+    // Settings-app theme index (0 Skeuo Dark, 1 Skeuo White, 2 Minimal
+    // Dark, 3 Minimal White, 4 Glassmorphism).  Owned by the Settings app;
+    // the core reads it so the selected-window label's plate matches the
+    // chosen CKSettings look.
+    int      appTheme         = 0;
 };
 
 namespace Config {

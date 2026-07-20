@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1
+
+- Taskbar live preview fixed — the taskbar clock and tray now keep updating while the cascade is open (the old capture-shape gate silently disabled live frames on every Windows build)
+- Smoother held-taskbar handling with the Windows auto-hide taskbar — no more per-frame position fighting with the shell's hide animation
+- New Appearance option: **Desktop in cascade** — remove the desktop tile from the stack while keeping the wallpaper backdrop
+- New Appearance option: **Selected window label** (off by default) — the selected window's title and program icon above the front tile, on a plate styled after the chosen CKSettings theme, with a Customize dropdown (title / icon / background box) and smooth position animation
+- Updated repository demo media (50 fps GIFs, new close-animation clip)
+
 ## 1.0
 
 - First public release
