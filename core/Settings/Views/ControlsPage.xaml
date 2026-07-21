@@ -26,6 +26,24 @@
                         </Button>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid x:Name="ToggleModeRow">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Toggle activation"/>
+                            <TextBlock x:Name="ToggleModeHint" Style="{StaticResource SettingHintText}"
+                                       Text="Keeps the cascade open after the hotkey is released — commit with Enter, cancel with Esc, and keep cycling with the main key. Off restores the classic hold-to-keep-open behaviour."/>
+                        </StackPanel>
+                        <!-- Managed from code-behind (no direct binding): a
+                             single-key binding is inherently toggle, so the
+                             switch shows as ON and grays out without touching
+                             the persisted value. -->
+                        <CheckBox Grid.Column="1" x:Name="ToggleModeCheck" Style="{StaticResource AeroToggle}"
+                                  Checked="ToggleMode_Changed" Unchecked="ToggleMode_Changed"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>

@@ -12,7 +12,7 @@
     <AssemblyName>CKFlip3D.Setup</AssemblyName>
     <RootNamespace>CKFlip3D.Installer</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>CKFlip3D Setup</Product>
     <Copyright>CYMERKAROL</Copyright>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

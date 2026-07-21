@@ -88,6 +88,12 @@ private:
     void FinishEscape();    // post-exit-morph teardown for Escape path
     void RebuildSceneAspects();
     void DeduplicateWindows();
+    /// Drop windows whose owning executable is on the General-page
+    /// exclusion list (config `excludedApps`, ';'-separated exe names or
+    /// full paths).  Runs once per activation, right after the scan, so
+    /// the excluded windows never take part in slot building, captures or
+    /// any animation — the session behaves as if they didn't exist.
+    void FilterExcludedWindows();
     void InjectDesktopWindow();
     void UpdateDesktopCaptureGeometry();
     void SortWindowsByProgram();
@@ -106,6 +112,15 @@ private:
     /// when the tile is enabled, or the dedicated m_wallpaperCapture when
     /// the desktop tile is disabled (config showDesktopTile = false).
     WGCCapture* WallpaperCaptureSource();
+    /// Wallpaper backdrop SRV honouring the Live background toggle
+    /// (config liveBackground).  Live (default): sample the running WGC
+    /// capture every frame — animated wallpapers keep playing, cycle
+    /// animation included.  Off: a dedicated GPU copy of the first
+    /// delivered frame serves the whole session (a live desktop tile
+    /// updates the SHARED cached texture in place via GetCurrentFrame, so
+    /// only an owned copy is genuinely static).  May return nullptr while
+    /// the capture has no frame yet.
+    ID3D11ShaderResourceView* BackdropSRV();
     /// Selected-window label (front slot): rebuild the GDI-rendered
     /// title+icon texture when the selection/config changed, and draw it
     /// as a screen-space pill anchored above the front tile.
@@ -216,6 +231,11 @@ private:
     std::vector<winrt::com_ptr<ID3D11ShaderResourceView>> m_frozenTargetSRVs; // SRVs captured AFTER array rotate
     winrt::com_ptr<ID3D11ShaderResourceView> m_frozenDesktopSRV; // Frozen wallpaper SRV
     winrt::com_ptr<ID3D11ShaderResourceView> m_frozenTaskbarSRV; // Frozen taskbar SRV
+    // Live background OFF: owned per-session snapshot of the wallpaper
+    // (see BackdropSRV) — a plain SRV ref would not be static because
+    // GetCurrentFrame copies new frames into the same cached texture.
+    winrt::com_ptr<ID3D11Texture2D>          m_staticBackdropTexture;
+    winrt::com_ptr<ID3D11ShaderResourceView> m_staticBackdropSRV;
     bool                         m_sessionFrozen = false;      // True while animation is active
     winrt::com_ptr<ID3D11Texture2D> m_exitSelectedStableTexture; // Owned copy for selected minimized exit tile
     winrt::com_ptr<ID3D11ShaderResourceView> m_exitSelectedStableSRV;
@@ -275,6 +295,7 @@ private:
     bool AnimEntryExitEnabled() const;
     bool AnimCycleEnabled() const;
     bool AnimCloseEnabled() const;
+    bool AnimLabelEnabled() const;
     /// Activation warm-up budget in ms (config startDelayMs; auto perf
     /// tune substitutes a value derived from refresh rate + perf tier).
     uint32_t EffectiveStartDelayMs() const;

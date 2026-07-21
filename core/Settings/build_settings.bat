@@ -20,5 +20,9 @@ if errorlevel 1 (
 dotnet build "%~dp0CKFlip3D.Settings.csproj" -c Release -o "%~dp0..\..\build"
 if errorlevel 1 exit /b 1
 
+rem Authenticode-sign as publisher CYMERKAROL (best-effort, never fails the build).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\..\sign_binaries.ps1" ^
+  "%~dp0..\..\build\CKFlip3D.Settings.exe" "%~dp0..\..\build\CKFlip3D.Settings.dll"
+
 echo.
 echo Build OK: %~dp0..\..\build\CKFlip3D.Settings.exe

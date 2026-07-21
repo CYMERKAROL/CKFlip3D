@@ -26,3 +26,4 @@ core/Installer/Payload/
 .vscode/
 .vs/
 *.user
+!/sign_binaries.ps1

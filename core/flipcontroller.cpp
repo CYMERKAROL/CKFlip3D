@@ -6,6 +6,7 @@
 #include <dwmapi.h>
 #include <cstdio>
 #include <cwchar>
+#include <cwctype>
 #include <limits>
 #include <DirectXMath.h>
 
@@ -575,6 +576,8 @@ void FlipController::Activate()
     m_exitSelectedStableTexture = nullptr;
     m_exitSelectedStableHwnd = nullptr;
     m_frozenTaskbarSRV = nullptr;
+    m_staticBackdropTexture = nullptr;   // live-background-off snapshot is per-session
+    m_staticBackdropSRV     = nullptr;
     m_taskbarDrawOnTop = false;
     m_labelAnim.Reset();   // label anchor re-derives from this session's cascade
 
@@ -600,6 +603,7 @@ void FlipController::Activate()
     // 2. Scan windows — purely read-only, no state changes.
     DWORD myPid = GetCurrentProcessId();
     m_windows = WindowScanner::Enumerate(myPid);
+    FilterExcludedWindows();
 
     // 3. Exclude our overlay and inject desktop pseudo-window.
     //    Desktop tile disabled (Appearance → Desktop in cascade off): no
@@ -932,8 +936,11 @@ void FlipController::Activate()
         // pixel above.  No-op on Win11 25H2 where the capture is fully
         // opaque.  Wallpaper-Engine and other dynamic-wallpaper apps
         // route their content through Progman, so this preserves them.
-        if (WGCCapture* wallCap = WallpaperCaptureSource()) {
-            ID3D11ShaderResourceView* srv = wallCap->GetCurrentFrame();
+        {
+            // Same live/static resolution as RenderFrame Layer 1 — in
+            // static mode this is also where the session's owned snapshot
+            // gets created, from the warm-up frame.
+            ID3D11ShaderResourceView* srv = BackdropSRV();
             if (srv) {
                 QuadDrawCall bgDraw;
                 DirectX::XMStoreFloat4x4(&bgDraw.mvp,
@@ -949,7 +956,11 @@ void FlipController::Activate()
                     ? static_cast<float>(m_config->backgroundOpacity) / 100.0f
                     : kBgAlpha;
                 bgDraw.alpha      = 1.0f - m_entryExitAnimator.DimFactor() * (1.0f - bgAlpha);
-                bgDraw.blurAmount = 0.0f;
+                // Background blur intensity (config backgroundBlur %, 0 =
+                // off → single-sample shader path, no extra cost).
+                bgDraw.blurAmount = m_config
+                    ? static_cast<float>(m_config->backgroundBlur) / 100.0f
+                    : 0.0f;
                 m_quad.DrawWallpaper(ctx, srv, bgDraw);
             }
         }
@@ -1776,6 +1787,8 @@ void FlipController::FinishDismiss()
     m_frozenTargetSRVs.clear();
     m_frozenDesktopSRV = nullptr;
     m_frozenTaskbarSRV = nullptr;
+    m_staticBackdropTexture = nullptr;
+    m_staticBackdropSRV     = nullptr;
     m_exitSelectedStableSRV = nullptr;
     m_exitSelectedStableTexture = nullptr;
     m_exitSelectedStableHwnd = nullptr;
@@ -1830,6 +1843,8 @@ void FlipController::FinishEscape()
     m_frozenTargetSRVs.clear();
     m_frozenDesktopSRV = nullptr;
     m_frozenTaskbarSRV = nullptr;
+    m_staticBackdropTexture = nullptr;
+    m_staticBackdropSRV     = nullptr;
     m_exitSelectedStableSRV = nullptr;
     m_exitSelectedStableTexture = nullptr;
     m_exitSelectedStableHwnd = nullptr;
@@ -1956,6 +1971,68 @@ WGCCapture* FlipController::WallpaperCaptureSource()
 }
 
 // ---------------------------------------------------------------------------
+ID3D11ShaderResourceView* FlipController::BackdropSRV()
+{
+    WGCCapture* wallCap = WallpaperCaptureSource();
+
+    if (!m_config || m_config->liveBackground) {
+        // Live (default): sample the running capture every frame so
+        // animated wallpapers keep playing — the cycle animation included.
+        // Safe during the cycle freeze: WallpaperCaptureSource() resolves
+        // by desktop HWND (stable across the atomic array rotation, same
+        // thread) and the wrap-slot correctness the freeze exists for
+        // lives entirely in the frozen TILE SRVs.  The taskbar live
+        // preview already samples its capture per frame while cycling —
+        // same cost class.  The cycle-start snapshot remains a fallback
+        // for a frame-less capture (device recreate mid-animation).
+        ID3D11ShaderResourceView* srv =
+            wallCap ? wallCap->GetCurrentFrame() : nullptr;
+        if (!srv && m_sessionFrozen)
+            srv = m_frozenDesktopSRV.get();
+        return srv;
+    }
+
+    // Live background OFF: one owned snapshot serves the whole session.
+    // Copy lazily on the first frame the capture delivers — an SRV ref
+    // alone would NOT be static, because a live desktop tile keeps
+    // copying fresh frames into the same shared cached texture.
+    if (m_staticBackdropSRV)
+        return m_staticBackdropSRV.get();
+
+    ID3D11ShaderResourceView* liveSRV =
+        wallCap ? wallCap->GetCurrentFrame() : nullptr;
+    if (!liveSRV)
+        return nullptr;
+
+    ID3D11Device*        dev = m_renderer.GetDevice();
+    ID3D11DeviceContext* ctx = m_renderer.GetContext();
+    if (!dev || !ctx)
+        return liveSRV;   // degraded: draw live this frame, retry next
+
+    winrt::com_ptr<ID3D11Resource> res;
+    liveSRV->GetResource(res.put());
+    winrt::com_ptr<ID3D11Texture2D> src = res.try_as<ID3D11Texture2D>();
+    if (!src)
+        return liveSRV;
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    src->GetDesc(&desc);
+    winrt::com_ptr<ID3D11Texture2D> copyTex;
+    if (FAILED(dev->CreateTexture2D(&desc, nullptr, copyTex.put())))
+        return liveSRV;
+    ctx->CopyResource(copyTex.get(), src.get());
+
+    winrt::com_ptr<ID3D11ShaderResourceView> copySRV;
+    if (FAILED(dev->CreateShaderResourceView(copyTex.get(), nullptr,
+                                             copySRV.put())))
+        return liveSRV;
+
+    m_staticBackdropTexture = std::move(copyTex);
+    m_staticBackdropSRV     = std::move(copySRV);
+    return m_staticBackdropSRV.get();
+}
+
+// ---------------------------------------------------------------------------
 void FlipController::RebuildSceneAspects()
 {
     // Desktop-relative sizing is intentionally based on the primary monitor,
@@ -2064,6 +2141,86 @@ void FlipController::DeduplicateWindows()
                         [overlay, desktopBg](const WindowInfo& wi) {
                             return wi.hwnd == overlay || wi.hwnd == desktopBg;
                         }),
+        m_windows.end());
+}
+
+// ---------------------------------------------------------------------------
+// General-page exclusion list: remove windows whose owning executable is on
+// config `excludedApps` (';'-separated, full path or bare exe name, case-
+// insensitive — same matching rules as the trigger ignore list).  Runs once
+// per activation right after the scan, so excluded windows never reach slot
+// building, captures or animations; the cloaker still hides them behind the
+// overlay together with every other non-cascade window and restores them on
+// dismiss.  Process paths are resolved once per unique PID.
+// ---------------------------------------------------------------------------
+void FlipController::FilterExcludedWindows()
+{
+    if (!m_config || m_config->excludedApps.empty() || m_windows.empty())
+        return;
+
+    auto toLower = [](std::wstring s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::towlower);
+        return s;
+    };
+    auto fileNameOf = [](const std::wstring& path) -> std::wstring {
+        size_t slash = path.find_last_of(L"\\/");
+        return slash == std::wstring::npos ? path : path.substr(slash + 1);
+    };
+
+    // Parse the ';'-separated list (lowercased once).
+    std::vector<std::wstring> entries;
+    {
+        const std::wstring& list = m_config->excludedApps;
+        size_t start = 0;
+        while (start <= list.size()) {
+            size_t end = list.find(L';', start);
+            if (end == std::wstring::npos) end = list.size();
+            if (end > start)
+                entries.push_back(toLower(list.substr(start, end - start)));
+            if (end == list.size()) break;
+            start = end + 1;
+        }
+    }
+    if (entries.empty())
+        return;
+
+    // Per-PID verdict cache — multi-window processes resolve their image
+    // path only once.
+    std::unordered_map<DWORD, bool> pidExcluded;
+    auto isExcludedPid = [&](DWORD pid) -> bool {
+        auto it = pidExcluded.find(pid);
+        if (it != pidExcluded.end())
+            return it->second;
+
+        bool match = false;
+        HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (proc) {
+            wchar_t buf[MAX_PATH * 2] = {};
+            DWORD len = static_cast<DWORD>(_countof(buf));
+            if (QueryFullProcessImageNameW(proc, 0, buf, &len)) {
+                std::wstring fullPath = toLower(buf);
+                std::wstring fileName = fileNameOf(fullPath);
+                for (const auto& entry : entries) {
+                    if (entry == fullPath || entry == fileName
+                        || fileNameOf(entry) == fileName) {
+                        match = true;
+                        break;
+                    }
+                }
+            }
+            CloseHandle(proc);
+        }
+        pidExcluded.emplace(pid, match);
+        return match;
+    };
+
+    m_windows.erase(
+        std::remove_if(m_windows.begin(), m_windows.end(),
+                       [&](const WindowInfo& wi) {
+                           DWORD pid = 0;
+                           GetWindowThreadProcessId(wi.hwnd, &pid);
+                           return pid != 0 && isExcludedPid(pid);
+                       }),
         m_windows.end());
 }
 
@@ -2359,12 +2516,10 @@ void FlipController::RenderFrame()
     // sampling the closest opaque pixel above — no visible change on
     // 25H2 where the capture is fully opaque.
     {
-        ID3D11ShaderResourceView* desktopSRV = nullptr;
-        if (m_sessionFrozen) {
-            desktopSRV = m_frozenDesktopSRV.get();
-        } else if (WGCCapture* wallCap = WallpaperCaptureSource()) {
-            desktopSRV = wallCap->GetCurrentFrame();
-        }
+        // Live vs static wallpaper backdrop (config liveBackground) —
+        // see BackdropSRV().  Live keeps animated wallpapers playing
+        // through the cycle animation; off serves one owned snapshot.
+        ID3D11ShaderResourceView* desktopSRV = BackdropSRV();
         if (desktopSRV) {
             QuadDrawCall bgDraw;
             DirectX::XMStoreFloat4x4(&bgDraw.mvp,
@@ -2379,7 +2534,11 @@ void FlipController::RenderFrame()
                 ? static_cast<float>(m_config->backgroundOpacity) / 100.0f
                 : kBgAlpha;
             bgDraw.alpha      = 1.0f - m_entryExitAnimator.DimFactor() * (1.0f - bgAlpha);
-            bgDraw.blurAmount = 0.0f;
+            // Background blur intensity (config backgroundBlur %, 0 =
+            // off → single-sample shader path, no extra cost).
+            bgDraw.blurAmount = m_config
+                ? static_cast<float>(m_config->backgroundBlur) / 100.0f
+                : 0.0f;
             m_quad.DrawWallpaper(ctx, desktopSRV, bgDraw);
         }
     }
@@ -2973,6 +3132,11 @@ bool FlipController::AnimCycleEnabled() const
 bool FlipController::AnimCloseEnabled() const
 {
     return !m_config || (m_config->animations && m_config->animClose);
+}
+
+bool FlipController::AnimLabelEnabled() const
+{
+    return !m_config || (m_config->animations && m_config->animLabel);
 }
 
 uint32_t FlipController::EffectiveStartDelayMs() const
@@ -3980,6 +4144,9 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
     // CycleStop clears the queue and SwitchToDecel drops the chained flag,
     // so the fade-in already runs during the deceleration animation.
     const bool suppressed = !m_cycleQueue.empty() || m_cycleAnim.IsChained();
+    // Label animation toggle (Appearance → Animations dropdown): off =
+    // instant position snap, instant show/hide instead of the fades.
+    const bool animate = AnimLabelEnabled();
 
     // Target anchor: projected bounds of the front slot's REST pose.
     // While a cycle is in flight the target is the cycle's destination
@@ -4042,14 +4209,16 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
                 }
             }
             if (valid && maxX > minX && maxY > minY)
-                m_labelAnim.Update((minX + maxX) * 0.5f, minY, suppressed);
+                m_labelAnim.Update((minX + maxX) * 0.5f, minY, suppressed,
+                                   animate);
             else
                 haveMvp = false;
         }
         if (!haveMvp && m_labelAnim.HasPos()) {
             // No fresh target this frame (close reflow / degenerate
             // projection) — hold position, keep the fade advancing.
-            m_labelAnim.Update(m_labelAnim.X(), m_labelAnim.Y(), suppressed);
+            m_labelAnim.Update(m_labelAnim.X(), m_labelAnim.Y(), suppressed,
+                               animate);
         }
     }
     if (!m_labelAnim.HasPos() || m_labelAnim.Alpha() < 0.01f)

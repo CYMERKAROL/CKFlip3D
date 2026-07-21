@@ -304,6 +304,7 @@ void App::ApplyTriggerOptions()
     opts.ignoreFullscreen = m_config.ignoreFullscreen;
     opts.mouseWheelCycle  = m_config.mouseWheelCycle;
     opts.keyboardNav      = m_config.keyboardNav;
+    opts.hotkeyToggleMode = m_config.hotkeyToggleMode;
     opts.activationHotkey = m_config.activationHotkey;
 
     // ignoredApps is a ';'-separated list of exe names / full paths.

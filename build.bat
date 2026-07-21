@@ -9,4 +9,7 @@ call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\
 rc /nologo /fo build\obj\app.res app.rc
 if not %errorlevel%==0 (echo RC_FAILED & exit /b 1)
 cl /EHsc /std:c++20 /O2 /W4 /DUNICODE /D_UNICODE /I. build\obj\app.res main.cpp core\app.cpp core\Config.cpp core\flipcontroller.cpp scene\FlipScene.cpp render\QuadRenderer.cpp render\Renderer.cpp capture\windowscanner.cpp capture\WGCCapture.cpp capture\windowcloaker.cpp capture\TaskbarButtonLocator.cpp hook\keyboardhook.cpp hook\hotkeymanager.cpp animation\CycleAnimator.cpp animation\EntryExitTimeline.cpp animation\FlatStackBuilder.cpp animation\EntryExitAnimator.cpp animation\CloseAnimator.cpp animation\LabelAnimator.cpp /Fo:build\obj\ /Fe:build\CKFlip3D.exe /link d3d11.lib dxgi.lib d3dcompiler.lib dcomp.lib user32.lib gdi32.lib shell32.lib dwmapi.lib ole32.lib oleaut32.lib oleacc.lib windowsapp.lib /MANIFEST:EMBED /MANIFESTUAC:NO /MANIFESTINPUT:CKFlip3D.exe.manifest
-if %errorlevel%==0 (echo BUILD_OK) else (echo BUILD_FAILED)
+if not %errorlevel%==0 (echo BUILD_FAILED & exit /b 1)
+rem Authenticode-sign as publisher CYMERKAROL (best-effort, never fails the build).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0sign_binaries.ps1" "%~dp0build\CKFlip3D.exe"
+echo BUILD_OK

@@ -8,7 +8,8 @@
 struct QuadDrawCall {
     DirectX::XMFLOAT4X4 mvp;
     float alpha = 1.0f;
-    float blurAmount = 0.0f;  // horizontal motion blur in UV space
+    float blurAmount = 0.0f;  // Draw(): horizontal motion blur in UV space;
+                              // DrawWallpaper(): background blur intensity 0..1
     float uvMinX = 0.0f, uvMinY = 0.0f;  // UV crop: top-left (default: full texture)
     float uvMaxX = 1.0f, uvMaxY = 1.0f;  // UV crop: bottom-right
 };

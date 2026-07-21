@@ -146,14 +146,18 @@ AppConfig Config::Load()
     cfg.animEntryExit = FindBool(json, "animEntryExit", cfg.animEntryExit);
     cfg.animCycle     = FindBool(json, "animCycle",     cfg.animCycle);
     cfg.animClose     = FindBool(json, "animClose",     cfg.animClose);
+    cfg.animLabel     = FindBool(json, "animLabel",     cfg.animLabel);
     cfg.motionBlur    = FindBool(json, "motionBlur",    cfg.motionBlur);
-    cfg.livePreview   = FindBool(json, "livePreview",   cfg.livePreview);
+    cfg.livePreview    = FindBool(json, "livePreview",    cfg.livePreview);
+    cfg.liveBackground = FindBool(json, "liveBackground", cfg.liveBackground);
     cfg.vsyncLivePreview   = FindBool(json, "vsyncLivePreview",   cfg.vsyncLivePreview);
     cfg.taskbarLivePreview = FindBool(json, "taskbarLivePreview", cfg.taskbarLivePreview);
     cfg.taskbarPreview     = FindBool(json, "taskbarPreview",     cfg.taskbarPreview);
     cfg.maxWindows    = static_cast<uint32_t>(FindInt(json, "maxWindows", static_cast<int>(cfg.maxWindows)));
     cfg.backgroundOpacity = static_cast<uint32_t>(
         FindInt(json, "backgroundOpacity", static_cast<int>(cfg.backgroundOpacity)));
+    cfg.backgroundBlur = static_cast<uint32_t>(
+        FindInt(json, "backgroundBlur", static_cast<int>(cfg.backgroundBlur)));
     cfg.showDesktopTile    = FindBool(json, "showDesktopTile",    cfg.showDesktopTile);
     cfg.selectedLabel      = FindBool(json, "selectedLabel",      cfg.selectedLabel);
     cfg.selectedLabelTitle = FindBool(json, "selectedLabelTitle", cfg.selectedLabelTitle);
@@ -167,7 +171,9 @@ AppConfig Config::Load()
     cfg.mouseWheelCycle  = FindBool(json, "mouseWheelCycle",  cfg.mouseWheelCycle);
     cfg.keyboardNav      = FindBool(json, "keyboardNav",      cfg.keyboardNav);
     cfg.ignoredApps      = FindString(json, "ignoredApps",    cfg.ignoredApps);
+    cfg.excludedApps     = FindString(json, "excludedApps",   cfg.excludedApps);
     cfg.activationHotkey = FindString(json, "activationHotkey", cfg.activationHotkey);
+    cfg.hotkeyToggleMode = FindBool(json, "hotkeyToggleMode", cfg.hotkeyToggleMode);
     cfg.showDebugInfo = FindBool(json, "showDebugInfo", cfg.showDebugInfo);
     cfg.appTheme      = FindInt(json,  "appTheme",      cfg.appTheme);
 
@@ -178,6 +184,8 @@ AppConfig Config::Load()
     if (cfg.maxWindows > 10) cfg.maxWindows = 10;
     if (static_cast<int>(cfg.backgroundOpacity) < 0) cfg.backgroundOpacity = 0;
     if (cfg.backgroundOpacity > 100) cfg.backgroundOpacity = 100;
+    if (static_cast<int>(cfg.backgroundBlur) < 0) cfg.backgroundBlur = 0;
+    if (cfg.backgroundBlur > 100) cfg.backgroundBlur = 100;
     if (cfg.perfProfile < -1) cfg.perfProfile = -1;
     if (cfg.perfProfile > 2)  cfg.perfProfile = 2;
     if (static_cast<int>(cfg.startDelayMs) < 1) cfg.startDelayMs = 1;
@@ -204,13 +212,16 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"animEntryExit\": %s,\n", cfg.animEntryExit ? "true" : "false");
     fprintf(f, "  \"animCycle\": %s,\n",     cfg.animCycle     ? "true" : "false");
     fprintf(f, "  \"animClose\": %s,\n",     cfg.animClose     ? "true" : "false");
+    fprintf(f, "  \"animLabel\": %s,\n",     cfg.animLabel     ? "true" : "false");
     fprintf(f, "  \"motionBlur\": %s,\n",    cfg.motionBlur   ? "true" : "false");
     fprintf(f, "  \"livePreview\": %s,\n",   cfg.livePreview  ? "true" : "false");
+    fprintf(f, "  \"liveBackground\": %s,\n", cfg.liveBackground ? "true" : "false");
     fprintf(f, "  \"vsyncLivePreview\": %s,\n",   cfg.vsyncLivePreview   ? "true" : "false");
     fprintf(f, "  \"taskbarLivePreview\": %s,\n", cfg.taskbarLivePreview ? "true" : "false");
     fprintf(f, "  \"taskbarPreview\": %s,\n",     cfg.taskbarPreview     ? "true" : "false");
     fprintf(f, "  \"maxWindows\": %u,\n",    cfg.maxWindows);
     fprintf(f, "  \"backgroundOpacity\": %u,\n", cfg.backgroundOpacity);
+    fprintf(f, "  \"backgroundBlur\": %u,\n",    cfg.backgroundBlur);
     fprintf(f, "  \"showDesktopTile\": %s,\n",    cfg.showDesktopTile    ? "true" : "false");
     fprintf(f, "  \"selectedLabel\": %s,\n",      cfg.selectedLabel      ? "true" : "false");
     fprintf(f, "  \"selectedLabelTitle\": %s,\n", cfg.selectedLabelTitle ? "true" : "false");
@@ -223,7 +234,9 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"mouseWheelCycle\": %s,\n",  cfg.mouseWheelCycle  ? "true" : "false");
     fprintf(f, "  \"keyboardNav\": %s,\n",      cfg.keyboardNav      ? "true" : "false");
     fprintf(f, "  \"ignoredApps\": \"%s\",\n",  EscapeUtf8(cfg.ignoredApps).c_str());
+    fprintf(f, "  \"excludedApps\": \"%s\",\n", EscapeUtf8(cfg.excludedApps).c_str());
     fprintf(f, "  \"activationHotkey\": \"%s\",\n", EscapeUtf8(cfg.activationHotkey).c_str());
+    fprintf(f, "  \"hotkeyToggleMode\": %s,\n", cfg.hotkeyToggleMode ? "true" : "false");
     fprintf(f, "  \"showDebugInfo\": %s,\n",  cfg.showDebugInfo ? "true" : "false");
     // Settings-app-owned key — persisted here too so a core-side save
     // never drops the user's theme choice.

@@ -206,7 +206,7 @@
 
                             <TextBlock Grid.Row="1" Margin="22,0,0,12"
                                        FontFamily="Segoe UI" FontSize="10.5"
-                                       Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.1"/>
+                                       Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.2"/>
                         </Grid>
 
                         <!-- right content surface -->

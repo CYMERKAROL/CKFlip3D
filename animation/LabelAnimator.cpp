@@ -12,11 +12,24 @@ void LabelAnimator::Reset()
     m_lastQpc = 0;
 }
 
-void LabelAnimator::Update(float targetX, float targetY, bool suppressed)
+void LabelAnimator::Update(float targetX, float targetY, bool suppressed,
+                           bool animate)
 {
     LARGE_INTEGER now{}, freq{};
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
+
+    // Animation disabled (config animations/animLabel off): instant snap —
+    // no glide, no fades.  m_lastQpc still advances so re-enabling the
+    // animation mid-session never sees a stale dt.
+    if (!animate) {
+        m_x       = targetX;
+        m_y       = targetY;
+        m_alpha   = suppressed ? 0.0f : 1.0f;
+        m_hasPos  = true;
+        m_lastQpc = now.QuadPart;
+        return;
+    }
 
     if (!m_hasPos) {
         m_x = targetX;

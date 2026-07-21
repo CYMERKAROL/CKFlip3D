@@ -38,6 +38,11 @@ struct TriggerOptions {
     bool ignoreFullscreen = false;   // Pass the hotkey through over fullscreen apps
     bool mouseWheelCycle  = true;    // Wheel cycles the cascade while active
     bool keyboardNav      = true;    // Arrow keys cycle while active
+    // Toggle semantics for combo bindings: releasing the combo modifier
+    // no longer commits — the session stays open until Enter/Escape,
+    // exactly like a single-key binding.  Ignored when the binding has no
+    // modifier (those are inherently toggle).
+    bool hotkeyToggleMode = false;
     std::vector<std::wstring> ignoredApps;  // exe names or full paths (lowercase)
     std::wstring activationHotkey = L"Win+Tab";  // see ParseHotkey
 };

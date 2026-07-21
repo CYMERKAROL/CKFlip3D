@@ -74,9 +74,19 @@ float4 PSMain(PSInput input) : SV_Target
 // opaque texel, smearing it down to fill the strip.  No-op on
 // Win11 25H2 / fully-opaque captures — the loop short-circuits on
 // the first sample.
-float4 PSWallpaper(PSInput input) : SV_Target
+//
+// `blurAmount` here carries the Appearance → Background blur intensity
+// (0..1, config backgroundBlur %).  At 0 (default) the single-sample
+// path runs and the feature costs nothing.  When enabled, a 16-tap
+// fixed poisson-disk gather with MIP-PREFILTERED taps (SampleLevel at
+// an LOD matched to the inter-tap spacing — the capture regenerates
+// its full mipchain on every delivered frame) produces the frosted
+// look: prefiltering removes ring banding without per-pixel noise
+// rotation, which shimmered on moving live-wallpaper content.  Taps
+// landing in the α=0 strip are weighted out so the smear-filled band
+// never bleeds dark texels into the blur.
+float4 SampleWallpaperFilled(float2 texUV)
 {
-    float2 texUV = input.uv * (uvMax - uvMin) + uvMin;
     float4 col = tex.Sample(samp, texUV);
     if (col.a < 0.05) {
         const float kStep = 0.005;
@@ -92,6 +102,62 @@ float4 PSWallpaper(PSInput input) : SV_Target
             }
         }
     }
+    return col;
+}
+
+float4 PSWallpaper(PSInput input) : SV_Target
+{
+    float2 texUV = input.uv * (uvMax - uvMin) + uvMin;
+    float4 col = SampleWallpaperFilled(texUV);
+
+    if (blurAmount > 0.0005) {
+        // Circular pixel-space radius: identical blur in x and y no
+        // matter the wallpaper texture's aspect ratio.
+        float texW, texH;
+        tex.GetDimensions(texW, texH);
+        float radiusPx = blurAmount * 0.028 * texH;
+        float2 radiusUV = radiusPx / float2(max(texW, 1.0), max(texH, 1.0));
+
+        // Prefilter LOD: each tap reads the mip whose texel footprint
+        // matches the inter-tap spacing (~radius/4 for a 16-tap disk),
+        // so the fixed taps tile the disk seamlessly — no banding on
+        // static content and, unlike a per-pixel noise rotation, fully
+        // deterministic and temporally stable on MOVING content (the
+        // noise scintillated around moving edges of animated
+        // wallpapers).  SampleLevel clamps to the chain automatically.
+        float lod = max(0.0, log2(max(radiusPx * 0.25, 1.0)));
+
+        // Fixed poisson disk (16 taps, unit radius).
+        const float2 kDisk[16] = {
+            float2( 0.2770, -0.1204), float2(-0.4405,  0.2251),
+            float2( 0.1029,  0.5924), float2(-0.1520, -0.6104),
+            float2( 0.6360,  0.2464), float2(-0.6957, -0.1817),
+            float2( 0.4220, -0.6404), float2(-0.3007,  0.7482),
+            float2( 0.8409,  0.4321), float2(-0.8564,  0.3877),
+            float2( 0.1215,  0.9670), float2(-0.2506, -0.9520),
+            float2( 0.7454, -0.7002), float2(-0.9998, -0.0672),
+            float2( 0.5387,  0.8615), float2(-0.6656, -0.8032),
+        };
+
+        // Centre tap at the same LOD as the ring taps, so no sharp
+        // mip-0 ghost bleeds through the blur.  If it lands in the α=0
+        // strip, the strip-filled mip-0 sample stands in for it.
+        float4 centre = tex.SampleLevel(samp, texUV, lod);
+        float4 acc  = (centre.a >= 0.05) ? centre : col;
+        float  wsum = 1.0;
+        [unroll]
+        for (int i = 0; i < 16; ++i) {
+            float2 uv2 = clamp(texUV + kDisk[i] * radiusUV, uvMin, uvMax);
+            float4 smp = tex.SampleLevel(samp, uv2, lod);
+            // Skip transparent-strip taps — the centre sample (strip-
+            // filled) already represents that region.
+            float w = smp.a >= 0.05 ? 1.0 : 0.0;
+            acc  += smp * w;
+            wsum += w;
+        }
+        col = acc / wsum;
+    }
+
     float fade = EdgeFade(input.uv);
     col.rgb *= alpha * fade;
     col.a   *= alpha * fade;

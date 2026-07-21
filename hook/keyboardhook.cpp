@@ -80,6 +80,7 @@ std::vector<std::wstring> g_optIgnoredApps;          // lowercase, under lock
 std::atomic<bool>  g_optIgnoreFullscreen{false};
 std::atomic<bool>  g_optWheelCycle{true};
 std::atomic<bool>  g_optKeyboardNav{true};
+std::atomic<bool>  g_optToggleMode{false};
 std::atomic<bool>  g_optHasIgnoredApps{false};
 
 // Parsed activation combination (see HotkeySpec).  Defaults to Win+Tab.
@@ -212,6 +213,20 @@ bool ModsSatisfied(uint8_t mask)
     return true;
 }
 
+// Any combo modifier still physically held?  Used on Enter/Escape to decide
+// whether the NEXT modifier release still belongs to the activation combo
+// (and must be swallowed) — in toggle mode the modifiers are typically long
+// released by commit time, and suppressing a future unrelated Win release
+// would eat one legitimate Start-menu open.
+bool AnyComboModDown(uint8_t mask)
+{
+    if (mask & kModCtrl  && ModBitDown(kModCtrl))  return true;
+    if (mask & kModShift && ModBitDown(kModShift)) return true;
+    if (mask & kModAlt   && ModBitDown(kModAlt))   return true;
+    if (mask & kModWin   && ModBitDown(kModWin))   return true;
+    return false;
+}
+
 // On a modifier keyup the async state of the RELEASED key may still read
 // down (the LL hook runs before the input updates the key state), so "is
 // the modifier pair fully released" only consults the OTHER side.
@@ -329,11 +344,19 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         }
 
         // Combo-modifier release = commit (classic Win-release behaviour),
-        // once BOTH sides of the pair are up.
+        // once BOTH sides of the pair are up.  Toggle mode (config
+        // hotkeyToggleMode): the release does NOT commit — the session
+        // stays open until Enter/Escape — but a Win/Alt release is still
+        // defused so the Start menu / menu bar can't pop over the cascade.
         if (isUp && (modMask & modBit) && !PairStillDown(kb->vkCode)) {
             const bool needSwallow =
                 (modBit == kModWin || modBit == kModAlt);
-            if (active) {
+            if (active && g_optToggleMode.load(std::memory_order_relaxed)) {
+                if (needSwallow) {
+                    SwallowModifierRelease(kb->vkCode);
+                    return 1;
+                }
+            } else if (active) {
                 g_sessionActive.store(false, std::memory_order_relaxed);
                 g_suppressNextModRelease = false;
                 ResetWheelState();
@@ -357,7 +380,13 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 
     // ---- Main key (non-modifier) -------------------------------------------
     if (isMainKey) {
-        if (isDown && ModsSatisfied(modMask)) {
+        // Toggle mode: once the session is open the combo modifiers are
+        // typically released — the bare main key keeps cycling (matching
+        // single-key-binding behaviour).  Activation still requires the
+        // full combination.
+        const bool cycleWithoutMods = active
+            && g_optToggleMode.load(std::memory_order_relaxed);
+        if (isDown && (ModsSatisfied(modMask) || cycleWithoutMods)) {
             bool shiftHeld = !(modMask & kModShift)
                           && ((GetAsyncKeyState(VK_LSHIFT) & 0x8000)
                            || (GetAsyncKeyState(VK_RSHIFT) & 0x8000));
@@ -414,7 +443,11 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // is suppressed once so the Start menu doesn't pop afterwards.
         if (isDown && kb->vkCode == VK_RETURN) {
             g_sessionActive.store(false, std::memory_order_relaxed);
-            g_suppressNextModRelease = (modMask != 0);
+            // Suppress the upcoming combo-modifier release only while one
+            // is actually still held — in toggle mode the modifiers are
+            // usually up long before commit, and a stale flag would eat
+            // the next unrelated Win/Alt release.
+            g_suppressNextModRelease = (modMask != 0) && AnyComboModDown(modMask);
             ResetWheelState();
             PostMessage(g_hwndNotify, g_msgDismiss, 0, 0);
             return 1;
@@ -423,7 +456,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // Escape = cancel
         if (isDown && kb->vkCode == VK_ESCAPE) {
             g_sessionActive.store(false, std::memory_order_relaxed);
-            g_suppressNextModRelease = (modMask != 0);
+            g_suppressNextModRelease = (modMask != 0) && AnyComboModDown(modMask);
             ResetWheelState();
             PostMessage(g_hwndNotify, g_msgEscape, 0, 0);
             return 1;
@@ -482,7 +515,12 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
         if (btnVk != 0
             && btnVk == mainVk) {
             if (btnDown) {
-                if (ModsSatisfied(modMask)) {
+                // Toggle mode: with the session open the bare main button
+                // keeps cycling even after the combo modifiers were
+                // released (see the keyboard-path counterpart).
+                const bool cycleWithoutMods = active
+                    && g_optToggleMode.load(std::memory_order_relaxed);
+                if (ModsSatisfied(modMask) || cycleWithoutMods) {
                     if (!active) {
                         if (ShouldIgnoreActivation())
                             return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
@@ -826,6 +864,7 @@ void SetOptions(const TriggerOptions& opts)
     g_optIgnoreFullscreen.store(opts.ignoreFullscreen, std::memory_order_relaxed);
     g_optWheelCycle.store(opts.mouseWheelCycle, std::memory_order_relaxed);
     g_optKeyboardNav.store(opts.keyboardNav, std::memory_order_relaxed);
+    g_optToggleMode.store(opts.hotkeyToggleMode, std::memory_order_relaxed);
 
     HotkeySpec spec;
     ParseHotkey(opts.activationHotkey, spec);   // falls back to Win+Tab

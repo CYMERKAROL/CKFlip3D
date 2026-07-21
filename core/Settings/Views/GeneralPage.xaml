@@ -32,6 +32,22 @@
                 </StackPanel>
             </HeaderedContentControl>
 
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Cascade">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Margin="0,0,20,0">
+                        <TextBlock Style="{StaticResource SettingLabelText}" Text="Exclusion list"/>
+                        <TextBlock x:Name="ExcludedSummary" Style="{StaticResource SettingHintText}"
+                                   Text="Windows of the listed applications never appear in the 3D cascade."/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                            Content="Manage list…" Click="ManageExcluded_Click"/>
+                </Grid>
+            </HeaderedContentControl>
+
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Performance">
                 <StackPanel>
                     <Grid>

@@ -17,8 +17,18 @@ struct AppConfig {
     bool     animEntryExit    = true;     // enter/exit morph (flat ↔ cascade)
     bool     animCycle        = true;     // Tab/Shift-Tab cycle rotation
     bool     animClose        = true;     // window-closed-mid-cascade reflow
+    // Selected-window label motion: the smooth glide between differently
+    // sized front tiles and the fade out/in on held-key rapid cycling.
+    // Off = the label snaps instantly and shows/hides without fades.
+    bool     animLabel        = true;
     bool     motionBlur       = true;     // Motion blur during animation
     bool     livePreview      = true;     // Live WGC window thumbnails (false = static snapshots)
+    // Live wallpaper backdrop: stream the desktop capture behind the
+    // cascade every frame so animated wallpapers (Wallpaper Engine, Lively)
+    // keep playing — including during the cycle animation.  Off = one
+    // static snapshot taken when the cascade opens (dedicated GPU copy, so
+    // a live desktop tile can't mutate it through the shared texture).
+    bool     liveBackground   = true;
     // Pace overlay rendering with Present(1) so live previews update once
     // per monitor refresh.  Costs GPU time on high-refresh displays.
     bool     vsyncLivePreview = false;
@@ -38,6 +48,10 @@ struct AppConfig {
     // 0 = fully black backdrop, 100 = wallpaper fully visible.
     // 28 matches the original kBgAlpha = 0.28f cascade look.
     uint32_t backgroundOpacity = 28;
+    // Wallpaper backdrop blur while the cascade is shown (0-100 %).
+    // 0 (default) = no blur — the shader takes the single-sample path, so
+    // the feature costs nothing unless enabled.
+    uint32_t backgroundBlur = 0;
     // Include the desktop pseudo-window as the last tile of the cascade
     // (the classic Win7 Flip3D behaviour).  Off removes the tile — the
     // freed slot goes to the next real window — while the wallpaper
@@ -69,6 +83,17 @@ struct AppConfig {
     bool     mouseWheelCycle  = true;     // Mouse wheel cycles the cascade
     bool     keyboardNav      = true;     // Arrow keys cycle while active
     std::wstring ignoredApps;             // ';'-separated exe names/paths to ignore
+    // Exclusion list (General): windows of these executables never appear
+    // in the cascade — the hotkey still works, the windows are simply left
+    // out of the stack (they stay cloaked behind the overlay like any
+    // other non-cascade surface and are restored on dismiss).
+    std::wstring excludedApps;            // ';'-separated exe names/paths
+    // Toggle activation for combo bindings: releasing the combo modifier
+    // does NOT commit — the cascade stays open until Enter (commit) or
+    // Escape (cancel), exactly like single-key bindings.  Single-key
+    // bindings are inherently toggle, so this flag only matters when the
+    // combination has at least one modifier.
+    bool     hotkeyToggleMode = false;
     // Activation combination, '+'-separated tokens: modifiers Ctrl/Shift/
     // Alt/Win plus one main key ("Win+Tab", "Ctrl+Alt+F", "MButton",
     // "Win+XButton1", ...).  Parsed by KeyboardHook::ParseHotkey; invalid

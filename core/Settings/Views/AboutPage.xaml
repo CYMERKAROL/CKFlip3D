@@ -20,7 +20,7 @@
                     <TextBlock Text="CKFlip3D" HorizontalAlignment="Center" Margin="0,18,0,0"
                                FontFamily="Segoe UI Light" FontSize="30"
                                Foreground="{DynamicResource TextPrimaryBrush}"/>
-                    <TextBlock Text="Version 1.1" HorizontalAlignment="Center" Margin="0,2,0,0"
+                    <TextBlock Text="Version 1.2" HorizontalAlignment="Center" Margin="0,2,0,0"
                                FontFamily="Segoe UI" FontSize="13"
                                Foreground="{DynamicResource TextSecondaryBrush}"/>
                     <TextBlock Text="A modern Flip 3D-style window switcher for Windows 11."

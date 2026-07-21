@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2
+
+- New General option: **Exclusion list** — windows of the listed applications never appear in the 3D cascade
+- **Background blur intensity** implemented (Appearance, default 0%) — frosted-glass blur on the wallpaper behind the cascade, zero GPU cost when off
+- New Controls option: **Toggle activation** — combo hotkeys can keep the cascade open after the modifier is released (Enter commits, Esc cancels); single-key bindings stay inherently toggle
+- New Appearance option: **Live background** (on by default) — streams the wallpaper live behind the cascade; fixes animated wallpapers (Wallpaper Engine, Lively) freezing during the cycle animation
+- New Animations toggle: **Selected label** — the label's glide and hold-cycle fade can now be switched off for instant snapping
+- Binaries (core, Settings, installer) now ship Authenticode-signed as publisher **CYMERKAROL**
+
 ## 1.1
 
 - Taskbar live preview fixed — the taskbar clock and tray now keep updating while the cascade is open (the old capture-shape gate silently disabled live frames on every Windows build)

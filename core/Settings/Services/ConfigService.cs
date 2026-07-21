@@ -13,8 +13,8 @@ namespace CKFlip3D.Settings.Services;
 /// The C++ core (core/Config.cpp) uses a naive flat key scanner, so this writer
 /// always emits a flat, one-key-per-line JSON object and keeps the key names
 /// byte-for-byte identical to the C++ writer. Keys the core does not know yet
-/// (visualPreset, backgroundBlur, cascadeMonitor, secondaryTaskbarMode) are
-/// ignored by it and kept for forward compatibility.
+/// (visualPreset, cascadeMonitor, secondaryTaskbarMode) are ignored by it and
+/// kept for forward compatibility.
 /// </summary>
 public static class ConfigService
 {
@@ -47,13 +47,16 @@ public static class ConfigService
                 m.AnimEntryExit     = GetBool(root, "animEntryExit", m.AnimEntryExit);
                 m.AnimCycle         = GetBool(root, "animCycle", m.AnimCycle);
                 m.AnimClose         = GetBool(root, "animClose", m.AnimClose);
+                m.AnimLabel         = GetBool(root, "animLabel", m.AnimLabel);
                 m.MotionBlur        = GetBool(root, "motionBlur", m.MotionBlur);
                 m.LivePreview       = GetBool(root, "livePreview", m.LivePreview);
+                m.LiveBackground    = GetBool(root, "liveBackground", m.LiveBackground);
                 m.VsyncLivePreview  = GetBool(root, "vsyncLivePreview", m.VsyncLivePreview);
                 m.TaskbarLivePreview = GetBool(root, "taskbarLivePreview", m.TaskbarLivePreview);
                 m.TaskbarPreview    = GetBool(root, "taskbarPreview", m.TaskbarPreview);
                 m.MaxWindows        = (uint)GetInt(root, "maxWindows", (int)m.MaxWindows);
                 m.BackgroundOpacity = GetInt(root, "backgroundOpacity", m.BackgroundOpacity);
+                m.BackgroundBlur    = GetInt(root, "backgroundBlur", m.BackgroundBlur);
                 m.ShowDesktopTile    = GetBool(root, "showDesktopTile", m.ShowDesktopTile);
                 m.SelectedLabel      = GetBool(root, "selectedLabel", m.SelectedLabel);
                 m.SelectedLabelTitle = GetBool(root, "selectedLabelTitle", m.SelectedLabelTitle);
@@ -66,13 +69,14 @@ public static class ConfigService
                 m.MouseWheelCycle   = GetBool(root, "mouseWheelCycle", m.MouseWheelCycle);
                 m.KeyboardNav       = GetBool(root, "keyboardNav", m.KeyboardNav);
                 m.IgnoredApps       = GetString(root, "ignoredApps", m.IgnoredApps);
+                m.ExcludedApps      = GetString(root, "excludedApps", m.ExcludedApps);
                 m.ActivationHotkey  = GetString(root, "activationHotkey", m.ActivationHotkey);
+                m.HotkeyToggleMode  = GetBool(root, "hotkeyToggleMode", m.HotkeyToggleMode);
                 m.ShowDebugInfo     = GetBool(root, "showDebugInfo", m.ShowDebugInfo);
 
                 // Forward-compatible keys (not consumed by the core yet)
                 m.AppTheme             = GetInt(root, "appTheme", m.AppTheme);
                 m.VisualPreset         = GetInt(root, "visualPreset", m.VisualPreset);
-                m.BackgroundBlur       = GetInt(root, "backgroundBlur", m.BackgroundBlur);
                 m.CascadeMonitor       = GetInt(root, "cascadeMonitor", m.CascadeMonitor);
                 m.SecondaryTaskbarMode = GetInt(root, "secondaryTaskbarMode", m.SecondaryTaskbarMode);
             }
@@ -100,13 +104,16 @@ public static class ConfigService
         AppendBool(sb, "animEntryExit", m.AnimEntryExit);
         AppendBool(sb, "animCycle", m.AnimCycle);
         AppendBool(sb, "animClose", m.AnimClose);
+        AppendBool(sb, "animLabel", m.AnimLabel);
         AppendBool(sb, "motionBlur", m.MotionBlur);
         AppendBool(sb, "livePreview", m.LivePreview);
+        AppendBool(sb, "liveBackground", m.LiveBackground);
         AppendBool(sb, "vsyncLivePreview", m.VsyncLivePreview);
         AppendBool(sb, "taskbarLivePreview", m.TaskbarLivePreview);
         AppendBool(sb, "taskbarPreview", m.TaskbarPreview);
         AppendInt(sb, "maxWindows", (int)m.MaxWindows);
         AppendInt(sb, "backgroundOpacity", m.BackgroundOpacity);
+        AppendInt(sb, "backgroundBlur", m.BackgroundBlur);
         AppendBool(sb, "showDesktopTile", m.ShowDesktopTile);
         AppendBool(sb, "selectedLabel", m.SelectedLabel);
         AppendBool(sb, "selectedLabelTitle", m.SelectedLabelTitle);
@@ -119,13 +126,14 @@ public static class ConfigService
         AppendBool(sb, "mouseWheelCycle", m.MouseWheelCycle);
         AppendBool(sb, "keyboardNav", m.KeyboardNav);
         AppendString(sb, "ignoredApps", m.IgnoredApps);
+        AppendString(sb, "excludedApps", m.ExcludedApps);
         AppendString(sb, "activationHotkey", m.ActivationHotkey);
+        AppendBool(sb, "hotkeyToggleMode", m.HotkeyToggleMode);
         AppendBool(sb, "showDebugInfo", m.ShowDebugInfo);
 
         // Forward-compatible keys (ignored by the core until wired up).
         AppendInt(sb, "appTheme", m.AppTheme);
         AppendInt(sb, "visualPreset", m.VisualPreset);
-        AppendInt(sb, "backgroundBlur", m.BackgroundBlur);
         AppendInt(sb, "cascadeMonitor", m.CascadeMonitor);
         AppendInt(sb, "secondaryTaskbarMode", m.SecondaryTaskbarMode);
 

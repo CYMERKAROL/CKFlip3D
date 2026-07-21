@@ -51,6 +51,11 @@ if not exist "%ROOT%\assets\icons\CKFlip3D.ico" (
 )
 
 rem ---- 4. Payload --------------------------------------------------------
+rem Sign the shipped binaries (publisher CYMERKAROL) BEFORE they are zipped
+rem into the payload, so the installed files carry the signature.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\sign_binaries.ps1" ^
+  "%BUILD%\CKFlip3D.exe" "%BUILD%\CKFlip3D.Settings.exe" "%BUILD%\CKFlip3D.Settings.dll"
+
 echo === Staging payload ===
 if exist "%STAGING%" rmdir /s /q "%STAGING%"
 mkdir "%STAGING%"
@@ -85,6 +90,10 @@ rem The zip was compiled into the exe as an embedded resource. Remove the
 rem build-time intermediate and the pdb so dist\ ships exactly one file.
 del /q "%HERE%Payload\payload.zip" >nul 2>nul
 del /q "%DIST%\CKFlip3D.Setup.pdb" >nul 2>nul
+
+rem Sign the setup exe itself (publisher CYMERKAROL).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\sign_binaries.ps1" ^
+  "%DIST%\CKFlip3D.Setup.exe"
 
 echo.
 echo Build OK: %DIST%\CKFlip3D.Setup.exe  (single-file installer, payload embedded)

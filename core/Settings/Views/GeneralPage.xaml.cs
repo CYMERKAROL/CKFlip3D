@@ -16,7 +16,7 @@ public partial class GeneralPage : UserControl
     {
         InitializeComponent();
         LoadUacShield();
-        Loaded += (_, _) => SyncFromModel();
+        Loaded += (_, _) => { SyncFromModel(); UpdateExcludedSummary(); };
         App.Settings.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(Models.SettingsModel.PerfProfile)
@@ -24,7 +24,25 @@ public partial class GeneralPage : UserControl
                                or nameof(Models.SettingsModel.StartDelayMs)
                                or null)
                 SyncFromModel();
+            if (e.PropertyName is nameof(Models.SettingsModel.ExcludedApps) or null)
+                UpdateExcludedSummary();
         };
+    }
+
+    // ---- Cascade exclusion list --------------------------------------------
+
+    private void UpdateExcludedSummary()
+    {
+        int count = App.Settings.ExcludedAppsList.Count;
+        ExcludedSummary.Text = count == 0
+            ? "No applications are excluded. Windows of listed applications never appear in the 3D cascade."
+            : $"{count} application(s) excluded. Their windows never appear in the 3D cascade.";
+    }
+
+    private void ManageExcluded_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is MainWindow main)
+            main.PushSubPage(new ExcludedAppsPage(), "Exclusion list");
     }
 
     // ---- stock UAC shield icon (asked from Windows, never extracted) ------

@@ -77,23 +77,19 @@
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="220"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Background blur intensity"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Softens the wallpaper while flipping."/>
+                                       Text="Frosted-glass blur on the wallpaper behind the cascade — on every monitor."/>
                         </StackPanel>
-                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
-                                   FontFamily="Segoe UI" FontSize="11" FontStyle="Italic"
-                                   Foreground="{DynamicResource TextFaintBrush}" Text="Coming soon..."/>
-                        <DockPanel Grid.Column="2" VerticalAlignment="Center" IsEnabled="False" Opacity="0.45">
+                        <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
                                        Style="{StaticResource MonoValueText}"
                                        Text="{Binding BackgroundBlur, StringFormat={}{0}%}"/>
                             <Slider Style="{StaticResource AeroSlider}" Minimum="0" Maximum="100"
-                                    IsSnapToTickEnabled="True" TickFrequency="5"
+                                    IsSnapToTickEnabled="True" TickFrequency="1"
                                     Value="{Binding BackgroundBlur}" Margin="0,0,10,0"/>
                         </DockPanel>
                     </Grid>
@@ -106,7 +102,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Desktop in cascade"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Shows the desktop as the last window of the stack, like the original Flip 3D. Off removes the desktop tile — its slot goes to the next window — while the wallpaper backdrop stays."/>
+                                       Text="Shows the desktop as the last window of the stack, like the original Flip 3D. Off removes the desktop tile — its slot goes to the next window."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding ShowDesktopTile}"/>
@@ -340,6 +336,31 @@
                                                 <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                                           IsChecked="{Binding AnimClose}"/>
                                             </Grid>
+                                            <Rectangle Style="{StaticResource RowSeparator}"/>
+                                            <!-- Grayed out while the Selected window label
+                                                 itself is off — nothing to animate then. -->
+                                            <Grid IsEnabled="{Binding SelectedLabel}">
+                                                <Grid.Style>
+                                                    <Style TargetType="Grid">
+                                                        <Style.Triggers>
+                                                            <Trigger Property="IsEnabled" Value="False">
+                                                                <Setter Property="Opacity" Value="0.45"/>
+                                                            </Trigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Grid.Style>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Selected label"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="The label glides between window sizes and fades out while rapidly cycling. Off snaps it instantly."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding AnimLabel}"/>
+                                            </Grid>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -361,6 +382,20 @@
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding LivePreview}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Live background"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Streams the desktop wallpaper live behind the cascade, so animated wallpapers keep playing. Off shows a static snapshot taken when the cascade opens."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding LiveBackground}"/>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
                     <Grid>

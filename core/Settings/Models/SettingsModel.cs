@@ -34,21 +34,32 @@ public sealed class SettingsModel : INotifyPropertyChanged
 
     // ---- General ----------------------------------------------------------
     private bool _startWithWindows;        // mirrors the HKCU Run entry
+    private string _excludedApps = "";     // [Core] excludedApps — ';'-separated exe paths/names
 
     public bool StartWithWindows { get => _startWithWindows; set => Set(ref _startWithWindows, value); }
+    public string ExcludedApps   { get => _excludedApps;     set => Set(ref _excludedApps, value); }
+
+    /// <summary>Split helper for the exclusion-list editor page.</summary>
+    public List<string> ExcludedAppsList =>
+        _excludedApps.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    public void SetExcludedAppsList(IEnumerable<string> entries) =>
+        ExcludedApps = string.Join(';', entries.Where(e => !string.IsNullOrWhiteSpace(e)));
 
     // ---- Appearance --------------------------------------------------------
     private int _appTheme;                 // Settings-app theme (ThemeService.Themes index)
     private int _visualPreset;             // [ComingSoon] 0 = Cascade
     private int _backgroundOpacity = 28;   // [Core] 0..100 %; 28 == original kBgAlpha look
-    private int _backgroundBlur;           // [ComingSoon] 0..100
+    private int _backgroundBlur;           // [Core] backgroundBlur — 0..100 %, 0 = off
     private bool _antialiasing = true;     // [Core] antialiasing
     private bool _motionBlur = true;       // [Core] motionBlur
     private bool _animations = true;       // [Core] animations — master switch
     private bool _animEntryExit = true;    // [Core] animEntryExit — enter/exit morph
     private bool _animCycle = true;        // [Core] animCycle — Tab/Shift-Tab cycling
     private bool _animClose = true;        // [Core] animClose — window-close reflow
+    private bool _animLabel = true;        // [Core] animLabel — selected-label glide + hold fade
     private bool _livePreview = true;      // [Core] livePreview — live WGC thumbnails
+    private bool _liveBackground = true;   // [Core] liveBackground — live wallpaper backdrop
     private bool _vsyncLivePreview;        // [Core] vsyncLivePreview — Present(1) pacing
     private bool _taskbarLivePreview;      // [Core] taskbarLivePreview — live Shell_TrayWnd capture
     private bool _taskbarPreview = true;   // [Core] taskbarPreview — draw a taskbar preview at all
@@ -68,7 +79,9 @@ public sealed class SettingsModel : INotifyPropertyChanged
     public bool AnimEntryExit    { get => _animEntryExit;     set => Set(ref _animEntryExit, value); }
     public bool AnimCycle        { get => _animCycle;         set => Set(ref _animCycle, value); }
     public bool AnimClose        { get => _animClose;         set => Set(ref _animClose, value); }
+    public bool AnimLabel        { get => _animLabel;         set => Set(ref _animLabel, value); }
     public bool LivePreview      { get => _livePreview;       set => Set(ref _livePreview, value); }
+    public bool LiveBackground   { get => _liveBackground;    set => Set(ref _liveBackground, value); }
     public bool VsyncLivePreview   { get => _vsyncLivePreview;   set => Set(ref _vsyncLivePreview, value); }
     public bool TaskbarLivePreview { get => _taskbarLivePreview; set => Set(ref _taskbarLivePreview, value); }
     public bool TaskbarPreview     { get => _taskbarPreview;     set => Set(ref _taskbarPreview, value); }
@@ -90,11 +103,13 @@ public sealed class SettingsModel : INotifyPropertyChanged
     private bool _mouseWheelCycle = true;  // [Core] mouseWheelCycle
     private bool _keyboardNav = true;      // [Core] keyboardNav
     private string _ignoredApps = "";      // [Core] ignoredApps — ';'-separated exe paths/names
+    private bool _hotkeyToggleMode;        // [Core] hotkeyToggleMode — combo bindings toggle instead of hold
     private string _activationHotkey = "Win+Tab"; // [Core] activationHotkey — see HotkeyService
 
     public bool IgnoreFullscreen { get => _ignoreFullscreen; set => Set(ref _ignoreFullscreen, value); }
     public bool MouseWheelCycle  { get => _mouseWheelCycle;  set => Set(ref _mouseWheelCycle, value); }
     public bool KeyboardNav      { get => _keyboardNav;      set => Set(ref _keyboardNav, value); }
+    public bool HotkeyToggleMode { get => _hotkeyToggleMode; set => Set(ref _hotkeyToggleMode, value); }
     public string IgnoredApps    { get => _ignoredApps;      set => Set(ref _ignoredApps, value); }
     public string ActivationHotkey
     {
@@ -167,7 +182,9 @@ public sealed class SettingsModel : INotifyPropertyChanged
         AnimEntryExit = s.AnimEntryExit;
         AnimCycle = s.AnimCycle;
         AnimClose = s.AnimClose;
+        AnimLabel = s.AnimLabel;
         LivePreview = s.LivePreview;
+        LiveBackground = s.LiveBackground;
         VsyncLivePreview = s.VsyncLivePreview;
         TaskbarLivePreview = s.TaskbarLivePreview;
         TaskbarPreview = s.TaskbarPreview;
@@ -181,7 +198,9 @@ public sealed class SettingsModel : INotifyPropertyChanged
         IgnoreFullscreen = s.IgnoreFullscreen;
         MouseWheelCycle = s.MouseWheelCycle;
         KeyboardNav = s.KeyboardNav;
+        HotkeyToggleMode = s.HotkeyToggleMode;
         IgnoredApps = s.IgnoredApps;
+        ExcludedApps = s.ExcludedApps;
         ActivationHotkey = s.ActivationHotkey;
         MaxWindows = s.MaxWindows;
         AutoPerfTune = s.AutoPerfTune;
@@ -202,7 +221,9 @@ public sealed class SettingsModel : INotifyPropertyChanged
         AnimEntryExit == s.AnimEntryExit &&
         AnimCycle == s.AnimCycle &&
         AnimClose == s.AnimClose &&
+        AnimLabel == s.AnimLabel &&
         LivePreview == s.LivePreview &&
+        LiveBackground == s.LiveBackground &&
         VsyncLivePreview == s.VsyncLivePreview &&
         TaskbarLivePreview == s.TaskbarLivePreview &&
         TaskbarPreview == s.TaskbarPreview &&
@@ -216,7 +237,9 @@ public sealed class SettingsModel : INotifyPropertyChanged
         IgnoreFullscreen == s.IgnoreFullscreen &&
         MouseWheelCycle == s.MouseWheelCycle &&
         KeyboardNav == s.KeyboardNav &&
+        HotkeyToggleMode == s.HotkeyToggleMode &&
         IgnoredApps == s.IgnoredApps &&
+        ExcludedApps == s.ExcludedApps &&
         ActivationHotkey == s.ActivationHotkey &&
         MaxWindows == s.MaxWindows &&
         AutoPerfTune == s.AutoPerfTune &&

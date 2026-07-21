@@ -23,7 +23,12 @@ public:
     /// every intermediate pose would make the label dart around) and back
     /// in when the hold ends.  While fully faded the position SNAPS to the
     /// target, so the fade-in always happens at the final position.
-    void Update(float targetX, float targetY, bool suppressed = false);
+    ///
+    /// `animate` false (config animations/animLabel off) disables the
+    /// motion entirely: the position snaps straight to the target and the
+    /// suppression shows/hides without fades.
+    void Update(float targetX, float targetY, bool suppressed = false,
+                bool animate = true);
 
     bool  HasPos() const { return m_hasPos; }
     float X() const { return m_x; }
