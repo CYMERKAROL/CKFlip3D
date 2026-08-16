@@ -33,19 +33,56 @@
             </HeaderedContentControl>
 
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Cascade">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Margin="0,0,20,0">
-                        <TextBlock Style="{StaticResource SettingLabelText}" Text="Exclusion list"/>
-                        <TextBlock x:Name="ExcludedSummary" Style="{StaticResource SettingHintText}"
-                                   Text="Windows of the listed applications never appear in the 3D cascade."/>
-                    </StackPanel>
-                    <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
-                            Content="Manage list…" Click="ManageExcluded_Click"/>
-                </Grid>
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Exclusion list"/>
+                            <TextBlock x:Name="ExcludedSummary" Style="{StaticResource SettingHintText}"
+                                       Text="Windows of the listed applications never appear in the 3D cascade."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Manage list…" Click="ManageExcluded_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Window snap"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="On, every step lands the stack squarely on a window. Off, you can drag the stack freely — hold the drag button (Controls → Mouse &amp; keyboard) and move, or swipe the touchpad, and the windows flow with your hand at whatever speed you move, settling onto the nearest one when you let go. Does not apply to the keyboard or the mouse wheel: those always step one window at a time."/>
+                            <!-- Shown only once free movement is actually asked
+                                 for: the drag button lives behind the pointer
+                                 master, so without it there is nothing left to
+                                 drag the stack with.  Apply steps aside while
+                                 this holds (MainWindow.UpdateApplyBar). -->
+                            <StackPanel x:Name="SnapRequirement" Orientation="Horizontal"
+                                        Visibility="Collapsed" Margin="0,7,0,0">
+                                <Path Width="13" Height="12" Margin="0,1,7,0" VerticalAlignment="Top"
+                                      Stroke="#FFE8A33D" StrokeThickness="1.3"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Data="M6.5,1.2 L12.2,11 H0.8 Z M6.5,4.8 V7.6 M6.5,9.2 V9.7"/>
+                                <StackPanel>
+                                    <TextBlock FontFamily="Segoe UI" FontSize="11" TextWrapping="Wrap"
+                                               MaxWidth="430" Foreground="#FFE8A33D"
+                                               Text="Dragging the stack needs “Let the mouse act on the stack” on — the drag button lives behind it, so with the mouse kept out of the cascade there is nothing left to drag with. Turn it on and this setting can be applied."/>
+                                    <Button Style="{StaticResource AeroButton}" Margin="0,6,0,0"
+                                            HorizontalAlignment="Left" Padding="12,3"
+                                            Content="Let the mouse act on the stack"
+                                            Click="EnablePointer_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" x:Name="SnapToggle" Style="{StaticResource AeroToggle}"
+                                  Checked="SnapToggle_Changed" Unchecked="SnapToggle_Changed"/>
+                    </Grid>
+                </StackPanel>
             </HeaderedContentControl>
 
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Performance">
@@ -123,7 +160,7 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Maximum windows in the stack"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
+                            <TextBlock x:Name="MaxWindowsHint" Style="{StaticResource SettingHintText}"
                                        Text="How many windows the 3D cascade shows at once (2–10)."/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">

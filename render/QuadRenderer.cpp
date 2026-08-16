@@ -1,5 +1,6 @@
 #include "QuadRenderer.hpp"
 #include "../core/DebugLog.h"
+#include "../core/Diagnostics.h"
 #include <d3dcompiler.h>
 
 #pragma comment(lib, "d3dcompiler.lib")
@@ -164,6 +165,24 @@ float4 PSWallpaper(PSInput input) : SV_Target
     return col;
 }
 
+// Glass floor reflection (Appearance -> Reflections).  The caller renders
+// the mirrored quad below the tile (geometry shifted one tile-height down,
+// texture V-flipped through the uvMin/uvMax crop) and this PS applies the
+// glassy vertical falloff: strongest at the tile's bottom edge (uv.y = 0
+// on the reflected quad), decaying quadratically to nothing.  `alpha`
+// carries slotAlpha * reflection strength; `blurAmount` is unused.
+float4 PSReflection(PSInput input) : SV_Target
+{
+    float2 texUV = input.uv * (uvMax - uvMin) + uvMin;
+    float4 col = tex.Sample(samp, texUV);
+    float fade = EdgeFade(input.uv);
+    float g = saturate(1.0 - input.uv.y);
+    g *= g;   // quadratic falloff — short glassy sheen, not a full mirror
+    col.rgb *= alpha * fade * g;
+    col.a   *= alpha * fade * g;
+    return col;
+}
+
 float4 PSDim(PSInput input) : SV_Target
 {
     return float4(0.0f, 0.0f, 0.0f, alpha);
@@ -239,6 +258,20 @@ static winrt::com_ptr<ID3DBlob> CompileShader(const char* src, UINT srcLen,
     if (FAILED(hr)) {
         if (errors)
             CKLog::Log(static_cast<const char*>(errors->GetBufferPointer()));
+        // Which shader failed is the whole diagnosis: the compiler's own text
+        // names the line, and on a driver that rejects one entry point the
+        // rest of the overlay is fine.
+        wchar_t detail[512];
+        wchar_t entryW[64] = {};
+        MultiByteToWideChar(CP_ACP, 0, entry, -1, entryW, 63);
+        _snwprintf_s(detail, _countof(detail), _TRUNCATE,
+                   L"%s (%S) failed to compile: %s",
+                   entryW, target,
+                   errors ? L"see the shader compiler output"
+                          : L"the shader compiler returned no message");
+        Diag::ReportHr(Diag::Code::ShaderCompileFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not build the shaders it draws with",
+                       hr, detail);
         return nullptr;
     }
     return blob;
@@ -290,6 +323,14 @@ bool QuadRenderer::Init(ID3D11Device* device)
     hr = device->CreatePixelShader(
         psWallpaperBlob->GetBufferPointer(), psWallpaperBlob->GetBufferSize(),
         nullptr, m_psWallpaper.put());
+    if (FAILED(hr)) return false;
+
+    auto psReflectionBlob = CompileShader(kQuadHLSL, sizeof(kQuadHLSL) - 1,
+                                           "PSReflection", "ps_5_0");
+    if (!psReflectionBlob) return false;
+    hr = device->CreatePixelShader(
+        psReflectionBlob->GetBufferPointer(), psReflectionBlob->GetBufferSize(),
+        nullptr, m_psReflection.put());
     if (FAILED(hr)) return false;
 
 #ifdef CKFLIP_DEBUG_TASKBAR
@@ -452,6 +493,52 @@ void QuadRenderer::Draw(ID3D11DeviceContext* ctx,
     ctx->VSSetConstantBuffers(0, 1, cbs);
 
     ctx->PSSetShader(m_ps.get(), nullptr, 0);
+    ctx->PSSetConstantBuffers(0, 1, cbs);
+    ctx->PSSetShaderResources(0, 1, &srv);
+    ID3D11SamplerState* samplers[] = { ActiveSampler() };
+    ctx->PSSetSamplers(0, 1, samplers);
+
+    ctx->DrawIndexed(6, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Glass floor reflection — clone of Draw() binding the reflection PS.  The
+// caller supplies the mirrored MVP (FlipScene::GetReflectionDrawCall or an
+// inline Translation(0,-1,0)-prefixed world) and a V-flipped UV crop; the
+// PS applies the vertical glass falloff.
+void QuadRenderer::DrawReflection(ID3D11DeviceContext* ctx,
+                                   ID3D11ShaderResourceView* srv,
+                                   const QuadDrawCall& draw)
+{
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) return;
+
+    auto* cb    = static_cast<CBPerDraw*>(mapped.pData);
+    cb->mvp     = draw.mvp;
+    cb->alpha   = draw.alpha;
+    cb->blurAmount = 0.0f;
+    cb->uvMinX  = draw.uvMinX;
+    cb->uvMinY  = draw.uvMinY;
+    cb->uvMaxX  = draw.uvMaxX;
+    cb->uvMaxY  = draw.uvMaxY;
+    cb->_pad[0] = 0.0f;
+    cb->_pad[1] = 0.0f;
+    ctx->Unmap(m_cb.get(), 0);
+
+    ctx->IASetInputLayout(m_inputLayout.get());
+    UINT stride = sizeof(Vertex);
+    UINT offset = 0;
+    ID3D11Buffer* vb = m_vb.get();
+    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    ctx->VSSetShader(m_vs.get(), nullptr, 0);
+    ID3D11Buffer* cbs[] = { m_cb.get() };
+    ctx->VSSetConstantBuffers(0, 1, cbs);
+
+    ctx->PSSetShader(m_psReflection.get(), nullptr, 0);
     ctx->PSSetConstantBuffers(0, 1, cbs);
     ctx->PSSetShaderResources(0, 1, &srv);
     ID3D11SamplerState* samplers[] = { ActiveSampler() };

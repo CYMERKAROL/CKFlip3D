@@ -1,6 +1,11 @@
 #include "flipcontroller.h"
 #include "DebugLog.h"
+#include "Diagnostics.h"
+#include "ThemePlate.h"
 #include "../capture/windowcloaker.h"
+#include "../scene/CoverFlowLayout.hpp"
+#include "../input/TileHitTest.hpp"
+#include "../hook/keyboardhook.h"
 #include <algorithm>
 #include <cmath>
 #include <dwmapi.h>
@@ -55,9 +60,154 @@ static void ComputeTaskbarContentBandUV(int texH, float tbH,
     outUvMaxY = hi;
 }
 
+// The desktop pseudo-tile carries no title of its own, so the search matches
+// it on the name the selected-window label already shows for it.
+static constexpr const wchar_t* kDesktopSearchName = L"Desktop";
+
 static bool ValidRect(const RECT& r)
 {
     return r.right > r.left && r.bottom > r.top;
+}
+
+// ---------------------------------------------------------------------------
+// A shell flyout in front of the cascade (Start, search, quick settings)
+//
+// Tapping the Windows key and then reaching for Win+Tab a moment later opens
+// the cascade with the Start menu still up, and two things then go wrong that
+// look unrelated but are the same cause:
+//
+//   * Windows refuses SetForegroundWindow to every other process while the
+//     Start screen owns the foreground — one of the documented conditions, and
+//     not one this process can satisfy from behind an overlay.  The commit at
+//     the end of the session therefore cannot raise the window the user picked,
+//     which is CK0505 with the cascade having done everything right.
+//   * The Shell_TrayWnd capture is taken with the flyout composited into it.
+//     The taskbar preview measures the bar's content band in that capture, gets
+//     a band far taller than the bar, rejects it as implausible (correctly) and
+//     falls back to drawing the WHOLE texture inside the thin bar rect — the
+//     glowing, doubled-up taskbar strip.
+//
+// So the flyout is closed before anything else happens, which is also what the
+// system's own Task View does when it opens.  Both symptoms come from the same
+// two lines, and a session started with nothing open never reaches them.
+// ---------------------------------------------------------------------------
+static constexpr double kFlyoutDismissMs = 200.0;
+
+static bool ProcessImageIsOneOf(DWORD pid, const wchar_t* const* names,
+                                size_t count)
+{
+    if (pid == 0)
+        return false;
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc)
+        return false;
+    wchar_t path[MAX_PATH] = {};
+    DWORD cch = static_cast<DWORD>(_countof(path));
+    const bool ok = QueryFullProcessImageNameW(proc, 0, path, &cch) != FALSE;
+    CloseHandle(proc);
+    if (!ok)
+        return false;
+    const wchar_t* slash = wcsrchr(path, L'\\');
+    const wchar_t* leaf  = slash ? slash + 1 : path;
+    for (size_t i = 0; i < count; ++i) {
+        if (lstrcmpiW(leaf, names[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+/// The foreground window if it is one of the shell's own flyouts, else null.
+///
+/// Class alone is not enough: every XAML island lives in a
+/// Windows.UI.Core.CoreWindow, so matching on it would also match an ordinary
+/// UWP app the user is working in — and closing THAT is not this function's
+/// business.  The owning executable is what makes it the shell's.
+static HWND ForegroundShellFlyout()
+{
+    HWND fg = GetForegroundWindow();
+    if (!fg)
+        return nullptr;
+    wchar_t cls[64] = {};
+    GetClassNameW(fg, cls, static_cast<int>(_countof(cls)));
+    if (lstrcmpiW(cls, L"Windows.UI.Core.CoreWindow") != 0)
+        return nullptr;
+
+    static const wchar_t* const kShellHosts[] = {
+        L"StartMenuExperienceHost.exe",   // Start menu (Win10 19H1+, Win11)
+        L"SearchHost.exe",                // search flyout (Win11)
+        L"SearchApp.exe",                 // search flyout (Win10)
+        L"ShellExperienceHost.exe",       // quick settings / notification centre
+    };
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return ProcessImageIsOneOf(pid, kShellHosts, _countof(kShellHosts))
+        ? fg : nullptr;
+}
+
+static bool ShellFlyoutStillComposited(HWND fly)
+{
+    if (!fly || !IsWindow(fly) || !IsWindowVisible(fly))
+        return false;
+    // A closed flyout is usually kept alive and CLOAKED rather than destroyed,
+    // and a cloaked window is still "visible" by the WS_VISIBLE test — so both
+    // answers are needed, or the wait below would always run to its full
+    // length.
+    DWORD cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(fly, DWMWA_CLOAKED, &cloaked,
+                                        sizeof(cloaked)))
+        && cloaked != 0)
+        return false;
+    return true;
+}
+
+static void DismissShellFlyout(HWND fly)
+{
+    // Escape, injected.  The flyout holds the focus, so it is what receives it;
+    // and our own hook drops LLKHF_INJECTED input, so the cancel key cannot
+    // cancel the session that is about to open.
+    INPUT keys[2] = {};
+    keys[0].type       = INPUT_KEYBOARD;
+    keys[0].ki.wVk     = VK_ESCAPE;
+    keys[1]            = keys[0];
+    keys[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, keys, sizeof(INPUT));
+
+    // Wait for it to leave the COMPOSITION, not merely to lose focus: DWM keeps
+    // drawing it through its close animation, and a taskbar capture taken in
+    // the middle of that still contains it.  DwmFlush paces the poll at one
+    // compositor tick, the same wait the capture warm-up uses.  Bounded, and
+    // only ever entered when a flyout really was in the way.
+    LARGE_INTEGER freq{}, t0{}, t1{};
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+    while (ShellFlyoutStillComposited(fly)) {
+        DwmFlush();
+        if (freq.QuadPart <= 0)
+            break;
+        QueryPerformanceCounter(&t1);
+        const double ms = static_cast<double>(t1.QuadPart - t0.QuadPart)
+                        * 1000.0 / static_cast<double>(freq.QuadPart);
+        if (ms >= kFlyoutDismissMs)
+            break;   // it is not going; carry on rather than stall the hotkey
+    }
+}
+
+/// Raise `target`, taking the second path Windows leaves open when the first is
+/// refused.
+///
+/// SetForegroundWindow returns FALSE both when it was refused and when the
+/// window was already in front, so the answer is always checked against
+/// GetForegroundWindow rather than believed.  SwitchToThisWindow is what the
+/// system's own switcher uses and gets through refusals the plain call does
+/// not; a compositor tick separates the attempt from the verdict, because the
+/// activation is not instantaneous.
+static bool RaiseWindowForCommit(HWND target)
+{
+    if (SetForegroundWindow(target) || GetForegroundWindow() == target)
+        return true;
+    SwitchToThisWindow(target, TRUE);
+    DwmFlush();
+    return GetForegroundWindow() == target;
 }
 
 // AddRef-wrap a raw SRV (may be null) — frozen refs must own the view so a
@@ -335,14 +485,17 @@ static DirectX::XMMATRIX LerpMatrix(DirectX::XMMATRIX a,
     };
 }
 
+// `slotIdx` indexes the animator's per-slot flat rects; `windowIdx` is the
+// window shown in that slot (differs from slotIdx only in Cover Flow with
+// window overflow — see FlipController::SlotWindowIndex).
 static const RECT& ResolveMorphScreenRect(const EntryExitAnimator& animator,
                                           const std::vector<WindowInfo>& windows,
-                                          size_t idx)
+                                          size_t slotIdx, size_t windowIdx)
 {
     const std::vector<RECT>& flatRects = animator.GetFlatSourceRects();
-    if (idx < flatRects.size() && ValidRect(flatRects[idx]))
-        return flatRects[idx];
-    return windows[idx].rect;
+    if (slotIdx < flatRects.size() && ValidRect(flatRects[slotIdx]))
+        return flatRects[slotIdx];
+    return windows[windowIdx].rect;
 }
 
 #ifdef CKFLIP_DEBUG_TASKBAR
@@ -531,8 +684,44 @@ void FlipController::Shutdown()
 // ---------------------------------------------------------------------------
 void FlipController::Activate()
 {
-    if (m_active)
+    if (m_active) {
+        // Re-triggered while the LAST session is still morphing out.  The
+        // hook has already flipped its session flag back on (to it, this is a
+        // fresh activation) — so silently returning here left the two sides
+        // disagreeing the moment the exit finished: the controller went idle
+        // while the hook carried on swallowing every keystroke, including the
+        // Windows key, for the rest of the process's life.  That is the limbo.
+        //
+        // Remember the request instead and honour it the moment the teardown
+        // completes.  A pending exit is the only state this can be reached
+        // in; a genuinely live session never posts an activation at all.
+        if (m_exitPending || m_reverseDelayPending
+            || m_entryExitAnimator.IsActive())
+            m_reactivatePending = true;
         return;
+    }
+
+    m_reactivatePending = false;
+    // Whose session this is.  The hook (or the gesture worker) raised the flag
+    // before posting the activation, so this reads the identity it just minted
+    // — and the teardown will hand back exactly that one, never a successor's.
+    m_sessionEpoch = KeyboardHook::CurrentSessionEpoch();
+    m_pendingExit  = PendingExit::None;
+    m_scrubActive  = false;
+    m_scrubPending = false;
+    m_scrubT       = 0.0f;
+    m_flinging     = false;
+    m_scrubVelocity = 0.0f;
+    m_scrubPendingDist = 0.0f;
+    m_scrubSampleQPC.QuadPart = 0;
+
+    // Close the Start menu (or a search / quick-settings flyout) before
+    // anything else reads the screen — see DismissShellFlyout for what it
+    // breaks: the taskbar preview's capture and the commit's foreground call.
+    // This has to run BEFORE the launch-timing anchor below, or the dim curve
+    // would open sampled at wherever the wait ended.
+    if (HWND fly = ForegroundShellFlyout())
+        DismissShellFlyout(fly);
 
     m_monLayout = BuildMonitorLayout();
 
@@ -580,6 +769,18 @@ void FlipController::Activate()
     m_staticBackdropSRV     = nullptr;
     m_taskbarDrawOnTop = false;
     m_labelAnim.Reset();   // label anchor re-derives from this session's cascade
+    // Pointer / search state is strictly per-session — a hover from the last
+    // cascade would highlight a slot that now holds a different window, and a
+    // stale query would open the stack already filtered.
+    m_hover.Reset();
+    m_hoverSlot    = -1;
+    m_hoverStillQPC.QuadPart = 0;   // the next session's stillness is its own
+    CancelSelectJump();
+    ClearSearchState();
+    // Seed the pointer from where it actually is, so a cascade opened under a
+    // stationary hand already highlights the tile beneath it — waiting for the
+    // first WM_MOUSEMOVE would mean nothing happens until the mouse twitches.
+    m_pointerValid = GetCursorPos(&m_pointerScreen) != FALSE;
 
     // Detect "activated on desktop" before scanning windows so the entry
     // morph can fade the desktop tile in from α=0 (Win7 behaviour).  The
@@ -622,8 +823,25 @@ void FlipController::Activate()
     // 3b. Sort windows by program (grouped by PID, smaller first within group).
     SortWindowsByProgram();
 
+    // 3c. Per-window facts the search filter needs (executable name, session
+    //     order).  Resolved here, once, off the final window order — and only
+    //     when searching is switched on, so it costs nothing otherwise.
+    BuildWindowMetadata();
+
     // 4. If no windows remain, abort.
     if (m_windows.empty()) {
+        // The hotkey worked and nothing happened, which is the least
+        // explicable failure the switcher has.  Name the two things that
+        // actually cause it.
+        Diag::Report(Diag::Code::NoEligibleWindows, Diag::Sev::Warning,
+                     L"The hotkey worked, but there was nothing to show",
+                     m_desktopTileDisabled
+                        ? L"no window passed the scan — check the exclusion list "
+                          L"(General → Cascade), and note that “Desktop in "
+                          L"cascade” is off, so an empty desktop has no tile "
+                          L"of its own to fall back on"
+                        : L"no window passed the scan — check the exclusion list "
+                          L"under General → Cascade");
         m_active = false;
         return;
     }
@@ -644,6 +862,13 @@ void FlipController::Activate()
     uint32_t displayCount = totalWin;
     if (m_config && m_config->maxWindows < displayCount)
         displayCount = m_config->maxWindows;
+    // Latch the visual preset for this session (Appearance → Visual
+    // preset).  A config reload mid-session applies on the next
+    // activation — the layout never switches under a live stack (the
+    // RemoveClosedWindows rebuild keeps the latched preset).
+    m_scene.SetVisualPreset(
+        (m_config && m_config->visualPreset == 1) ? VisualPreset::CoverFlow
+                                                  : VisualPreset::Cascade);
     m_scene.BuildSlots(displayCount, m_cascadeW, m_cascadeH);
     RebuildSceneAspects();
 
@@ -674,18 +899,25 @@ void FlipController::Activate()
         float dW = primaryW > 0 ? static_cast<float>(primaryW) : vpW;
         float dH = primaryH > 0 ? static_cast<float>(primaryH) : vpH;
 
+        // The entry/exit animator pairs its window list index i with
+        // cascade slot i.  Hand it the slot-ordered permutation so the
+        // pairing holds in Cover Flow with more windows than slots (an
+        // exact copy of m_windows otherwise — the cascade is unaffected).
+        const std::vector<WindowInfo> orderedWins = SlotOrderedWindows();
+
         // Per-window taskbar-button rect overrides for minimized windows.
         // First-pass: MSAA per-button lookup.  Fallback: synthetic icon-
         // sized rect spaced along Shell_TrayWnd so the tile still emerges
         // from the taskbar visually.  Empty rect = no override → flat
         // rect resolves via rcNormalPosition (legacy behaviour).
-        std::vector<RECT> tbOverrides(m_windows.size(), RECT{0,0,0,0});
+        // Indexed in the SAME slot order as orderedWins.
+        std::vector<RECT> tbOverrides(orderedWins.size(), RECT{0,0,0,0});
         {
-            // Collect indices of minimized windows in window-list order.
+            // Collect indices of minimized windows in slot order.
             std::vector<size_t> minIdx;
-            minIdx.reserve(m_windows.size());
-            for (size_t i = 0; i < m_windows.size(); ++i) {
-                HWND h = m_windows[i].hwnd;
+            minIdx.reserve(orderedWins.size());
+            for (size_t i = 0; i < orderedWins.size(); ++i) {
+                HWND h = orderedWins[i].hwnd;
                 if (h && h != m_desktopHwnd && IsIconic(h))
                     minIdx.push_back(i);
             }
@@ -694,7 +926,7 @@ void FlipController::Activate()
             if (m_taskbarLocator.IsReady()) {
                 for (size_t k : minIdx) {
                     RECT btn;
-                    if (m_taskbarLocator.GetButtonRect(m_windows[k].hwnd, btn))
+                    if (m_taskbarLocator.GetButtonRect(orderedWins[k].hwnd, btn))
                         tbOverrides[k] = btn;
                 }
             }
@@ -739,7 +971,7 @@ void FlipController::Activate()
         if (m_activatedOnDesktop)
             desktopMode = DesktopEntryMode::FadeFromFlat;
 
-        m_entryExitAnimator.BeginEntry(m_scene, m_windows,
+        m_entryExitAnimator.BeginEntry(m_scene, orderedWins,
                                         vpW, vpH, dW, dH, m_desktopHwnd,
                                         m_cascadeAspect,
                                         m_overlayOriginX, m_overlayOriginY,
@@ -794,6 +1026,13 @@ void FlipController::Activate()
             QueryPerformanceCounter(&w1);
             double elapsedMs = static_cast<double>(w1.QuadPart - w0.QuadPart)
                              * 1000.0 / static_cast<double>(wf.QuadPart);
+            // Out of budget.  NOT a diagnostic: this loop is a best-effort
+            // wait, and the fallback below is the designed answer to it — the
+            // default budget is one compositor tick, so a capture that has not
+            // delivered yet on the first activation of a session is the
+            // ordinary case, not a fault.  Reporting here fired on every first
+            // activation on every machine, which is exactly the noise that
+            // teaches people to stop reading the log.
             if (elapsedMs >= static_cast<double>(delayMs))
                 break;
         }
@@ -828,22 +1067,56 @@ void FlipController::Activate()
         }
     }
 
+    // Only NOW is an empty capture worth reporting.  The warm-up budget
+    // expiring means nothing on its own — the DwmThumbnail and PrintWindow
+    // fallbacks above exist precisely for the captures it leaves behind.  A
+    // capture that has no frame after all three have been tried is a tile that
+    // will open as a blank placeholder, which is a thing the user can see.
+    {
+        size_t blank = 0;
+        for (auto& cap : m_captures)
+            if (cap && !cap->HasCachedFrame()) ++blank;
+        if (blank > 0) {
+            wchar_t detail[288];
+            _snwprintf_s(detail, _countof(detail), _TRUNCATE,
+                L"%zu of %zu tiles had no picture after live capture, the "
+                L"thumbnail fallback and PrintWindow had all been tried; they "
+                L"open as blank placeholders. Windows refuses previews of "
+                L"protected content, and some minimised windows keep nothing "
+                L"to copy",
+                blank, m_captures.size());
+            Diag::Report(Diag::Code::CaptureWarmupTimeout, Diag::Sev::Warning,
+                         L"Some windows could not be pictured in the cascade",
+                         detail);
+        }
+    }
+
     // v8.5 — resolve the taskbar content band so the draw can UV-crop to the
     // real taskbar.  On Win10 / Win11 24H2 the WGC Shell_TrayWnd capture is
     // far taller than the bar with the content in only a thin band; this
     // measures where that band is instead of guessing.  Falls back to the
     // full texture when no content band is found (e.g. Win11 25H2 where the
     // capture is already bar-sized).
+    // The bar's own height is handed over as the sanity check: a detected
+    // band much taller than that is something else that got composited into
+    // the capture, and cropping around its centre draws the wrong slice —
+    // the "taskbar looks doubled" artefact.  See DetectContentCenterV.
     m_taskbarContentResolved = false;
-    if (m_taskbarCapture && m_taskbarCapture->HasCachedFrame())
+    if (m_taskbarCapture && m_taskbarCapture->HasCachedFrame()) {
+        const int barPx =
+            static_cast<int>(m_taskbarRect.bottom - m_taskbarRect.top);
         m_taskbarContentResolved =
-            m_taskbarCapture->DetectContentCenterV(m_taskbarContentCenterY);
+            m_taskbarCapture->DetectContentCenterV(m_taskbarContentCenterY, barPx);
+    }
     for (auto& tray : m_secondaryTrays) {
         tray.contentResolved = false;
         tray.contentCenterY = 0.5f;
-        if (tray.capture && tray.capture->HasCachedFrame())
+        if (tray.capture && tray.capture->HasCachedFrame()) {
+            const int barPx =
+                static_cast<int>(tray.rectOverlay.bottom - tray.rectOverlay.top);
             tray.contentResolved =
-                tray.capture->DetectContentCenterV(tray.contentCenterY);
+                tray.capture->DetectContentCenterV(tray.contentCenterY, barPx);
+        }
     }
 
     // Taskbar live preview eligibility — pure user opt-in.  Decided BEFORE
@@ -861,6 +1134,16 @@ void FlipController::Activate()
     // rows count as a "content band" on a bar-sized capture too).
     m_taskbarLiveActive = m_config && m_config->taskbarLivePreview
         && m_taskbarCapture != nullptr;
+    // Asked for a live taskbar and got no capture to make one from: the
+    // overlay shows the frozen pre-hide frame instead, which is a clock that
+    // never moves — the exact symptom, said out loud.
+    if (m_config && m_config->taskbarLivePreview && m_config->taskbarPreview
+        && !m_taskbarCapture)
+        Diag::ReportOnce(Diag::Code::TaskbarCaptureOdd, Diag::Sev::Warning,
+                         L"The taskbar preview cannot be live on this system",
+                         L"Windows would not hand over a capture of the taskbar, "
+                         L"so the overlay is drawing the frozen frame taken just "
+                         L"before it hid the real one");
     for (auto& tray : m_secondaryTrays)
         tray.liveActive = m_config && m_config->taskbarLivePreview
             && tray.capture != nullptr;
@@ -1065,10 +1348,13 @@ void FlipController::Activate()
         initOrder.reserve(count);
         for (uint32_t i = 0; i < count; ++i)
             initOrder.push_back({ static_cast<int>(i), m_scene.GetSlot(i).z });
-        std::sort(initOrder.begin(), initOrder.end(),
-                  [](const InitialDrawEntry& a, const InitialDrawEntry& b) {
-                      return a.z > b.z;
-                  });
+        // Stable for the same reason as the render loop's sort: Cover Flow's
+        // mirrored slots tie exactly, and an unspecified order among them is
+        // an unspecified first frame.
+        std::stable_sort(initOrder.begin(), initOrder.end(),
+                         [](const InitialDrawEntry& a, const InitialDrawEntry& b) {
+                             return a.z > b.z;
+                         });
 
         for (const auto& e : initOrder) {
             if (e.idx < 0) {
@@ -1081,7 +1367,7 @@ void FlipController::Activate()
                 XMMATRIX world =
                     XMMatrixScaling(slot.scaleX, slot.scaleY, 1.0f) *
                     XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
-                    XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY())) *
+                    XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                     XMMatrixTranslation(slot.x, slot.y, slot.z);
                 XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
                 XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
@@ -1115,20 +1401,21 @@ void FlipController::Activate()
             }
 
             uint32_t i = static_cast<uint32_t>(e.idx);
-            if (i >= static_cast<uint32_t>(m_captures.size())) continue;
+            const uint32_t wi = SlotWindowIndex(i);
+            if (wi >= static_cast<uint32_t>(m_captures.size())) continue;
 
             QuadDrawCall draw;
             float alpha = m_scene.GetSlot(i).alpha;
             if (alpha < 0.001f) continue;
 
-            ID3D11ShaderResourceView* srv = m_captures[i] ? m_captures[i]->GetCurrentFrame() : nullptr;
+            ID3D11ShaderResourceView* srv = m_captures[wi] ? m_captures[wi]->GetCurrentFrame() : nullptr;
             m_scene.GetDrawCall(i, cascadeAspect, draw.mvp, alpha);
             DirectX::XMMATRIX perspMVP =
                 DirectX::XMLoadFloat4x4(&draw.mvp) * monRemap;
             DirectX::XMStoreFloat4x4(&draw.mvp, perspMVP);
-            if (i < m_windows.size()) {
+            if (wi < m_windows.size()) {
                 const RECT& morphRect =
-                    ResolveMorphScreenRect(m_entryExitAnimator, m_windows, i);
+                    ResolveMorphScreenRect(m_entryExitAnimator, m_windows, i, wi);
                 DirectX::XMMATRIX screenMVP =
                     ComputeScreenSpaceMVP(morphRect, vpW, vpH);
                 DirectX::XMStoreFloat4x4(&draw.mvp,
@@ -1137,7 +1424,7 @@ void FlipController::Activate()
             }
             draw.alpha = alpha;
             draw.blurAmount = 0.0f;
-            if (i < m_windows.size() && m_windows[i].hwnd == m_desktopHwnd)
+            if (wi < m_windows.size() && m_windows[wi].hwnd == m_desktopHwnd)
                 ApplyTextureUV(draw, m_desktopTileUV);
             if (srv)
                 m_quad.Draw(ctx, srv, draw);
@@ -1189,6 +1476,12 @@ void FlipController::Activate()
             exclude.push_back(m_desktopHwnd);       // desktop wallpaper
         WindowCloaker::CloakVisibleAppWindows(GetCurrentProcessId(), exclude);
     }
+
+    // A death from here on takes the overlay, the cloaked windows and the
+    // hidden taskbar with it, and looks nothing like one that happens while the
+    // process sits in the tray — so the marker says which it was (Diag::
+    // NoteState).  Once per activation, never per frame.
+    Diag::NoteState(L"cascade open");
 }
 
 void FlipController::Cycle()
@@ -1208,12 +1501,22 @@ void FlipController::Cycle()
     if (m_closeAnim.IsActive())
         return;
 
+    // A click-to-select spin owns the stack until it lands on its window;
+    // stepping it further would leave the spin chasing a moving target.
+    if (m_jumpTargetHwnd)
+        return;
+
     if (m_cycleAnim.IsActive()) {
         // Queue instead of blocking — creates smooth continuous motion.
         if (m_cycleQueue.size() < kMaxQueueSize)
             m_cycleQueue.push_back(true);
         return;
     }
+
+    // A raised tile comes down as the stack sets off, not before it (see
+    // DropHoverLift) — the cycle starts on this frame either way.
+    DropHoverLift();
+
     ExecuteCycleForward();
 }
 
@@ -1228,12 +1531,17 @@ void FlipController::CycleBack()
     // Close-transition cooldown — see Cycle().
     if (m_closeAnim.IsActive())
         return;
+    if (m_jumpTargetHwnd)
+        return;                             // spin in flight — see Cycle()
 
     if (m_cycleAnim.IsActive()) {
         if (m_cycleQueue.size() < kMaxQueueSize)
             m_cycleQueue.push_back(false);
         return;
     }
+
+    DropHoverLift();            // see Cycle()
+
     ExecuteCycleBackward();
 }
 
@@ -1252,11 +1560,16 @@ void FlipController::ExecuteCycleForward(bool chained)
         // CRITICAL: Rotate scene slots to keep internal state in sync with arrays.
         // Without this, the next animated cycle will have stale slot positions.
         m_scene.RotateAspects(true);
+        m_hover.Rotate(true);   // the lift belongs to a window, not to a slot
         RebuildSceneAspects();
         return;
     }
 
-    m_cycleAnim.Begin(m_scene, true, chained);
+    // A click-to-select spin fixes its own per-step duration (see
+    // AdvanceSelectJump); every other cycle keeps the built-in timing.
+    const float stepMs = m_jumpTargetHwnd ? m_jumpStepMs : 0.0f;
+    if (m_scrubPending) m_cycleAnim.BeginScrub(m_scene, true);
+    else                m_cycleAnim.Begin(m_scene, true, chained, stepMs);
 
     // Freeze SRVs BEFORE rotation — these are the "start" textures.
     // The wrapping tile (slot n-1) in phase 1 needs the departing window's
@@ -1287,6 +1600,11 @@ void FlipController::ExecuteCycleForward(bool chained)
     // tied to the correct windows, not slot positions. This prevents aspect
     // ratio leakage when windows wrap around visible slots.
     m_scene.RotateAspects(true);
+    // Same rotation for the pointer-hover lift: it is a per-SLOT draw offset,
+    // and slot i now shows the window that will END there, so a fall in flight
+    // has to travel with its own tile.  Left un-rotated, the tile that was
+    // never raised is the one seen sinking (see HoverAnimator::Rotate).
+    m_hover.Rotate(true);
     RebuildSceneAspects();
     m_cycleAnim.SetTarget(m_scene);
 }
@@ -1306,11 +1624,14 @@ void FlipController::ExecuteCycleBackward(bool chained)
         // CRITICAL: Rotate scene slots to keep internal state in sync with arrays.
         // Without this, the next animated cycle will have stale slot positions.
         m_scene.RotateAspects(false);
+        m_hover.Rotate(false);  // the lift belongs to a window, not to a slot
         RebuildSceneAspects();
         return;
     }
 
-    m_cycleAnim.Begin(m_scene, false, chained);
+    const float stepMs = m_jumpTargetHwnd ? m_jumpStepMs : 0.0f;
+    if (m_scrubPending) m_cycleAnim.BeginScrub(m_scene, false);
+    else                m_cycleAnim.Begin(m_scene, false, chained, stepMs);
 
     // Freeze SRVs BEFORE rotation — the wrapping tile (slot 0) in phase 1
     // needs the departing window's texture at index n-1 BEFORE rotation.
@@ -1345,6 +1666,7 @@ void FlipController::ExecuteCycleBackward(bool chained)
     // tied to the correct windows, not slot positions. This prevents aspect
     // ratio leakage when windows wrap around visible slots.
     m_scene.RotateAspects(false);
+    m_hover.Rotate(false);      // see ExecuteCycleForward
     RebuildSceneAspects();
     m_cycleAnim.SetTarget(m_scene);
 }
@@ -1403,6 +1725,261 @@ void FlipController::CycleStop()
 }
 
 // ---------------------------------------------------------------------------
+// Free stack movement — Window snap off (config windowSnap).
+//
+// A scrub is the ordinary cycle transition with the pointer holding its
+// parameter.  Walking past either end of the in-flight step commits it and
+// opens the next one in the same direction, so one long drag flows through
+// the whole stack; falling back below a step's own start pose rolls that
+// step's array rotation away again and turns around.  Everything else — the
+// wrap phases, the frozen textures, the Cover Flow side swap — is the
+// unchanged cycle path, which is exactly the point.
+// ---------------------------------------------------------------------------
+void FlipController::Scrub(float windows)
+{
+    if (!m_active || m_windows.size() < 2 || windows == 0.0f)
+        return;
+    if (!m_config || m_config->windowSnap)
+        return;                             // snapping: discrete steps only
+    // The morphs own the scene's slot state while they run.
+    if (m_entryExitAnimator.IsActive() || m_closeAnim.IsActive())
+        return;
+    if (m_jumpTargetHwnd)
+        return;                             // spin in flight — see Cycle()
+
+    if (!AnimCycleEnabled()) {
+        // No cycle animation to scrub through — fall back to whole steps so
+        // the drag still moves the stack.
+        while (windows >= 1.0f) { ExecuteCycleForward();  windows -= 1.0f; }
+        while (windows <= -1.0f) { ExecuteCycleBackward(); windows += 1.0f; }
+        return;
+    }
+
+    // A timed cycle from the wheel or the keyboard is landing — let it.
+    if (m_cycleAnim.IsActive() && !m_cycleAnim.IsScrubbing())
+        return;
+
+    // Grabbing the stack mid-throw stops the throw dead, as catching a
+    // spinning wheel should.
+    m_flinging = false;
+
+    // A raised tile goes down here too, alongside the first fraction of the
+    // drag — same reason, same mechanism as a cycle (see DropHoverLift).
+    DropHoverLift();
+
+    // ---- Velocity, for the throw on release -------------------------------
+    // Pointer deltas arrive in bursts (several posted messages drained in one
+    // pass), so measure over a short window instead of per message — a
+    // per-message dt would read as either infinity or zero.
+    {
+        LARGE_INTEGER now, freq;
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&freq);
+        if (m_scrubSampleQPC.QuadPart == 0) {
+            m_scrubSampleQPC = now;
+            m_scrubPendingDist = 0.0f;
+            m_scrubVelocity = 0.0f;
+        }
+        m_scrubPendingDist += windows;
+        double dt = static_cast<double>(now.QuadPart - m_scrubSampleQPC.QuadPart)
+                  / static_cast<double>(freq.QuadPart);
+        if (dt >= 0.008) {
+            if (dt > 0.20) {
+                // Long pause: the hand stopped, so the stack should too.
+                m_scrubVelocity = 0.0f;
+            } else {
+                const float inst = static_cast<float>(m_scrubPendingDist / dt);
+                m_scrubVelocity += 0.45f * (inst - m_scrubVelocity);
+            }
+            m_scrubPendingDist = 0.0f;
+            m_scrubSampleQPC = now;
+        }
+    }
+
+    ScrubAdvance(windows);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::ScrubAdvance(float windows)
+{
+    float remaining = windows;
+    for (int guard = 0; guard < 64 && remaining != 0.0f; ++guard) {
+        if (!m_scrubActive) {
+            m_scrubForward = remaining > 0.0f;
+            m_scrubPending = true;
+            if (m_scrubForward) ExecuteCycleForward(false);
+            else                ExecuteCycleBackward(false);
+            m_scrubPending = false;
+            if (!m_cycleAnim.IsScrubbing())
+                return;                     // animation disabled underneath us
+            m_scrubActive = true;
+            m_scrubT      = 0.0f;
+        }
+
+        // Inside the step, t always grows along the step's own direction.
+        const float t = m_scrubT + (m_scrubForward ? remaining : -remaining);
+
+        if (t >= 1.0f) {
+            m_cycleAnim.SetScrubT(m_scene, 1.0f);
+            m_cycleAnim.Cancel();           // pose already equals the rest pose
+            remaining     = m_scrubForward ? (t - 1.0f) : -(t - 1.0f);
+            m_scrubActive = false;
+            continue;
+        }
+        if (t < 0.0f) {
+            m_cycleAnim.SetScrubT(m_scene, 0.0f);
+            m_cycleAnim.Cancel();
+            ScrubUndoStep(m_scrubForward);
+            remaining     = m_scrubForward ? t : -t;
+            m_scrubActive = false;
+            continue;
+        }
+
+        m_scrubT = t;
+        m_cycleAnim.SetScrubT(m_scene, m_scrubT);
+        remaining = 0.0f;
+    }
+}
+
+void FlipController::ScrubEnd()
+{
+    m_scrubSampleQPC.QuadPart = 0;
+    m_scrubPendingDist = 0.0f;
+    if (!m_scrubActive)
+        return;
+
+    // Let go of a stack that was moving and it keeps going, shedding speed
+    // under friction — the throw.  Only a hand that had genuinely stopped
+    // hands over to the short settle instead.
+    const float v = std::clamp(m_scrubVelocity, -kFlingMaxVel, kFlingMaxVel);
+    if (std::fabs(v) >= kFlingMinVel && m_cycleAnim.IsScrubbing()) {
+        m_scrubVelocity = v;
+        m_flinging = true;
+        QueryPerformanceCounter(&m_flingLastQPC);
+        return;                             // ScrubTickFling takes it from here
+    }
+
+    m_scrubActive = false;
+    if (m_cycleAnim.IsScrubbing())
+        m_cycleAnim.BeginSettle(ScrubSettleTarget(), ScrubStepVelocity());
+    m_scrubVelocity = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+// The scrub's speed expressed along the CURRENT step's own direction, which
+// is the frame BeginSettle reasons in: m_scrubVelocity is signed in windows
+// (forward positive), while a step's t always grows the way that step runs.
+float FlipController::ScrubStepVelocity() const
+{
+    return m_scrubForward ? m_scrubVelocity : -m_scrubVelocity;
+}
+
+// ---------------------------------------------------------------------------
+// Where a released or spent scrub comes to rest.
+//
+// Nearest-window is the rule, with one exception that matters: a step already
+// visibly under way and still moving FORWARD finishes rather than rewinding.
+// That reversal is the jolt the free-drag stop had — the stack coasts past a
+// window, the throw runs out of speed a fraction into the next step, and the
+// settle drags it backwards to where it just came from.  Carrying it through
+// is both smoother and what the hand asked for; either way it lands squarely
+// on a whole window, so the snap the feature exists for is untouched.
+float FlipController::ScrubSettleTarget() const
+{
+    if (m_scrubT >= 0.5f)
+        return 1.0f;
+    const float v = ScrubStepVelocity();
+    if (m_scrubT >= kSettleCarryT && v >= kSettleCarryVel)
+        return 1.0f;
+    return 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+// One frame of a thrown stack: shed speed, move by whatever that speed
+// covered, and hand over to the settle once it is down to a crawl.
+// ---------------------------------------------------------------------------
+void FlipController::ScrubTickFling()
+{
+    if (!m_flinging)
+        return;
+    if (!m_active || !m_cycleAnim.IsScrubbing()) {
+        m_flinging = false;
+        return;
+    }
+
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    float dt = static_cast<float>(
+        static_cast<double>(now.QuadPart - m_flingLastQPC.QuadPart)
+        / static_cast<double>(freq.QuadPart));
+    m_flingLastQPC = now;
+    if (dt <= 0.0f) return;
+    if (dt > 0.10f) dt = 0.10f;             // a stall must not teleport the stack
+
+    // Exponential friction: fast throws coast further, everything comes to
+    // rest in about the same feel.
+    const float decay = std::exp(-dt / kFlingTauSec);
+    const float vAvg  = m_scrubVelocity * (1.0f + decay) * 0.5f;
+    m_scrubVelocity  *= decay;
+
+    ScrubAdvance(vAvg * dt);
+
+    if (std::fabs(m_scrubVelocity) < kFlingStopVel) {
+        m_flinging      = false;
+        m_scrubActive   = false;
+        // The throw is spent but the stack is still moving at kFlingStopVel —
+        // hand that speed to the settle so the last window is eased into
+        // rather than jumped to.  See CycleAnimator::BeginSettle.
+        if (m_cycleAnim.IsScrubbing())
+            m_cycleAnim.BeginSettle(ScrubSettleTarget(), ScrubStepVelocity());
+        m_scrubVelocity = 0.0f;
+    }
+}
+
+void FlipController::ScrubUndoStep(bool wasForward)
+{
+    // Called at t = 0, where the stack already renders the pre-rotation
+    // pose — so rolling the arrays back and rebuilding the rest layout is
+    // invisible, it only re-aligns the bookkeeping with the picture.
+    if (wasForward) {
+        std::rotate(m_windows.rbegin(),  m_windows.rbegin()  + 1, m_windows.rend());
+        std::rotate(m_captures.rbegin(), m_captures.rbegin() + 1, m_captures.rend());
+        m_scene.RotateAspects(false);
+        m_hover.Rotate(false);  // undo travels with everything else
+    } else {
+        std::rotate(m_windows.begin(),  m_windows.begin()  + 1, m_windows.end());
+        std::rotate(m_captures.begin(), m_captures.begin() + 1, m_captures.end());
+        m_scene.RotateAspects(true);
+        m_hover.Rotate(true);
+    }
+    m_cycleAnim.Cancel();
+
+    uint32_t displayCount = static_cast<uint32_t>(m_windows.size());
+    if (m_config && m_config->maxWindows < displayCount)
+        displayCount = m_config->maxWindows;
+    m_scene.BuildSlots(displayCount, m_cascadeW, m_cascadeH);
+    RebuildSceneAspects();
+}
+
+void FlipController::ResolveScrub()
+{
+    m_flinging = false;
+    m_scrubVelocity = 0.0f;
+    if (!m_cycleAnim.IsScrubbing()) {
+        m_scrubActive = false;
+        return;
+    }
+    const bool commitStep = m_scrubT >= 0.5f;
+    m_cycleAnim.SetScrubT(m_scene, commitStep ? 1.0f : 0.0f);
+    m_cycleAnim.Cancel();
+    if (!commitStep)
+        ScrubUndoStep(m_scrubForward);
+    m_scrubActive = false;
+    m_scrubT      = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
 // Dismiss — public entry: begin the exit morph, defer teardown.
 // FinishDismiss() runs the actual window-switching logic after the morph
 // completes (signalled by m_entryExitAnimator.JustFinishedExit()).
@@ -1411,6 +1988,49 @@ void FlipController::Dismiss()
 {
     if (!m_active)
         return;
+
+    // A click-to-select spin is in flight: the user has already told us WHICH
+    // window they want, so releasing the trigger cannot mean "take whatever
+    // is in front right now".  Mark the commit and let the spin land — the
+    // window transition always plays before the exit.
+    if (m_jumpTargetHwnd) {
+        m_jumpCommit = true;
+        // The cascade is still up, still moving, and still the thing the user
+        // is looking at — so the hook has to go on treating it as a session.
+        // Releasing the modifier is what got us here, and that release already
+        // dropped the hook's flag; without this the spin ran for up to
+        // kJumpBudgetMs with Escape and Tab doing nothing and typed keys
+        // reaching the app behind the overlay.  ResumeSession is exactly the
+        // "lend it back" this needs — it deliberately keeps the per-session
+        // state (the search latch above all) intact.
+        KeyboardHook::ResumeSession();
+        return;
+    }
+
+    // An exit is already committed and only waiting for the search filter's
+    // windows to finish returning.  A stray dismiss arriving in that window
+    // (the modifier being released, say) must not overtake it and start a
+    // second one — the pending exit already knows what was chosen, and
+    // whether it was a commit or a cancel.
+    if (m_pendingExit != PendingExit::None)
+        return;
+
+    // A query that matched nothing leaves NOTHING to switch to, so the commit
+    // simply does not apply and the cascade stays open.  Exiting from here
+    // would mean an entry/exit morph over zero tiles — a degenerate case the
+    // morph should never be handed — and it would drop the user back on the
+    // desktop for a keystroke they meant as "pick this".  Backspace or the
+    // cancel key is the way out, and both bring the windows straight back.
+    if (m_windows.empty()) {
+        // The hook let go of the session when the commit key arrived; the
+        // cascade is in fact still up, so hand it back.
+        KeyboardHook::ResumeSession();
+        return;
+    }
+
+    // Committing mid-drag: land the stack on a whole window first, so the
+    // window that gets raised is the one actually in front.
+    ResolveScrub();
 
     // If the entry morph is still running, defer reverse-in-place by
     // kReverseDelayMs.  Releasing the trigger key very early in the entry
@@ -1450,6 +2070,34 @@ void FlipController::Dismiss()
         ClearClosingCaptures();
     }
 
+    // The exit morph is about the WHOLE session, not about what the search
+    // narrowed it to: every window it animates has to be there, in an order
+    // that matches the desktop it is flying back to.  So the filter is lifted
+    // first — the windows that were hidden rise back in around the chosen
+    // one, in the same order scrolling to it by hand would have left them —
+    // and the morph waits for them.  See RestoreSearchWindowsForExit.
+    if (RestoreSearchWindowsForExit()) {
+        m_pendingExit = PendingExit::Dismiss;
+        // The cascade is genuinely still up for the length of that arrival,
+        // so the hook — which let go of the session when the commit key
+        // arrived — gets it back until the exit really starts.
+        KeyboardHook::ResumeSession();
+        return;
+    }
+    m_pendingExit = PendingExit::None;
+
+    // The session ends HERE, and the hook has to hear it.
+    //
+    // The keyboard paths tell it themselves before they post (the commit key,
+    // the modifier release), but a POINTER commit cannot: the hook sees a
+    // click, not a decision — it has no idea whether that click hit a tile.
+    // So a mouse-picked window tore the cascade down while the hook still
+    // believed a session was running, and it went on swallowing every
+    // keystroke for the rest of the process's life.  Same limbo as the
+    // mid-exit re-activation, reached from the other side.
+    //
+    EndSessionForHook();
+
     // Compute the same params Activate() used.
     RECT rcVp;
     GetClientRect(m_renderer.GetHwnd(), &rcVp);
@@ -1473,13 +2121,19 @@ void FlipController::Dismiss()
         m_scene.SlotCount(),
         static_cast<uint32_t>(m_windows.size()));
 
+    // The exit morph pairs its window list index i with cascade slot i —
+    // hand it the slot-ordered permutation (an exact copy of m_windows
+    // for the cascade preset).  zRanks and fadeOutFlags below index the
+    // same slot order.
+    const std::vector<WindowInfo> orderedWins = SlotOrderedWindows();
+
     std::vector<uint32_t> zRanks(visibleN, 0);
 
     if (visibleN > 0) {
         zRanks[0] = 0;   // selected after Dismiss is top
 
         auto rawRankOf = [&](size_t i) -> uint32_t {
-            HWND h = m_windows[i].hwnd;
+            HWND h = orderedWins[i].hwnd;
             auto it = m_originalZOrder.find(h);
             if (it != m_originalZOrder.end()) return it->second;
             // Desktop pseudo-window and any late-injected HWNDs fall here.
@@ -1491,7 +2145,7 @@ void FlipController::Dismiss()
         };
 
         auto endpointTier = [&](size_t i) -> int {
-            HWND h = m_windows[i].hwnd;
+            HWND h = orderedWins[i].hwnd;
             if (h == m_desktopHwnd) return 2;
             if (h && IsIconic(h))   return 1;
             return 0;
@@ -1522,10 +2176,10 @@ void FlipController::Dismiss()
     // after the overlay hides decay to α=0 across the reverse morph.  This
     // prevents the "non-selected app's last frame leaks behind the picked
     // window" artefact and replaces the old desktop-selected special case.
-    std::vector<bool> fadeOutFlags(m_windows.size(), false);
-    for (size_t i = 0; i < m_windows.size(); ++i) {
+    std::vector<bool> fadeOutFlags(orderedWins.size(), false);
+    for (size_t i = 0; i < orderedWins.size(); ++i) {
         if (i == 0) continue;                          // selected stays visible
-        HWND h = m_windows[i].hwnd;
+        HWND h = orderedWins[i].hwnd;
         if (h == m_desktopHwnd) {
             // Desktop tile is only visible post-exit when it's the pick.
             fadeOutFlags[i] = !desktopSelected;
@@ -1592,7 +2246,7 @@ void FlipController::Dismiss()
         }
     }
 
-    m_entryExitAnimator.BeginExit(m_scene, m_windows, zRanks,
+    m_entryExitAnimator.BeginExit(m_scene, orderedWins, zRanks,
                                   vpW, vpH, dW, dH, m_desktopHwnd,
                                   m_cascadeAspect,
                                   m_overlayOriginX, m_overlayOriginY,
@@ -1616,6 +2270,26 @@ void FlipController::Dismiss()
     // restore surfaces are not sampled into the tile or cached capture.
     WindowCloaker::UncloakAll();
     DwmFlush();
+
+    // Everything below asks Windows to change what is in front — the shell's
+    // show-desktop, or SetForegroundWindow — and Windows only grants that to
+    // a process that has just received input.  CKFlip normally has not: the
+    // overlay is WS_EX_NOACTIVATE and the hook SWALLOWS every key the cascade
+    // uses, so the only reason a keyboard commit ever qualified is that the
+    // hook happens to inject a keystroke on its way out of a held-modifier
+    // release, and injected input counts.
+    //
+    // A mouse pick injects nothing.  The request was therefore refused and
+    // the desktop never appeared, while an ordinary window still ended up in
+    // front because FinishDismiss retries SetForegroundWindow — a retry the
+    // desktop deliberately cannot have, since its toggle would undo itself.
+    // Hence "clicking the desktop tile does nothing, the keyboard is fine".
+    //
+    // Claiming it here, explicitly and for every commit source, also closes
+    // the race the keyboard path always had: the hook POSTS the dismiss and
+    // only then injects, so a quick render thread could reach this block
+    // first.
+    KeyboardHook::AssertInputOwnership();
 
     if (desktopSelected) {
         // Toggle show-desktop only when we weren't already on the desktop —
@@ -1648,9 +2322,28 @@ void FlipController::Dismiss()
             }
             if (coHr == S_OK)
                 CoUninitialize();   // only undo our own successful init
+            if (m_config && m_config->showDebugInfo) {
+                wchar_t buf[96];
+                swprintf_s(buf, L"CKFlip: show-desktop via IShellDispatch=%d\n",
+                           toggled ? 1 : 0);
+                CKLog::Log(buf);
+            }
             if (!toggled) {
+                // Timed, not blocking.  This runs on the render thread in the
+                // middle of the dismiss, and a plain SendMessage into
+                // explorer stalls the whole switcher for as long as explorer
+                // takes to answer — indefinitely if it is hung.  ABORTIFHUNG
+                // returns at once from a hung shell instead, and the switch
+                // simply does not happen rather than taking the overlay down
+                // with it.  Same short-timeout discipline the label's
+                // WM_GETICON fallback already uses.
                 HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
-                if (tray) SendMessageW(tray, WM_COMMAND, 419, 0);
+                if (tray) {
+                    DWORD_PTR unused = 0;
+                    SendMessageTimeoutW(tray, WM_COMMAND, 419, 0,
+                                        SMTO_ABORTIFHUNG | SMTO_NORMAL,
+                                        400, &unused);
+                }
             }
         }
     } else if (target && IsWindow(target)) {
@@ -1668,6 +2361,38 @@ void FlipController::Escape()
 {
     if (!m_active)
         return;
+
+    // Search first: one Escape clears the query and puts the filtered-out
+    // windows back, a second one closes the cascade.  Nobody expects a
+    // half-typed search to swallow their way out, and nobody expects the way
+    // out to leave the search applied either.
+    //
+    // The hook has already dropped the session flag (it owns the modifier-
+    // release bookkeeping that keeps the Start menu shut, and that has to
+    // happen on the hook thread) — so re-arm it here, because the cascade is
+    // in fact staying open.
+    if (m_config && m_config->searchEnabled && !m_search.Empty()) {
+        SearchClear();
+        KeyboardHook::ResumeSession();
+        return;
+    }
+
+    // A spin toward a clicked window is abandoned outright: Escape means
+    // "none of them", including the one just clicked.
+    if (m_jumpTargetHwnd)
+        CancelSelectJump();
+
+    ResolveScrub();
+
+    // An empty stack has nothing to morph back to its desktop position — a
+    // query that matched no window, now being dismissed.  Tear the session
+    // down directly rather than running the exit over zero tiles.
+    if (m_windows.empty()) {
+        m_exitPending         = false;
+        m_reverseDelayPending = false;
+        FinishEscape();
+        return;
+    }
 
     // Mid-entry ESC also defers reverse-in-place (see Dismiss for the
     // delay rationale).
@@ -1699,6 +2424,20 @@ void FlipController::Escape()
         ClearClosingCaptures();
     }
 
+    // Same reason as Dismiss: the reverse morph has to carry every window of
+    // the session back to its desktop position, not just the ones the query
+    // left on screen — and it waits for them to get there.
+    if (RestoreSearchWindowsForExit()) {
+        m_pendingExit = PendingExit::Escape;
+        KeyboardHook::ResumeSession();
+        return;
+    }
+    m_pendingExit = PendingExit::None;
+
+    // See Dismiss — the session is over and the hook must know it, whichever
+    // input asked for the cancel.
+    EndSessionForHook();
+
     RECT rcVp;
     GetClientRect(m_renderer.GetHwnd(), &rcVp);
     float vpW = static_cast<float>(rcVp.right - rcVp.left);
@@ -1718,7 +2457,7 @@ void FlipController::Escape()
     // Escape is a pure cancel — every tile reverses cleanly to its entry
     // flat position; no per-tile fade-out (the empty vector signals that).
     std::vector<bool> escFadeOut;  // empty
-    m_entryExitAnimator.BeginExit(m_scene, m_windows, escZRanks,
+    m_entryExitAnimator.BeginExit(m_scene, SlotOrderedWindows(), escZRanks,
                                   vpW, vpH, dW, dH, m_desktopHwnd,
                                   m_cascadeAspect,
                                   m_overlayOriginX, m_overlayOriginY,
@@ -1767,7 +2506,23 @@ void FlipController::FinishDismiss()
         if (target && IsWindow(target)) {
             if (IsIconic(target))
                 ShowWindow(target, SW_RESTORE);
-            SetForegroundWindow(target);
+            // The one thing the whole program exists to do.  Windows grants
+            // foreground only under conditions this process does not fully
+            // control, and when it refuses, the cascade closes onto the window
+            // the user did NOT pick — with nothing anywhere saying why.
+            //
+            // Both attempts are made before anything is recorded (see
+            // RaiseWindowForCommit): the entry is for a window that is really
+            // still behind, not for one call that answered FALSE.
+            if (!RaiseWindowForCommit(target))
+                Diag::ReportLastError(Diag::Code::ForegroundRestoreFail,
+                                      Diag::Sev::Warning,
+                                      L"Windows refused to bring the chosen window forward",
+                                      L"the cascade closed on the right window but "
+                                      L"the system kept focus where it was; this is "
+                                      L"the foreground lock, usually held by a "
+                                      L"window that is busy or elevated, or by a "
+                                      L"shell surface such as the Start menu");
         }
     }
     DwmFlush();
@@ -1806,10 +2561,47 @@ void FlipController::FinishDismiss()
     m_taskbarLocator.Shutdown();
     m_entryExitAnimator.ClearEntryFlatCache();
     m_originalZOrder.clear();   // Bug 8'' — session-end cleanup
+    // Pointer / search state, released with everything else the session owned
+    // (ClearSearchState stops the hidden windows' captures too).
+    m_hover.Reset();
+    m_hoverSlot    = -1;
+    m_hoverStillQPC.QuadPart = 0;   // the next session's stillness is its own
+    m_pointerValid = false;
+    CancelSelectJump();
+    ClearSearchState();
+    m_pendingExit = PendingExit::None;
 #ifdef CKFLIP_DEBUG_TASKBAR
     g_taskbarFreezeSRV = nullptr;
     g_taskbarDebugMode = TaskbarDebugMode::Normal;
 #endif
+    // INVARIANT, enforced last: an idle controller and a hook that still
+    // believes a session is running is the limbo state — it swallows every
+    // keystroke, Windows key included, until the process dies.  Two separate
+    // paths have already produced it (a re-activation during the exit, a
+    // pointer commit), so rather than keep patching call sites, the teardown
+    // itself now guarantees the two agree.
+    //
+    // The one exception is a re-activation waiting to be honoured: there the
+    // hook's flag belongs to the NEXT session and clearing it would strand
+    // that one instead.  ResolveReactivation owns it from here.
+    //
+    // ...and m_reactivatePending only catches the re-activations that were
+    // DELIVERED before this teardown began.  Everything above — DwmFlush,
+    // StopCaptures, UncloakAll, ShowRealTaskbar — runs without pumping
+    // messages, so a hotkey pressed during it raises the hook's flag for a
+    // session whose activation is still sitting in the queue, and the
+    // unconditional clear this replaced would switch that session off before it
+    // ever ran: cascade on screen, hook disarmed, every key falling through to
+    // whatever is behind the overlay.  Handing back the identity taken at
+    // Activate makes the clear a no-op in exactly that case and unchanged in
+    // every other.
+    if (!m_reactivatePending)
+        KeyboardHook::EndSessionIfEpoch(m_sessionEpoch);
+    // Back to waiting for a hotkey — see the note at the end of Activate.
+    // Before ResolveReactivation, which may open the next cascade and set the
+    // state straight back.
+    Diag::NoteState(L"idle in the tray");
+    ResolveReactivation();
 }
 
 // ---------------------------------------------------------------------------
@@ -1862,10 +2654,101 @@ void FlipController::FinishEscape()
     m_taskbarLocator.Shutdown();
     m_entryExitAnimator.ClearEntryFlatCache();
     m_originalZOrder.clear();   // Bug 8'' — session-end cleanup
+    // Pointer / search state, released with everything else the session owned
+    // (ClearSearchState stops the hidden windows' captures too).
+    m_hover.Reset();
+    m_hoverSlot    = -1;
+    m_hoverStillQPC.QuadPart = 0;   // the next session's stillness is its own
+    m_pointerValid = false;
+    CancelSelectJump();
+    ClearSearchState();
+    m_pendingExit = PendingExit::None;
 #ifdef CKFLIP_DEBUG_TASKBAR
     g_taskbarFreezeSRV = nullptr;
     g_taskbarDebugMode = TaskbarDebugMode::Normal;
 #endif
+    // INVARIANT, enforced last: an idle controller and a hook that still
+    // believes a session is running is the limbo state — it swallows every
+    // keystroke, Windows key included, until the process dies.  Two separate
+    // paths have already produced it (a re-activation during the exit, a
+    // pointer commit), so rather than keep patching call sites, the teardown
+    // itself now guarantees the two agree.
+    //
+    // The one exception is a re-activation waiting to be honoured: there the
+    // hook's flag belongs to the NEXT session and clearing it would strand
+    // that one instead.  ResolveReactivation owns it from here.
+    //
+    // ...and m_reactivatePending only catches the re-activations that were
+    // DELIVERED before this teardown began.  Everything above — DwmFlush,
+    // StopCaptures, UncloakAll, ShowRealTaskbar — runs without pumping
+    // messages, so a hotkey pressed during it raises the hook's flag for a
+    // session whose activation is still sitting in the queue, and the
+    // unconditional clear this replaced would switch that session off before it
+    // ever ran: cascade on screen, hook disarmed, every key falling through to
+    // whatever is behind the overlay.  Handing back the identity taken at
+    // Activate makes the clear a no-op in exactly that case and unchanged in
+    // every other.
+    if (!m_reactivatePending)
+        KeyboardHook::EndSessionIfEpoch(m_sessionEpoch);
+    // Back to waiting for a hotkey — see the note at the end of Activate.
+    // Before ResolveReactivation, which may open the next cascade and set the
+    // state straight back.
+    Diag::NoteState(L"idle in the tray");
+    ResolveReactivation();
+}
+
+// ---------------------------------------------------------------------------
+// Honour an activation that arrived while the previous session was morphing
+// out (see Activate).  Called at the very end of both teardown paths, once
+// everything the old session owned has been released.
+//
+// The hook's session flag decides whether it still stands: a cancel key
+// pressed during the exit clears that flag, and re-opening the cascade after
+// the user has said no is exactly the surprise this avoids.  If the fresh
+// activation then finds nothing to show, the flag has to be dropped too —
+// otherwise the hook goes on swallowing input for a cascade that never
+// opened, which is the same limbo from the other direction.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Tell the hook the session is over — and, when the request did not come from
+// the keyboard, arm the Win/Alt release defusal it could not arm itself.
+//
+// WHICH IT IS, IS DERIVED, NOT REMEMBERED.  The hook drops its own session
+// flag before posting a keyboard commit or cancel; nothing drops it for a
+// click on a tile or a touchpad tap, because the hook cannot see a decision
+// in a click.  So "the hook still thinks a session is running" IS the test
+// for a non-keyboard commit, and it is one the code cannot get out of step
+// with.  The previous attempt carried a boolean from the click down to here
+// and lost it on the way — CancelSelectJump cleared it one line before the
+// commit — which is exactly the failure this shape rules out.
+//
+// Getting it wrong the other way matters too: re-deciding "is a modifier
+// still held" milliseconds after the hook already decided it races the
+// release the hook has just replayed through SendInput, and a false positive
+// there eats one later, unrelated Start-menu press.  Deriving avoids that as
+// well, because on the keyboard paths the flag is already down.
+// ---------------------------------------------------------------------------
+void FlipController::EndSessionForHook()
+{
+    if (KeyboardHook::IsSessionActive())
+        KeyboardHook::EndSessionForeign();
+    else
+        KeyboardHook::SetSessionActive(false);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::ResolveReactivation()
+{
+    if (!m_reactivatePending)
+        return;
+    m_reactivatePending = false;
+
+    if (!KeyboardHook::IsSessionActive())
+        return;   // cancelled while the old session was still leaving
+
+    Activate();
+    if (!m_active)
+        KeyboardHook::AbortSessionIfIdle(m_sessionEpoch);
 }
 
 // ---------------------------------------------------------------------------
@@ -1966,6 +2849,17 @@ WGCCapture* FlipController::WallpaperCaptureSource()
             if (m_windows[i].hwnd == m_desktopHwnd && i < m_captures.size())
                 return m_captures[i].get();
         }
+        // The desktop TILE can leave the stack while the desktop CAPTURE is
+        // still the wallpaper's only source — the search filter hides it like
+        // any other window whose title does not match.  Without this the
+        // backdrop lost its texture the moment a query excluded "Desktop"
+        // (which is nearly every query) and the cascade fell back to the
+        // fully-opaque black underlay.  The capture keeps running while it is
+        // hidden, so the wallpaper — animated ones included — carries on.
+        for (const auto& hidden : m_searchHidden) {
+            if (hidden.win.hwnd == m_desktopHwnd && hidden.capture)
+                return hidden.capture.get();
+        }
     }
     return nullptr;
 }
@@ -2033,6 +2927,84 @@ ID3D11ShaderResourceView* FlipController::BackdropSRV()
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Slot ↔ window mapping (see flipcontroller.h).  The cascade preset — and
+// Cover Flow whenever every window fits a slot — pairs slot i with
+// m_windows[i].  Cover Flow with overflow is a circular carousel: the
+// left-of-centre slots must show the TAIL of the window array (the most
+// recently cycled-away windows) so the invisible pool sits "behind" the
+// carousel, between the outer-right and outer-left slots.  With the
+// identity pairing the left side showed windows from the MIDDLE of the
+// cycle order and a forward cycle dropped the centre window into the
+// invisible pool instead of stepping it to the inner-left slot — the
+// "front window suddenly becomes a different app" symptom.
+// ---------------------------------------------------------------------------
+uint32_t FlipController::SlotWindowIndexFor(uint32_t slot, uint32_t slotCount,
+                                            size_t windowCount, bool coverFlow)
+{
+    if (slot >= slotCount || windowCount <= slotCount || !coverFlow)
+        return slot;
+    if (CoverFlowLayout::SlotOffset(slot, slotCount) < 0)
+        return static_cast<uint32_t>(windowCount - (slotCount - slot));
+    return slot;
+}
+
+int FlipController::WindowSlotIndexFor(size_t windowIdx, uint32_t slotCount,
+                                       size_t windowCount, bool coverFlow)
+{
+    if (windowCount <= slotCount || !coverFlow)
+        return windowIdx < slotCount ? static_cast<int>(windowIdx) : -1;
+    const uint32_t rightCount = slotCount / 2;   // slots 0..rightCount keep identity
+    if (windowIdx <= rightCount)
+        return static_cast<int>(windowIdx);
+    const uint32_t leftCount = slotCount - 1 - rightCount;
+    if (windowIdx >= windowCount - leftCount)
+        return static_cast<int>(slotCount - (windowCount - windowIdx));
+    return -1;   // invisible pool between outer-right and outer-left
+}
+
+uint32_t FlipController::SlotWindowIndex(uint32_t slot) const
+{
+    return SlotWindowIndexFor(
+        slot, m_scene.SlotCount(), m_windows.size(),
+        m_scene.GetVisualPreset() == VisualPreset::CoverFlow);
+}
+
+int FlipController::WindowSlotIndex(size_t windowIdx) const
+{
+    return WindowSlotIndexFor(
+        windowIdx, m_scene.SlotCount(), m_windows.size(),
+        m_scene.GetVisualPreset() == VisualPreset::CoverFlow);
+}
+
+std::vector<size_t> FlipController::SlotOrderIndices() const
+{
+    const size_t   m = m_windows.size();
+    const uint32_t n = m_scene.SlotCount();
+    std::vector<size_t> order;
+    order.reserve(m);
+    for (uint32_t i = 0; i < n && i < m; ++i)
+        order.push_back(SlotWindowIndex(i));
+    // Invisible pool follows, preserving array order.
+    std::vector<bool> used(m, false);
+    for (size_t idx : order)
+        if (idx < m) used[idx] = true;
+    for (size_t w = 0; w < m; ++w)
+        if (!used[w]) order.push_back(w);
+    return order;
+}
+
+std::vector<WindowInfo> FlipController::SlotOrderedWindows() const
+{
+    std::vector<size_t> order = SlotOrderIndices();
+    std::vector<WindowInfo> out;
+    out.reserve(order.size());
+    for (size_t idx : order)
+        out.push_back(m_windows[idx]);
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 void FlipController::RebuildSceneAspects()
 {
     // Desktop-relative sizing is intentionally based on the primary monitor,
@@ -2045,7 +3017,9 @@ void FlipController::RebuildSceneAspects()
     // Only set aspects for visible slots (scene may have fewer than m_windows)
     uint32_t slotCount = m_scene.SlotCount();
     for (uint32_t i = 0; i < slotCount && i < static_cast<uint32_t>(m_windows.size()); ++i) {
-        const auto& rc = m_windows[i].rect;
+        const uint32_t wi = SlotWindowIndex(i);
+        if (wi >= m_windows.size()) continue;
+        const auto& rc = m_windows[wi].rect;
         float w = static_cast<float>(rc.right - rc.left);
         float h = static_cast<float>(rc.bottom - rc.top);
         if (w > 1.0f && h > 1.0f) {
@@ -2057,6 +3031,14 @@ void FlipController::RebuildSceneAspects()
             m_scene.SetSlotAspect(i, 1.77f);
         }
     }
+
+    // Cover Flow: the row was spaced from nominal tile widths at BuildSlots
+    // time; now that every tile carries its window's real proportions,
+    // re-derive the x coordinates so the shingle overlap is uniform.  No-op
+    // for the cascade preset.  Every caller of this function (Activate, both
+    // cycle paths, the close rebuild) therefore gets a consistent row, and
+    // the animators snapshot their endpoints after it.
+    m_scene.RelayoutCoverFlowX();
 }
 
 // ---------------------------------------------------------------------------
@@ -2064,8 +3046,16 @@ void FlipController::InjectDesktopWindow()
 {
     // Find the desktop background window (Progman or WorkerW with SHELLDLL_DefView)
     m_desktopHwnd = WindowScanner::FindDesktopWindow();
-    if (!m_desktopHwnd)
+    if (!m_desktopHwnd) {
+        // No Progman/WorkerW means no wallpaper source: the cascade's backdrop
+        // and the desktop tile both come from that one window.
+        Diag::ReportOnce(Diag::Code::DesktopCaptureFailed, Diag::Sev::Warning,
+                         L"The desktop wallpaper could not be captured",
+                         L"the desktop background window was not found, so the "
+                         L"backdrop behind the cascade falls back to plain black "
+                         L"and there is no desktop tile");
         return;
+    }
 
     // Build a WindowInfo for the desktop — sized to the full primary monitor
     WindowInfo desktop;
@@ -2425,6 +3415,12 @@ void FlipController::RenderFrame()
     // Live monitoring: remove windows that were closed while active.
     RemoveClosedWindows();
 
+    // A pending search edit reflows the stack as soon as no other animator
+    // owns it.  Deferred rather than dropped, so a burst of keystrokes always
+    // converges on the query that was actually typed.
+    if (m_searchDirty)
+        ApplySearchFilter();
+
     // Cloak any new windows that appeared since activation.
     CloakNewWindows();
 
@@ -2477,9 +3473,20 @@ void FlipController::RenderFrame()
                 cap->Stop();
             }
         }
+        // Windows the search filter is holding out of the stack are still
+        // streaming (they may come back on the next keystroke) — freeze them
+        // on the same terms, or "live preview off" would quietly keep paying
+        // for captures nobody can see.
+        for (auto& hidden : m_searchHidden) {
+            if (hidden.capture && hidden.capture->IsCapturing()
+                && hidden.capture->HasNewFrame()) {
+                hidden.capture->GetCurrentFrame();
+                hidden.capture->Stop();
+            }
+        }
     }
 
-    if (m_windows.empty()) {
+    if (m_windows.empty() && !SearchHoldsEmptyStack()) {
         Escape();
         return;
     }
@@ -2640,12 +3647,28 @@ void FlipController::RenderFrame()
                          tray.contentCenterY, vpW, vpH, false);
     }
 
+    // Carry a thrown stack on before the animator reads the scene, so the
+    // frame about to be drawn already reflects this tick's coasting.
+    ScrubTickFling();
+
     // Advance cycle animation (if active) and apply slot overrides.
     m_cycleAnim.Tick(m_scene);
+
+    // A released scrub that eased back to its own start pose: the rotation
+    // Begin() performed still has to be rolled away (see ScrubUndoStep).
+    if (m_cycleAnim.JustSettledToStart())
+        ScrubUndoStep(m_scrubForward);
 
     // If animation just finished and there are queued cycles, start the next
     // one immediately — creates seamless continuous motion when key is held.
     ProcessCycleQueue();
+
+    // Click-to-select spin: one step per frame, started the instant the last
+    // one lands so the whole run is continuous, and the commit fires only
+    // once the stack is settled on the chosen window.  Same frame as the
+    // finish above, deliberately — a gap here would let RemoveClosedWindows
+    // see an idle cascade mid-spin and start a close transition on top of it.
+    AdvanceSelectJump();
 
     // Advance the close transition (if active) — slides survivors to the
     // rebuilt smaller layout and fades the dying tiles.  Never concurrent
@@ -2659,6 +3682,21 @@ void FlipController::RenderFrame()
     // value, and an empty list keeps the draw loop free of stale tiles.
     if (!m_closeAnim.IsActive() && !m_closingCaptures.empty())
         ClearClosingCaptures();
+
+    // The windows the search filter had hidden have finished rising back into
+    // the stack — now the exit that was waiting for them can start, with the
+    // full session in place.  Runs BEFORE the entry/exit tick so the morph
+    // begins on this very frame, with no idle frame in between.
+    if (m_pendingExit != PendingExit::None && !m_closeAnim.IsActive()) {
+        const PendingExit what = m_pendingExit;
+        m_pendingExit = PendingExit::None;
+        // The hook's flag is left as ResumeSession lent it to us: Dismiss /
+        // Escape read it to work out whether this commit came from the
+        // keyboard, and clearing it here would tell them "keyboard" for a
+        // click.  They hand it back themselves (EndSessionForHook).
+        if (what == PendingExit::Dismiss) Dismiss();
+        else                              Escape();
+    }
 
     // Advance entry/exit morph (if active).  Mutates scene slots + tilt.
     m_entryExitAnimator.Tick(m_scene);
@@ -2730,11 +3768,81 @@ void FlipController::RenderFrame()
         m_sessionFrozen = false;
     }
 
+    // Pointer hover.  Re-tested every frame rather than only on pointer
+    // movement: the stack moves under a stationary hand all the time (a
+    // cycle, a throw, a close reflow), and the highlight has to stay on the
+    // tile the pointer is genuinely over, not on the one that was there when
+    // the mouse last moved.
+    {
+        // Only ever over a STILL stack — see PointerInteractionReady.  While
+        // the stack moves the highlight simply lets go; it comes back on the
+        // tile genuinely under the pointer once everything has settled.
+        const bool stackStill = m_pointerValid && PointerEnabled()
+            && PointerInteractionReady()
+            && (m_config->mouseSelect || m_config->closeFromCascade);
+
+        // ...and still for a MOMENT, not merely still on this frame.
+        //
+        // Nothing waits on the lift (see DropHoverLift), so this is purely
+        // about not starting a rise that is only going to be sent back down.
+        // Without the hold-off, the frames between two commands — a second
+        // wheel notch, a held key's repeat, one spin step and the next — are
+        // enough for the tile under a resting cursor to start climbing, and the
+        // eye reads that bob as the stack being unsure of itself.  A stack that
+        // is still being worked therefore lifts nothing; a stack the hand has
+        // genuinely stopped on lifts a tenth of a second later, which is not a
+        // difference anyone can see.
+        if (!stackStill)
+            m_hoverStillQPC.QuadPart = 0;
+        else if (m_hoverStillQPC.QuadPart == 0)
+            QueryPerformanceCounter(&m_hoverStillQPC);
+
+        // A fall in progress bars the rise on its own account: the whole point
+        // of it is that the tile reaches the floor, and re-targeting the slot
+        // the pointer happens to rest on would pull it straight back up
+        // mid-fall (see DropHoverLift).
+        bool liftAllowed = stackStill && !m_hover.IsDropping();
+        if (liftAllowed && m_perfFreq.QuadPart > 0) {
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            const double stillMs =
+                static_cast<double>(now.QuadPart - m_hoverStillQPC.QuadPart)
+                * 1000.0 / static_cast<double>(m_perfFreq.QuadPart);
+            if (stillMs < kHoverRiseHoldMs)
+                liftAllowed = false;
+        }
+
+        // The hold-off delays the LIFT, never the answer to "which tile is the
+        // pointer over".  Those are different questions with different stakes:
+        // the lift is decoration, while the hovered slot decides what a click
+        // commits and what the close key closes — and a close that lands on the
+        // front window because the highlight had not caught up yet would be the
+        // worst kind of surprise this feature could produce.
+        m_hoverSlot = stackStill
+            ? HitTestScreen(m_pointerScreen.x, m_pointerScreen.y)
+            : -1;
+        m_hover.SetTarget(liftAllowed ? m_hoverSlot : -1);
+        m_hover.Tick(m_scene.SlotCount(), AnimHoverEnabled());
+    }
+
     float motionIntensity = m_cycleAnim.GetMotionIntensity();
     if (m_closeAnim.GetMotionIntensity() > motionIntensity)
         motionIntensity = m_closeAnim.GetMotionIntensity();
     float motionBlur = motionIntensity * 0.004f;
     if (!EffectiveMotionBlur()) motionBlur = 0.0f;
+
+    // Glass floor reflections (Appearance → Reflections).  Each tile draws
+    // a faint mirrored copy below its bottom edge, interleaved into the
+    // back-to-front pass just before its tile so nearer tiles correctly
+    // occlude farther reflections.  During the entry/exit morph the
+    // reflection alpha rides the morph blend, fading in as the 3D pose
+    // forms (the flat endpoint has nothing to reflect from) and out again
+    // on exit.  Off (default): zero extra draws.
+    const bool reflectionsOn = EffectiveReflections();
+    const float reflectionGate =
+        (m_entryExitAnimator.IsActive() || finishAfterPresent)
+            ? m_entryExitAnimator.GetMorphBlend() : 1.0f;
+    static constexpr float kReflectionStrength = 0.34f;
 
     // Build draw list and sort by Z-depth (furthest first).  Overflow tiles
     // — entry-only, fading toward the back-most cascade slot — share the
@@ -2748,10 +3856,15 @@ void FlipController::RenderFrame()
     };
     const std::vector<TileSlot>& overflow = m_entryExitAnimator.GetOverflowSlots();
     const std::vector<TileSlot>& dying    = m_closeAnim.GetDyingSlots();
+    // A Cover Flow exit supplies its own paint depths (a sort key only — the
+    // geometry still comes from the slot).  Empty every other time, which is
+    // why this needs no condition of its own.
+    const std::vector<float>& paintZ = m_entryExitAnimator.GetExitPaintDepths();
     std::vector<DrawEntry> drawOrder;
     drawOrder.reserve(count + overflow.size() + dying.size());
     for (uint32_t i = 0; i < count; ++i) {
-        drawOrder.push_back({ 0, static_cast<int>(i), m_scene.GetSlot(i).z });
+        const float z = (i < paintZ.size()) ? paintZ[i] : m_scene.GetSlot(i).z;
+        drawOrder.push_back({ 0, static_cast<int>(i), z });
     }
     for (size_t k = 0; k < overflow.size(); ++k) {
         drawOrder.push_back({ 1, static_cast<int>(k), overflow[k].z });
@@ -2759,10 +3872,203 @@ void FlipController::RenderFrame()
     for (size_t k = 0; k < dying.size(); ++k) {
         drawOrder.push_back({ 2, static_cast<int>(k), dying[k].z });
     }
-    std::sort(drawOrder.begin(), drawOrder.end(),
-              [](const DrawEntry& a, const DrawEntry& b) {
-                  return a.z > b.z;
-              });
+    // Stable: Cover Flow mirrors a left and a right slot at EXACTLY equal Z,
+    // and std::sort leaves the relative order of equal keys unspecified — so
+    // which of the pair painted in front could differ from one frame to the
+    // next as the other keys moved around them.  Identical output wherever
+    // the keys differ, which is every other case.
+    std::stable_sort(drawOrder.begin(), drawOrder.end(),
+                     [](const DrawEntry& a, const DrawEntry& b) {
+                         return a.z > b.z;
+                     });
+
+    // Texture for a visible cascade slot — shared by the reflection pass
+    // and the tile pass so a mirror can never show a different frame than
+    // its tile.  Selection logic:
+    //   - exit stable SRV for the selected minimized window during exit;
+    //   - frozen SRVs while a cycle animation is in flight — the wrap
+    //     slot uses the PRE-rotate SRV during phase 1 (the departing
+    //     window owns the journey until the α=0 boundary) and the post-
+    //     rotate SRV afterwards; every other slot uses post-rotate.  At
+    //     N > slot count the pre/post distinction is what keeps the
+    //     departing and arriving windows' textures from swapping visibly
+    //     (see the carousel-overflow wrap in CycleAnimator);
+    //   - live capture otherwise.
+    auto ResolveSlotSRV = [&](uint32_t idx) -> ID3D11ShaderResourceView* {
+        // All texture arrays (captures, frozen SRV snapshots) are indexed
+        // by WINDOW index — map the slot through the carousel pairing.
+        const uint32_t wi = SlotWindowIndex(idx);
+        ID3D11ShaderResourceView* srv = nullptr;
+        if (m_exitSelectedStableSRV
+            && (m_entryExitAnimator.IsReverse() || finishAfterPresent)
+            && idx == 0
+            && wi < m_windows.size()
+            && m_windows[wi].hwnd == m_exitSelectedStableHwnd) {
+            srv = m_exitSelectedStableSRV.get();
+        } else if (m_sessionFrozen) {
+            uint32_t n = m_cycleAnim.SlotCount();
+            bool isWrapSlot = (m_cycleAnim.IsForward() && idx == n - 1) ||
+                              (!m_cycleAnim.IsForward() && idx == 0);
+
+            if (m_cycleAnim.IsSideSwapSlot(idx)
+                && m_cycleAnim.IsInSideSwapPhase1()) {
+                // Cover Flow side swap, phase 1: the DEPARTING window is
+                // fading out at the row's far end.  Its texture is the
+                // pre-rotate frame of whichever window occupied the
+                // SOURCE slot — the slot↔window mapping is a function of
+                // slot/count/preset only, so it reads the same before and
+                // after the array rotation.
+                const uint32_t srcSlot = m_cycleAnim.IsForward()
+                    ? (idx + 1) % n
+                    : (idx == 0 ? n - 1 : idx - 1);
+                const uint32_t srcWin = SlotWindowIndex(srcSlot);
+                if (srcWin < m_frozenStartSRVs.size())
+                    srv = m_frozenStartSRVs[srcWin].get();
+            } else if (isWrapSlot && m_cycleAnim.IsInWrapPhase1()) {
+                if (m_cycleAnim.IsForward()) {
+                    uint32_t srcIdx = (idx + 1) % n;   // = 0, old front
+                    if (srcIdx < m_frozenStartSRVs.size())
+                        srv = m_frozenStartSRVs[srcIdx].get();
+                } else {
+                    uint32_t backIdx = n - 1;          // old back slot
+                    if (backIdx < m_frozenStartSRVs.size())
+                        srv = m_frozenStartSRVs[backIdx].get();
+                }
+            } else {
+                if (wi < m_frozenTargetSRVs.size())
+                    srv = m_frozenTargetSRVs[wi].get();
+            }
+        } else if (wi < m_captures.size() && m_captures[wi]) {
+            srv = m_captures[wi]->GetCurrentFrame();
+        }
+        return srv;
+    };
+
+    // World-space lift for a hovered tile — a DRAW offset only (see
+    // HoverAnimator).
+    //
+    // It rides the morph blend rather than being switched off for the morph.
+    // Off was nearly right and wrong in one visible way: the reason not to
+    // apply a world-space nudge mid-morph is that the tile's transform is then
+    // a lerp toward its flat screen rect, where a 3D offset reads as a wobble
+    // — but that argument scales with how 3D the pose currently is, and a hard
+    // cut does not.  Committing a lifted tile with a click therefore dropped
+    // it 20 % of its own height in a single frame, right as the exit began: the
+    // very twitch the lift is supposed to be too gentle to cause.  Multiplying
+    // by the blend removes the nudge exactly as fast as the pose flattens, and
+    // leaves the settled cascade (blend 1) bit-identical.
+    // (m_exitPending with the animator idle is an exit that was SNAPPED —
+    // entry/exit animation off.  There is no blend to ride, and the flat
+    // finalized poses must be drawn exactly as written, so the lift goes.)
+    const float hoverMorphGate =
+        (m_entryExitAnimator.IsActive() || finishAfterPresent)
+            ? m_entryExitAnimator.GetMorphBlend()
+            : (m_exitPending ? 0.0f : 1.0f);
+    const bool hoverLiftOn = m_hover.AnyLift() && hoverMorphGate > 0.001f;
+    auto HoverLiftFor = [&](uint32_t idx) -> float {
+        if (!hoverLiftOn) return 0.0f;
+        const float l = m_hover.Lift(idx);
+        if (l <= 0.001f) return 0.0f;
+        return l * m_scene.GetSlot(idx).scaleY * HoverAnimator::kRiseFactor
+             * hoverMorphGate;
+    };
+
+    // Texture for a dying tile.  The frozen snapshot comes first: a window the
+    // search filter hid still owns a LIVE capture (it may be one keystroke
+    // from returning), so sampling that capture would animate the fade-out
+    // with frames the window is still producing.  A genuinely closed window
+    // has no live capture and falls through to the stopped one, whose cached
+    // last frame is exactly what the fade needs.
+    auto ResolveDyingSRV = [&](size_t k) -> ID3D11ShaderResourceView* {
+        if (k < m_closingSRVs.size() && m_closingSRVs[k])
+            return m_closingSRVs[k].get();
+        if (k < m_closingCaptures.size() && m_closingCaptures[k])
+            return m_closingCaptures[k]->GetCurrentFrame();
+        return nullptr;
+    };
+
+    // --- Reflection pass (Appearance → Reflections) ------------------------
+    // ALL mirrors are drawn BEFORE any tile, in the same back-to-front
+    // order.  Interleaving them with the tiles let a nearer tile's mirror
+    // paint across the FACE of a deeper neighbour — the common floor plane
+    // projects deeper tiles' bottom edges higher on screen, so the mirror
+    // quad of a close tile overlaps them — which showed fragments of other
+    // windows along the carousel's sides.  With a dedicated pass every
+    // tile face is painted after, and therefore over, every mirror; the
+    // mirrors still layer correctly among themselves.
+    //
+    // Layering note: this pass runs AFTER the taskbar layer (Layer 2) and
+    // before the tiles, so a mirror hanging into the taskbar strip tints the
+    // taskbar preview — whereas an AUTOHIDE bar, re-drawn on top after the
+    // tiles (m_taskbarDrawOnTop below), hides it.  The two taskbar modes can
+    // therefore differ slightly at the very bottom of the screen with
+    // reflections enabled.  Not reproduced at 1920×1080, where the cascade's
+    // tiles bottom out above the bar; if it ever shows up, move this pass
+    // ahead of Layer 2 (it only has to stay behind the tiles).
+    if (reflectionsOn && reflectionGate > 0.001f) {
+        for (const auto& entry : drawOrder) {
+            if (entry.kind == 1)
+                continue;   // entry-morph overflow tiles cast no mirror
+            if (entry.kind == 2) {
+                // Dying close-anim tile — mirror under the fading window.
+                size_t k = static_cast<size_t>(entry.idx);
+                if (k >= dying.size()) continue;
+                const TileSlot& slot = dying[k];
+                if (slot.alpha < 0.001f) continue;
+                ID3D11ShaderResourceView* srv = ResolveDyingSRV(k);
+                if (!srv) continue;
+
+                using namespace DirectX;
+                XMMATRIX world =
+                    XMMatrixScaling(slot.scaleX, slot.scaleY, 1.0f) *
+                    XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
+                    XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
+                    XMMatrixTranslation(slot.x, slot.y, slot.z);
+                XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
+                XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
+                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+                XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
+                XMMATRIX proj   = XMMatrixPerspectiveFovLH(
+                    XMConvertToRadians(m_scene.GetFovDeg()), cascadeAspect, 0.1f, 200.0f);
+
+                QuadDrawCall refl;
+                XMStoreFloat4x4(&refl.mvp,
+                    XMMatrixTranslation(0.0f, -1.0f, 0.0f) * world
+                    * view * proj * monRemap);
+                // Same morph gate as the cascade slots below.  A close
+                // transition is snapped before any exit morph begins, so
+                // the gate reads 1.0 here today — carrying it keeps the two
+                // reflection paths from drifting apart if that ever changes.
+                refl.alpha  = slot.alpha * kReflectionStrength * reflectionGate;
+                refl.uvMinY = 1.0f;   // V-flip: mirror image
+                refl.uvMaxY = 0.0f;
+                m_quad.DrawReflection(ctx, srv, refl);
+                continue;
+            }
+
+            uint32_t idx = static_cast<uint32_t>(entry.idx);
+            QuadDrawCall refl;
+            float slotAlpha = 0.0f;
+            // The mirror SINKS by as much as the tile rises: a floor mirror
+            // does not follow the object up, the gap between them opens.
+            m_scene.GetReflectionDrawCall(idx, cascadeAspect, refl.mvp,
+                                          slotAlpha, -HoverLiftFor(idx));
+            if (slotAlpha < 0.001f) continue;
+            DirectX::XMMATRIX reflMVP =
+                DirectX::XMLoadFloat4x4(&refl.mvp) * monRemap;
+            DirectX::XMStoreFloat4x4(&refl.mvp, reflMVP);
+            refl.alpha = slotAlpha * kReflectionStrength * reflectionGate;
+            // Same crop as the tile (desktop tile's UV band included),
+            // then swap the V endpoints for the mirror image.
+            const uint32_t rwi = SlotWindowIndex(idx);
+            if (rwi < m_windows.size()
+                && m_windows[rwi].hwnd == m_desktopHwnd)
+                ApplyTextureUV(refl, m_desktopTileUV);
+            std::swap(refl.uvMinY, refl.uvMaxY);
+            ID3D11ShaderResourceView* srv = ResolveSlotSRV(idx);
+            if (srv) m_quad.DrawReflection(ctx, srv, refl);
+        }
+    }
 
     // Draw back-to-front using sorted order.
     const std::vector<HWND>& overflowHwnds = m_entryExitAnimator.GetOverflowHwnds();
@@ -2781,7 +4087,7 @@ void FlipController::RenderFrame()
             XMMATRIX world =
                 XMMatrixScaling(slot.scaleX, slot.scaleY, 1.0f) *
                 XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
-                XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY())) *
+                XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                 XMMatrixTranslation(slot.x, slot.y, slot.z);
             XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
             XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
@@ -2795,9 +4101,7 @@ void FlipController::RenderFrame()
             draw.alpha = slot.alpha;
             draw.blurAmount = motionBlur;
 
-            ID3D11ShaderResourceView* srv = nullptr;
-            if (k < m_closingCaptures.size() && m_closingCaptures[k])
-                srv = m_closingCaptures[k]->GetCurrentFrame();
+            ID3D11ShaderResourceView* srv = ResolveDyingSRV(k);
             if (srv) m_quad.Draw(ctx, srv, draw);
             else     m_quad.DrawPlaceholder(ctx, draw);
             continue;
@@ -2816,7 +4120,7 @@ void FlipController::RenderFrame()
             XMMATRIX world =
                 XMMatrixScaling(slot.scaleX, slot.scaleY, 1.0f) *
                 XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
-                XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY())) *
+                XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                 XMMatrixTranslation(slot.x, slot.y, slot.z);
             XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
             XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
@@ -2852,17 +4156,19 @@ void FlipController::RenderFrame()
         }
 
         uint32_t idx = static_cast<uint32_t>(entry.idx);
+        const uint32_t widx = SlotWindowIndex(idx);
 
         QuadDrawCall draw;
         float alpha;
-        m_scene.GetDrawCall(idx, cascadeAspect, draw.mvp, alpha);
+        m_scene.GetDrawCall(idx, cascadeAspect, draw.mvp, alpha,
+                            HoverLiftFor(idx));
         DirectX::XMMATRIX perspMVP =
             DirectX::XMLoadFloat4x4(&draw.mvp) * monRemap;
         DirectX::XMStoreFloat4x4(&draw.mvp, perspMVP);
         if ((m_entryExitAnimator.IsActive() || finishAfterPresent)
-            && idx < m_windows.size()) {
+            && widx < m_windows.size()) {
             const RECT& morphRect =
-                ResolveMorphScreenRect(m_entryExitAnimator, m_windows, idx);
+                ResolveMorphScreenRect(m_entryExitAnimator, m_windows, idx, widx);
             DirectX::XMMATRIX screenMVP =
                 ComputeScreenSpaceMVP(morphRect, vpW, vpH);
             DirectX::XMStoreFloat4x4(&draw.mvp,
@@ -2871,7 +4177,7 @@ void FlipController::RenderFrame()
         }
         draw.alpha = alpha;
         draw.blurAmount = motionBlur;
-        if (idx < m_windows.size() && m_windows[idx].hwnd == m_desktopHwnd)
+        if (widx < m_windows.size() && m_windows[widx].hwnd == m_desktopHwnd)
             ApplyTextureUV(draw, m_desktopTileUV);
 
         if (alpha < 0.001f)
@@ -2898,48 +4204,7 @@ void FlipController::RenderFrame()
         //     of the cycle and snapped to the right one at phase 2.
         //     Always use the post-rotation new-front SRV — same window
         //     throughout the wrap.
-        ID3D11ShaderResourceView* srv = nullptr;
-        if (m_exitSelectedStableSRV
-            && (m_entryExitAnimator.IsReverse() || finishAfterPresent)
-            && idx == 0
-            && idx < m_windows.size()
-            && m_windows[idx].hwnd == m_exitSelectedStableHwnd) {
-            srv = m_exitSelectedStableSRV.get();
-        } else if (m_sessionFrozen) {
-            uint32_t n = m_cycleAnim.SlotCount();
-            bool isWrapSlot = (m_cycleAnim.IsForward() && idx == n - 1) ||
-                              (!m_cycleAnim.IsForward() && idx == 0);
-
-            if (isWrapSlot && m_cycleAnim.IsInWrapPhase1()) {
-                if (m_cycleAnim.IsForward()) {
-                    // Forward wrap phase 1: pre-rotate SRV of the
-                    // departing front window (= post-rotation slot
-                    // n-1, which equals OLD slot 0).
-                    uint32_t srcIdx = (idx + 1) % n;   // = 0
-                    if (srcIdx < m_frozenStartSRVs.size())
-                        srv = m_frozenStartSRVs[srcIdx].get();
-                } else {
-                    // Backward wrap phase 1: pre-rotation SRV of the
-                    // departing back-slot window.  At N > slot count
-                    // the window at pre-rotation slot n-1 differs
-                    // from post-rotation slot 0; using the post-
-                    // rotate SRV would flash the arriving window's
-                    // texture at the old back position before it
-                    // wraps to the front.  Alpha is 0 at the phase
-                    // boundary so the texture switch to the post-
-                    // rotate SRV in phase 2 is imperceptible.
-                    uint32_t backIdx = n - 1;
-                    if (backIdx < m_frozenStartSRVs.size())
-                        srv = m_frozenStartSRVs[backIdx].get();
-                }
-            } else {
-                // Phase 2 or non-wrapping: use post-rotate SRV.
-                if (idx < m_frozenTargetSRVs.size())
-                    srv = m_frozenTargetSRVs[idx].get();
-            }
-        } else if (idx < m_captures.size() && m_captures[idx]) {
-            srv = m_captures[idx]->GetCurrentFrame();
-        }
+        ID3D11ShaderResourceView* srv = ResolveSlotSRV(idx);
 
         draw.alpha = alpha;
         if (draw.alpha >= 0.001f) {
@@ -2972,6 +4237,10 @@ void FlipController::RenderFrame()
         && !finishAfterPresent) {
         UpdateSelectedLabel();
         DrawSelectedLabel(ctx, vpW, vpH, monRemap);
+        // Search field below the cascade — same gate as the label, for the
+        // same reason: mid-morph there is no cascade for it to sit under.
+        UpdateSearchBox();
+        DrawSearchBox(ctx, vpW, vpH);
     }
 
     // Present.  Default path: non-blocking Present(0) + DwmFlush for frame
@@ -3056,13 +4325,28 @@ void FlipController::RenderFrame()
                     if (avgMs > tuneBudgetMs * 1.35 && m_perfTier < 3) {
                         m_perfTier++;
                         m_perfGoodWindows = 0;
+                        const wchar_t* lost =
+                            m_perfTier == 1 ? L"motion blur"
+                            : m_perfTier == 2 ? L"antialiasing" : L"live preview";
                         wchar_t buf[160];
                         swprintf_s(buf,
                             L"CKFlip3D: auto perf tune → tier %d (avg %.2f ms, budget %.2f ms) — %s disabled\n",
-                            m_perfTier, avgMs, tuneBudgetMs,
-                            m_perfTier == 1 ? L"motion blur"
-                            : m_perfTier == 2 ? L"antialiasing" : L"live preview");
+                            m_perfTier, avgMs, tuneBudgetMs, lost);
                         CKLog::Log(buf);
+                        // A WARNING, not a notice: something the user switched
+                        // on is not happening.  Auto perf tune working is not
+                        // the point — the point is that a setting is being
+                        // overruled and nothing else on screen says so, which
+                        // is how a setting comes to look broken.
+                        wchar_t detail[288];
+                        _snwprintf_s(detail, _countof(detail), _TRUNCATE,
+                            L"frames were averaging %.1f ms against a %.1f ms "
+                            L"budget, so %s was switched off for this session "
+                            L"(Auto performance tune, General → Performance)",
+                            avgMs, tuneBudgetMs, lost);
+                        Diag::Report(Diag::Code::QualityLowered, Diag::Sev::Warning,
+                                     L"A quality setting was turned off to keep up",
+                                     detail);
                     } else if (avgMs < tuneBudgetMs * 0.85 && m_perfTier > 0) {
                         if (++m_perfGoodWindows >= kPerfRecoveryWindows) {
                             m_perfTier--;
@@ -3099,6 +4383,21 @@ bool FlipController::EffectiveMotionBlur() const
     if (m_config->perfProfile == -1 && m_config->autoPerfTune && m_perfTier >= 1)
         return false;
     return m_config->motionBlur;
+}
+
+bool FlipController::EffectiveReflections() const
+{
+    if (!m_config) return false;              // default-off feature
+    // Reflections DOUBLE the tile draw calls, and of the optional effects
+    // they are the cheapest to lose visually — so they go first, sharing
+    // tier 1 with motion blur instead of claiming a rung of their own.
+    // Renumbering the ladder would have changed when motion blur, AA and
+    // live preview drop out; this way those thresholds are untouched and a
+    // user who never enables reflections sees no behavioural difference.
+    if (m_config->perfProfile == 0 || m_config->perfProfile == 1) return false;
+    if (m_config->perfProfile == -1 && m_config->autoPerfTune && m_perfTier >= 1)
+        return false;
+    return m_config->reflections;
 }
 
 bool FlipController::EffectiveAntialiasing() const
@@ -3139,6 +4438,11 @@ bool FlipController::AnimLabelEnabled() const
     return !m_config || (m_config->animations && m_config->animLabel);
 }
 
+bool FlipController::AnimHoverEnabled() const
+{
+    return !m_config || (m_config->animations && m_config->animHover);
+}
+
 uint32_t FlipController::EffectiveStartDelayMs() const
 {
     uint32_t v = m_config ? m_config->startDelayMs : 16;
@@ -3161,6 +4465,22 @@ uint32_t FlipController::EffectiveStartDelayMs() const
 // ---------------------------------------------------------------------------
 void FlipController::RemoveClosedWindows()
 {
+    // Windows the search filter took out of the stack have no tile on screen,
+    // so one closing is not a transition — it is simply gone.  Swept first and
+    // unconditionally: none of the gates below concern them, and leaving a
+    // dead HWND in the hidden set would let it re-enter the cascade when the
+    // query is cleared.
+    if (!m_searchHidden.empty()) {
+        for (auto it = m_searchHidden.begin(); it != m_searchHidden.end(); ) {
+            if (it->win.hwnd != m_desktopHwnd && !IsWindow(it->win.hwnd)) {
+                if (it->capture) it->capture->Stop();
+                it = m_searchHidden.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     // Never modify window/capture arrays during animation — frozen SRV
     // pointers and animator start/target slots depend on stable indices.
     //
@@ -3190,6 +4510,13 @@ void FlipController::RemoveClosedWindows()
     if (m_cycleAnim.IsActive() || !m_cycleQueue.empty())
         return;
 
+    // A click-to-select spin runs a cycle per frame with no idle frame in
+    // between — but it does briefly hand the arrays back between two steps,
+    // and a close transition started in that gap would rebuild the scene the
+    // next step is about to animate.  The sweep resumes the moment it lands.
+    if (m_jumpTargetHwnd)
+        return;
+
     // NOTE: an already-running close transition does NOT gate this sweep.
     // Windows closed mid-transition MERGE into it (CloseAnimator::Begin
     // carries the in-flight dying tiles over and re-routes the survivors
@@ -3211,7 +4538,21 @@ void FlipController::RemoveClosedWindows()
     if (closed.empty())
         return;
 
-    const uint32_t oldSlotCount = m_scene.SlotCount();
+    const uint32_t oldSlotCount   = m_scene.SlotCount();
+    const size_t   oldWindowCount = m_windows.size();
+    const bool     coverFlow =
+        (m_scene.GetVisualPreset() == VisualPreset::CoverFlow);
+
+    // Old slot → HWND, so the post-rebuild layout can be traced back to
+    // the poses each window is animating FROM.  Identity-ordered for the
+    // cascade preset; the carousel's row order is a permutation.
+    std::vector<HWND> oldSlotHwnd(oldSlotCount, nullptr);
+    for (uint32_t s = 0; s < oldSlotCount; ++s) {
+        const uint32_t w = SlotWindowIndexFor(s, oldSlotCount,
+                                              oldWindowCount, coverFlow);
+        if (w < oldWindowCount)
+            oldSlotHwnd[s] = m_windows[w].hwnd;
+    }
 
     // Animate only when the close animation is enabled (master toggle AND
     // its per-animation selection) and at least one closed window occupies
@@ -3219,7 +4560,10 @@ void FlipController::RemoveClosedWindows()
     // screen, so the silent rebuild is already seamless.
     bool anyVisible = false;
     for (size_t i : closed) {
-        if (i < oldSlotCount) { anyVisible = true; break; }
+        if (WindowSlotIndexFor(i, oldSlotCount, oldWindowCount, coverFlow) >= 0) {
+            anyVisible = true;
+            break;
+        }
     }
     const bool animate = anyVisible && AnimCloseEnabled();
 
@@ -3244,17 +4588,27 @@ void FlipController::RemoveClosedWindows()
     // capture is missing (null entry → placeholder tile).
     std::vector<uint32_t> dyingSlotIdx;
     std::vector<std::unique_ptr<WGCCapture>> dyingCaps;
+    std::vector<winrt::com_ptr<ID3D11ShaderResourceView>> dyingSRVs;
     for (auto it = closed.rbegin(); it != closed.rend(); ++it) {
         size_t i = *it;
-        const bool dyingVisible = animate && i < oldSlotCount;
+        const int dyingSlot = WindowSlotIndexFor(i, oldSlotCount,
+                                                oldWindowCount, coverFlow);
+        const bool dyingVisible = animate && dyingSlot >= 0;
         if (dyingVisible) {
             std::unique_ptr<WGCCapture> cap;
+            winrt::com_ptr<ID3D11ShaderResourceView> srv;
             if (i < m_captures.size() && m_captures[i]) {
+                // Snapshot the SRV before the Stop so the fade-out draws from
+                // a ref this list owns — the capture object still backs the
+                // texture, but the reference is no longer the capture's to
+                // recreate.
+                srv = SrvRef(m_captures[i]->GetCurrentFrame());
                 m_captures[i]->Stop();
                 cap = std::move(m_captures[i]);
             }
             dyingCaps.push_back(std::move(cap));
-            dyingSlotIdx.push_back(static_cast<uint32_t>(i));
+            dyingSRVs.push_back(std::move(srv));
+            dyingSlotIdx.push_back(static_cast<uint32_t>(dyingSlot));
         }
         if (i < m_captures.size()) {
             if (m_captures[i]) m_captures[i]->Stop();
@@ -3262,10 +4616,32 @@ void FlipController::RemoveClosedWindows()
         }
         m_windows.erase(m_windows.begin() + static_cast<ptrdiff_t>(i));
     }
-    // The reverse walk produced descending lists; Begin() and the dying-
-    // tile draw expect ascending slot order.
-    std::reverse(dyingSlotIdx.begin(), dyingSlotIdx.end());
-    std::reverse(dyingCaps.begin(), dyingCaps.end());
+    // Begin() and the dying-tile draw expect ascending SLOT order, and the
+    // captures must stay parallel.  The reverse walk emitted descending
+    // window indices, which is descending slot order only in the cascade;
+    // sort the pairs so the carousel's permuted row is handled too.
+    {
+        std::vector<size_t> order(dyingSlotIdx.size());
+        for (size_t k = 0; k < order.size(); ++k) order[k] = k;
+        std::sort(order.begin(), order.end(),
+                  [&](size_t a, size_t b) {
+                      return dyingSlotIdx[a] < dyingSlotIdx[b];
+                  });
+        std::vector<uint32_t> sortedIdx;
+        std::vector<std::unique_ptr<WGCCapture>> sortedCaps;
+        std::vector<winrt::com_ptr<ID3D11ShaderResourceView>> sortedSRVs;
+        sortedIdx.reserve(order.size());
+        sortedCaps.reserve(order.size());
+        sortedSRVs.reserve(order.size());
+        for (size_t k : order) {
+            sortedIdx.push_back(dyingSlotIdx[k]);
+            sortedCaps.push_back(std::move(dyingCaps[k]));
+            sortedSRVs.push_back(std::move(dyingSRVs[k]));
+        }
+        dyingSlotIdx = std::move(sortedIdx);
+        dyingCaps    = std::move(sortedCaps);
+        dyingSRVs    = std::move(sortedSRVs);
+    }
 
     // ---- Rebuild the 3D scene with the updated window count ---------------
     RECT rc;
@@ -3308,7 +4684,29 @@ void FlipController::RemoveClosedWindows()
             ClearClosingCaptures();
         for (auto& cap : dyingCaps)
             m_closingCaptures.push_back(std::move(cap));
-        m_closeAnim.Begin(m_scene, startSlots, dyingSlotIdx, oldCam);
+        for (auto& srv : dyingSRVs)
+            m_closingSRVs.push_back(std::move(srv));
+
+        // Cover Flow: hand the animator an explicit per-new-slot source
+        // map.  Its default derivation pairs survivors with new slots in
+        // ascending order, which only holds while slot order == window
+        // order — the carousel permutes the row, and a window from
+        // outside the visible row can surface into it.  The cascade keeps
+        // the default (nullptr) and is therefore completely untouched.
+        std::vector<int> newSlotSource;
+        if (coverFlow)
+            newSlotSource = BuildSlotSourceMap(oldSlotHwnd);
+
+        // The reflow re-assigns slots exactly as a cycle does, so a lift still
+        // on its way down would land on whichever window inherited the slot.
+        // It cannot WAIT here the way a cycle can — a window that has already
+        // gone must not stay in the arrays for another tenth of a second — so
+        // the fall simply runs alongside the reflow, bounded and brief instead
+        // of trailing the whole transition (see DropHoverLift).
+        DropHoverLift();
+
+        m_closeAnim.Begin(m_scene, startSlots, dyingSlotIdx, oldCam,
+                          coverFlow ? &newSlotSource : nullptr);
         CKLog::Log(L"CKFlip: Window closed — close transition started\n");
     } else {
         CKLog::Log(L"CKFlip: Window closed — rebuilt scene\n");
@@ -3323,6 +4721,7 @@ void FlipController::ClearClosingCaptures()
             cap->Stop();
     }
     m_closingCaptures.clear();
+    m_closingSRVs.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -3621,6 +5020,16 @@ void FlipController::ShowRealTaskbar()
     m_taskbarHeldPinPosition = false;
     if (m_taskbarWasVisible && m_taskbarHwnd && IsWindow(m_taskbarHwnd)) {
         ShowWindow(m_taskbarHwnd, SW_SHOW);
+        // A taskbar this program hid and could not put back is a desktop the
+        // user has to fix by restarting explorer.  Nothing else in the session
+        // teardown is this visible when it goes wrong.
+        if (!IsWindowVisible(m_taskbarHwnd))
+            Diag::Report(Diag::Code::TaskbarStateFailed, Diag::Sev::Critical,
+                         L"The taskbar did not come back after the cascade closed",
+                         L"CKFlip3D hid the real taskbar for the session and the "
+                         L"shell has not shown it again; opening and closing the "
+                         L"switcher usually restores it, restarting Windows "
+                         L"Explorer always does");
     }
     m_taskbarWasVisible = false;
     m_taskbarLiveActive = false;
@@ -3689,6 +5098,884 @@ void FlipController::RestoreDesktopIcons()
     }
     m_iconListView     = nullptr;
     m_iconsWereVisible = false;
+}
+
+// ===========================================================================
+// Pointer in the cascade (Controls → Mouse & keyboard)
+//
+// Hover, click-to-select and close-from-the-stack.  Everything below is a new
+// SOURCE of the commands the cascade already understands — the pointer never
+// gets its own path through Dismiss, the exit morph or the close transition,
+// it just decides which window they act on.  That is what keeps the keyboard,
+// wheel and touchpad paths bit-identical with the feature switched off, and
+// what keeps a click from being a second way for something to go wrong.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+bool FlipController::PointerInteractionReady() const
+{
+    return !m_cycleAnim.IsActive()
+        && m_cycleQueue.empty()
+        && !m_flinging
+        && !m_scrubActive
+        && !m_closeAnim.IsActive()
+        && !m_jumpTargetHwnd
+        && m_pendingExit == PendingExit::None
+        && !m_entryExitAnimator.IsActive()
+        && !m_exitPending
+        && !m_reverseDelayPending;
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::DropHoverLift()
+{
+    if (!m_hover.AnyLift())
+        return;                 // nothing is up: the common case
+    m_hoverSlot = -1;
+    m_hover.BeginDrop(AnimHoverEnabled());
+}
+
+// ---------------------------------------------------------------------------
+int FlipController::HitTestScreen(int screenX, int screenY) const
+{
+    if (!m_active || m_scene.SlotCount() == 0)
+        return -1;
+    // Only a settled cascade is hittable.  During the entry/exit morph the
+    // drawn transform is a lerp between the tile's flat screen rect and its
+    // 3D pose (see the draw loop), so testing the 3D pose alone would report
+    // a tile that is not where it says it is.
+    if (m_entryExitAnimator.IsActive() || m_exitPending || m_reverseDelayPending)
+        return -1;
+
+    RECT rc{};
+    GetClientRect(m_renderer.GetHwnd(), &rc);
+    const float vpW = static_cast<float>(rc.right - rc.left);
+    const float vpH = static_cast<float>(rc.bottom - rc.top);
+    if (vpW <= 0.0f || vpH <= 0.0f)
+        return -1;
+
+    // Screen → overlay client space (the overlay spans the virtual screen).
+    const float px = static_cast<float>(screenX) - m_overlayOriginX;
+    const float py = static_cast<float>(screenY) - m_overlayOriginY;
+
+    // The hover lift is a DRAW offset (HoverAnimator owns no slot state), so
+    // the scene alone describes tiles as if none were lifted.  Hand the hit
+    // test the same per-slot offset the draw pass applies, or the highlighted
+    // tile answers clicks over the area it has just risen OUT of, and its own
+    // top edge belongs to whichever tile lies behind it.
+    //
+    // The draw gates this on the entry/exit morph as well; both of those states
+    // already returned -1 above, so AnyLift() is the whole remaining condition.
+    const uint32_t slotCount = m_scene.SlotCount();
+    float lifts[kMaxHitTestSlots] = {};
+    TileHitTest::SlotOffsets offsets;
+    if (m_hover.AnyLift() && slotCount <= kMaxHitTestSlots) {
+        for (uint32_t i = 0; i < slotCount; ++i) {
+            const float l = m_hover.Lift(i);
+            lifts[i] = (l > 0.001f)
+                ? l * m_scene.GetSlot(i).scaleY * HoverAnimator::kRiseFactor
+                : 0.0f;
+        }
+        offsets.y     = lifts;
+        offsets.count = slotCount;
+    }
+
+    return TileHitTest::PickSlot(m_scene,
+                                 DirectX::XMLoadFloat4x4(&m_monRemapNDC),
+                                 m_cascadeAspect, vpW, vpH, px, py, offsets);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::PointerMove(int screenX, int screenY)
+{
+    if (!m_active || !PointerEnabled())
+        return;
+    m_pointerScreen.x = screenX;
+    m_pointerScreen.y = screenY;
+    m_pointerValid    = true;
+    // The hit test itself runs per frame in RenderFrame — the stack moves
+    // under a still pointer far more often than the pointer moves.
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::PointerSelect(int screenX, int screenY)
+{
+    if (!m_active || !PointerEnabled() || !m_config->mouseSelect)
+        return;
+    // A click only counts on a settled stack: mid-cycle the tile under the
+    // cursor is whichever one is sweeping past, not the one being aimed at.
+    if (!PointerInteractionReady())
+        return;
+
+    const int slot = HitTestScreen(screenX, screenY);
+    if (slot < 0)
+        return;   // clicked the backdrop — deliberately does nothing
+    CommitSlot(static_cast<uint32_t>(slot));
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::PointerClose(int screenX, int screenY)
+{
+    if (!m_active || !PointerEnabled() || !m_config->closeFromCascade)
+        return;
+    if (!PointerInteractionReady())
+        return;   // same reason as PointerSelect — aim needs a still stack
+    CloseWindowAtSlot(HitTestScreen(screenX, screenY));
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::CloseSelectedWindow()
+{
+    // The close KEY's own switch — not PointerEnabled(), and not the close
+    // click's.  It falls back to the selection when no tile is hovered, which
+    // is the keyboard-only case, so the pointer master must not gate it.  The
+    // close CLICK (PointerClose) keeps the pointer gate, because it is one.
+    if (!m_active || !m_config || !m_config->closeKeyEnabled)
+        return;
+    // Delete follows the pointer when there is one over the stack, and the
+    // selection otherwise — both are "the window I am looking at".
+    CloseWindowAtSlot(m_hoverSlot >= 0 ? m_hoverSlot : 0);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::CloseWindowAtSlot(int slot)
+{
+    if (slot < 0)
+        return;
+    const uint32_t widx = SlotWindowIndex(static_cast<uint32_t>(slot));
+    if (widx >= m_windows.size())
+        return;
+
+    HWND target = m_windows[widx].hwnd;
+    if (!target || target == m_desktopHwnd || !IsWindow(target))
+        return;   // the desktop pseudo-tile is not a window anyone can close
+
+    // WM_CLOSE, never a kill: the application runs its own close path — a
+    // save prompt, a confirmation, a veto — exactly as if its title-bar × had
+    // been clicked.  The tile therefore leaves the cascade only once the
+    // window actually dies, which RemoveClosedWindows already notices and
+    // animates; nothing here removes anything, so a window that declines to
+    // close simply stays in the stack, which is the honest outcome.
+    PostMessageW(target, WM_CLOSE, 0, 0);
+    CKLog::Log(L"CKFlip: close requested from the cascade (WM_CLOSE)\n");
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::CommitSlot(uint32_t slot)
+{
+    const uint32_t widx = SlotWindowIndex(slot);
+    if (widx >= m_windows.size())
+        return;
+
+    if (widx == 0) {
+        Dismiss();          // already the selection — the ordinary commit
+        return;
+    }
+
+    // A window further back has to reach the front BEFORE the exit morph
+    // starts.  The morph pairs window 0 with the tile that flies to the
+    // foreground and derives the whole endpoint Z ranking from that pairing
+    // (see Dismiss), so committing a back slot directly would animate one
+    // window while raising another.  Spin first, commit on landing.
+    ResolveScrub();
+    m_cycleQueue.clear();
+
+    const size_t n = m_windows.size();
+    const size_t steps = (std::min)(static_cast<size_t>(widx), n - widx);
+    m_jumpTargetHwnd = m_windows[widx].hwnd;
+    m_jumpCommit     = true;
+    m_jumpStepMs     = std::clamp(
+        kJumpBudgetMs / static_cast<float>((std::max<size_t>)(steps, 1)),
+        kJumpStepMinMs, kJumpStepMaxMs);
+
+    // The tile just clicked is the one under the pointer, and so the one that
+    // is up: it comes down as the spin carries it forward (see DropHoverLift).
+    DropHoverLift();
+
+    // Start on this frame rather than waiting for the next one — the click
+    // should move the stack, not pause first.
+    AdvanceSelectJump();
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::AdvanceSelectJump()
+{
+    if (!m_jumpTargetHwnd)
+        return;
+    if (!m_active) { CancelSelectJump(); return; }
+
+    // Another animator owns the slots — wait it out rather than layering on
+    // top of it.  (The entry morph is the realistic case: a click landing in
+    // the first few frames of the cascade opening.)
+    if (m_cycleAnim.IsActive() || m_closeAnim.IsActive()
+        || m_entryExitAnimator.IsActive())
+        return;
+
+    // Located by HWND every step: the stack can be re-ordered underneath the
+    // spin (a window closes, the search filter changes), and an index would
+    // quietly start chasing whichever window inherited it.
+    size_t idx = m_windows.size();
+    for (size_t i = 0; i < m_windows.size(); ++i) {
+        if (m_windows[i].hwnd == m_jumpTargetHwnd) { idx = i; break; }
+    }
+    if (idx >= m_windows.size()) {
+        // The window went away mid-spin.  Abandon the commit as well: raising
+        // whatever happens to be in front now is not what was clicked.
+        CancelSelectJump();
+        return;
+    }
+
+    if (idx == 0) {
+        const bool commit = m_jumpCommit;
+        CancelSelectJump();
+        if (commit)
+            Dismiss();
+        return;
+    }
+
+    const size_t n = m_windows.size();
+    // Whichever way round is shorter.  In Cover Flow the left-hand slots map
+    // onto the TAIL of the window array, so a tile two places to the left is
+    // two backward steps, not n-2 forward ones.
+    const bool forward = (idx <= n - idx);
+
+    if (!AnimCycleEnabled()) {
+        // Nothing to animate — walk the whole way in one go and commit.
+        for (size_t guard = 0; guard < n && !m_windows.empty()
+                               && m_windows[0].hwnd != m_jumpTargetHwnd; ++guard) {
+            if (forward) ExecuteCycleForward();
+            else         ExecuteCycleBackward();
+        }
+        const bool commit = m_jumpCommit;
+        CancelSelectJump();
+        if (commit)
+            Dismiss();
+        return;
+    }
+
+    m_scrubPending = false;
+    if (forward) ExecuteCycleForward(true);
+    else         ExecuteCycleBackward(true);
+    // Tick once so this frame already shows movement — the same zero-gap
+    // chaining ProcessCycleQueue relies on.
+    m_cycleAnim.Tick(m_scene);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::CancelSelectJump()
+{
+    m_jumpTargetHwnd = nullptr;
+    m_jumpCommit     = false;
+    m_jumpStepMs     = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+std::vector<int> FlipController::BuildSlotSourceMap(
+    const std::vector<HWND>& oldSlotHwnd) const
+{
+    const uint32_t newSlotCount   = m_scene.SlotCount();
+    const size_t   newWindowCount = m_windows.size();
+    const bool     coverFlow =
+        (m_scene.GetVisualPreset() == VisualPreset::CoverFlow);
+
+    std::vector<int> map(newSlotCount, -1);
+    for (uint32_t i = 0; i < newSlotCount; ++i) {
+        const uint32_t w = SlotWindowIndexFor(i, newSlotCount,
+                                              newWindowCount, coverFlow);
+        if (w >= newWindowCount)
+            continue;
+        const HWND h = m_windows[w].hwnd;
+        for (size_t s = 0; s < oldSlotHwnd.size(); ++s) {
+            if (oldSlotHwnd[s] == h) {
+                map[i] = static_cast<int>(s);
+                break;
+            }
+        }
+    }
+    return map;
+}
+
+// ===========================================================================
+// Type-to-filter (Settings → Search)
+//
+// Typing narrows the cascade to the matching windows and clearing the query
+// brings the rest back — both through the SAME close transition a real window
+// close uses, so a filtered-out window falls away exactly like a closed one
+// and a returning window arrives exactly like an overflow window rotating in.
+// No new choreography, and therefore no new way for the stack to look wrong.
+//
+// The windows themselves are only ever moved between two lists (m_windows and
+// m_searchHidden); nothing is destroyed, and their captures keep streaming,
+// because the very next keystroke may bring them back.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+void FlipController::SearchAppend(wchar_t c)
+{
+    // Once the exit is committed and only waiting for the windows to return,
+    // the query is history — editing it would filter a stack that is on its
+    // way out.
+    if (!m_active || !m_config || !m_config->searchEnabled
+        || m_pendingExit != PendingExit::None)
+        return;
+    if (m_search.Append(c))
+        m_searchDirty = true;
+}
+
+void FlipController::SearchBackspace()
+{
+    if (!m_active || !m_config || !m_config->searchEnabled
+        || m_pendingExit != PendingExit::None)
+        return;
+    if (m_search.Backspace())
+        m_searchDirty = true;
+}
+
+bool FlipController::SearchClear()
+{
+    if (!m_search.Clear())
+        return false;
+    m_searchDirty = true;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+bool FlipController::SearchHoldsEmptyStack() const
+{
+    // Only while there is something to come BACK to.  An empty stack with an
+    // empty hidden set is not "your query matched nothing" — it is a session
+    // whose windows have genuinely all closed, and that has to end the way it
+    // always did rather than hang on an empty cascade waiting for a backspace
+    // that would bring nothing with it.
+    return m_config && m_config->searchEnabled
+        && !m_search.Empty() && !m_searchHidden.empty();
+}
+
+// ---------------------------------------------------------------------------
+// Lift the filter for good, right before an exit morph is built.
+//
+// The morph is a statement about the whole desktop: every tile flies from its
+// cascade slot to the real screen rect of its window, and the endpoint Z
+// ranking is derived from the full list (see Dismiss).  Handing it a filtered
+// subset would animate some windows and silently leave the rest cloaked until
+// teardown — windows appearing to "go missing" mid-exit is exactly the
+// conflict this avoids.
+//
+// The restored order is the session's own, rotated so the chosen window keeps
+// the front slot: precisely the arrangement the user would have reached by
+// scrolling to that window by hand.  Deliberately NOT animated — the exit
+// morph starts from this pose on the very next frame, so the windows come
+// back and fly out as one motion instead of two.
+// ---------------------------------------------------------------------------
+bool FlipController::RestoreSearchWindowsForExit()
+{
+    // Whatever happens, the query does not survive into the next session.
+    m_search.Reset();
+    m_searchDirty   = false;
+    m_searchNoMatch = false;
+
+    if (m_searchHidden.empty())
+        return false;
+
+    const HWND front = m_windows.empty() ? nullptr : m_windows[0].hwnd;
+
+    // The pose the returning windows animate FROM — snapshotted before
+    // anything moves, exactly like every other reflow here.
+    const uint32_t oldSlotCount   = m_scene.SlotCount();
+    const size_t   oldWindowCount = m_windows.size();
+    const bool     coverFlow =
+        (m_scene.GetVisualPreset() == VisualPreset::CoverFlow);
+    std::vector<TileSlot> startSlots(oldSlotCount);
+    for (uint32_t i = 0; i < oldSlotCount; ++i)
+        startSlots[i] = m_scene.GetSlot(i);
+    const CloseAnimator::CameraPose oldCam{
+        m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),
+        m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ()
+    };
+    std::vector<HWND> oldSlotHwnd(oldSlotCount, nullptr);
+    for (uint32_t s = 0; s < oldSlotCount; ++s) {
+        const uint32_t w = SlotWindowIndexFor(s, oldSlotCount,
+                                              oldWindowCount, coverFlow);
+        if (w < oldWindowCount)
+            oldSlotHwnd[s] = m_windows[w].hwnd;
+    }
+
+    struct Entry {
+        WindowInfo                  win;
+        std::unique_ptr<WGCCapture> cap;
+        size_t                      order = 0;
+    };
+    std::vector<Entry> all;
+    all.reserve(m_windows.size() + m_searchHidden.size());
+
+    for (size_t i = 0; i < m_windows.size(); ++i) {
+        Entry e;
+        e.win = m_windows[i];
+        auto it = m_windowMeta.find(e.win.hwnd);
+        e.order = (it != m_windowMeta.end()) ? it->second.order : i;
+        if (i < m_captures.size())
+            e.cap = std::move(m_captures[i]);
+        all.push_back(std::move(e));
+    }
+    for (auto& hidden : m_searchHidden) {
+        Entry e;
+        e.win   = hidden.win;
+        e.cap   = std::move(hidden.capture);
+        e.order = hidden.order;
+        all.push_back(std::move(e));
+    }
+    m_searchHidden.clear();
+
+    std::sort(all.begin(), all.end(),
+              [](const Entry& a, const Entry& b) { return a.order < b.order; });
+    if (front) {
+        for (size_t i = 0; i < all.size(); ++i) {
+            if (all[i].win.hwnd == front) {
+                std::rotate(all.begin(), all.begin() + i, all.end());
+                break;
+            }
+        }
+    }
+
+    m_windows.clear();
+    m_captures.clear();
+    m_windows.reserve(all.size());
+    m_captures.reserve(all.size());
+    for (auto& e : all) {
+        m_windows.push_back(e.win);
+        m_captures.push_back(std::move(e.cap));
+    }
+
+    RECT rc{};
+    GetClientRect(m_renderer.GetHwnd(), &rc);
+    float vpW = static_cast<float>(rc.right - rc.left);
+    float vpH = static_cast<float>(rc.bottom - rc.top);
+    if (vpW <= 0) vpW = 1920.0f;
+    if (vpH <= 0) vpH = 1080.0f;
+    UpdateCascadeSpace(vpW, vpH);
+
+    uint32_t displayCount = static_cast<uint32_t>(m_windows.size());
+    if (m_config && m_config->maxWindows < displayCount)
+        displayCount = m_config->maxWindows;
+    m_scene.BuildSlots(displayCount, m_cascadeW, m_cascadeH);
+    RebuildSceneAspects();
+    // The camera was re-derived for the restored count, so the entry-time
+    // flat rects cached per HWND are in a stale frame — dropping them makes
+    // the exit compute fresh ones (see RemoveClosedWindows).
+    m_entryExitAnimator.ClearEntryFlatCache();
+
+    // The slot the pointer was over no longer holds the same window.
+    m_hoverSlot = -1;
+    m_hover.SetTarget(-1);
+
+    // Show them ARRIVING.  The windows appearing in one frame and immediately
+    // flying out was the whole cascade blinking: the eye has no chance to see
+    // what came back, only that something flashed.  They rise into place
+    // first, and the caller holds the exit until they have landed.
+    ClearClosingCaptures();
+    if (AnimCloseEnabled()) {
+        const std::vector<int> newSlotSource = BuildSlotSourceMap(oldSlotHwnd);
+        const std::vector<uint32_t> noDying;
+        m_closeAnim.Begin(m_scene, startSlots, noDying, oldCam,
+                          &newSlotSource, /*riseIn*/ true);
+    }
+
+    CKLog::Log(L"CKFlip: search filter lifted — windows returning before exit\n");
+    return AnimCloseEnabled();
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::ClearSearchState()
+{
+    // Hidden windows' captures go back to the warm cache exactly like the
+    // visible ones do (StopCaptures) — a window filtered out of THIS session
+    // is no less likely to be wanted in the next one, and Stop() keeps its
+    // cached frame for the warm start.
+    for (auto& hidden : m_searchHidden) {
+        if (!hidden.capture)
+            continue;
+        HWND h = hidden.capture->GetHwnd();
+        hidden.capture->Stop();
+        if (h)
+            m_captureCache[h] = std::move(hidden.capture);
+    }
+    m_searchHidden.clear();
+    m_windowMeta.clear();
+    m_search.Reset();
+    m_searchBox.Reset();
+    m_searchDirty   = false;
+    m_searchNoMatch = false;
+}
+
+// ---------------------------------------------------------------------------
+// Per-window facts the filter needs, resolved once per session.  Keyed by
+// HWND on purpose: m_windows is rotated by every cycle, and a parallel array
+// would be one more thing to keep in step through paths that have nothing to
+// do with searching.
+//
+// Skipped entirely when the feature is off, so a user who never searches
+// never pays for a single OpenProcess.
+// ---------------------------------------------------------------------------
+void FlipController::BuildWindowMetadata()
+{
+    m_windowMeta.clear();
+    if (!m_config || !m_config->searchEnabled)
+        return;
+
+    auto toLower = [](std::wstring s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::towlower);
+        return s;
+    };
+
+    // One image-path lookup per process, however many windows it owns.
+    std::unordered_map<DWORD, std::wstring> pidExe;
+    auto exeForPid = [&](DWORD pid) -> const std::wstring& {
+        auto it = pidExe.find(pid);
+        if (it != pidExe.end())
+            return it->second;
+
+        std::wstring name;
+        HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (proc) {
+            wchar_t buf[MAX_PATH * 2] = {};
+            DWORD len = static_cast<DWORD>(_countof(buf));
+            if (QueryFullProcessImageNameW(proc, 0, buf, &len)) {
+                std::wstring full = toLower(buf);
+                size_t slash = full.find_last_of(L"\\/");
+                name = (slash == std::wstring::npos) ? full
+                                                     : full.substr(slash + 1);
+            }
+            CloseHandle(proc);
+        }
+        return pidExe.emplace(pid, std::move(name)).first->second;
+    };
+
+    for (size_t i = 0; i < m_windows.size(); ++i) {
+        WindowMeta meta;
+        meta.order = i;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(m_windows[i].hwnd, &pid);
+        if (pid != 0)
+            meta.exeLower = exeForPid(pid);
+        m_windowMeta[m_windows[i].hwnd] = std::move(meta);
+    }
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::ApplySearchFilter()
+{
+    if (!m_active || !m_config || !m_config->searchEnabled) {
+        m_searchDirty = false;
+        return;
+    }
+
+    // The same gates RemoveClosedWindows uses, for the same reason: the
+    // window/capture arrays and the slot poses must belong to nobody else.
+    // Returning WITHOUT clearing m_searchDirty is the point — the edit is
+    // simply applied on a later frame, so nothing typed is ever lost.
+    if (m_sessionFrozen || m_entryExitAnimator.IsActive())
+        return;
+    if (m_exitPending || m_reverseDelayPending)
+        return;
+    if (m_cycleAnim.IsActive() || !m_cycleQueue.empty())
+        return;
+    if (m_closeAnim.IsActive())
+        return;
+    if (m_jumpTargetHwnd)
+        return;
+
+    m_searchDirty = false;
+
+    // ---- Snapshot the pose the transition starts from ---------------------
+    // Taken BEFORE anything moves, exactly like the close sweep: BuildSlots
+    // below re-derives the camera for the new count, and CloseAnimator
+    // re-expresses these poses under it so frame 1 matches the last frame.
+    const uint32_t oldSlotCount   = m_scene.SlotCount();
+    const size_t   oldWindowCount = m_windows.size();
+    const bool     coverFlow =
+        (m_scene.GetVisualPreset() == VisualPreset::CoverFlow);
+
+    std::vector<TileSlot> startSlots(oldSlotCount);
+    for (uint32_t i = 0; i < oldSlotCount; ++i)
+        startSlots[i] = m_scene.GetSlot(i);
+    const CloseAnimator::CameraPose oldCam{
+        m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),
+        m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ()
+    };
+
+    std::vector<HWND> oldSlotHwnd(oldSlotCount, nullptr);
+    for (uint32_t s = 0; s < oldSlotCount; ++s) {
+        const uint32_t w = SlotWindowIndexFor(s, oldSlotCount,
+                                              oldWindowCount, coverFlow);
+        if (w < oldWindowCount)
+            oldSlotHwnd[s] = m_windows[w].hwnd;
+    }
+    const HWND oldFront = m_windows.empty() ? nullptr : m_windows[0].hwnd;
+
+    // ---- Everything this session knows about, visible or hidden -----------
+    struct Entry {
+        WindowInfo                  win;
+        std::unique_ptr<WGCCapture> cap;
+        size_t                      order   = 0;
+        int                         oldSlot = -1;   // -1 = was not on screen
+        bool                        visible = false;
+    };
+    std::vector<Entry> all;
+    all.reserve(oldWindowCount + m_searchHidden.size());
+
+    auto orderOf = [&](HWND h, size_t fallback) -> size_t {
+        auto it = m_windowMeta.find(h);
+        return it != m_windowMeta.end() ? it->second.order : fallback;
+    };
+
+    for (size_t i = 0; i < m_windows.size(); ++i) {
+        Entry e;
+        e.win     = m_windows[i];
+        e.order   = orderOf(e.win.hwnd, i);
+        e.oldSlot = WindowSlotIndexFor(i, oldSlotCount, oldWindowCount,
+                                       coverFlow);
+        e.visible = true;
+        if (i < m_captures.size())
+            e.cap = std::move(m_captures[i]);
+        all.push_back(std::move(e));
+    }
+    for (auto& hidden : m_searchHidden) {
+        Entry e;
+        e.win   = hidden.win;
+        e.cap   = std::move(hidden.capture);
+        e.order = hidden.order;
+        all.push_back(std::move(e));
+    }
+    m_searchHidden.clear();
+
+    // ---- Verdicts ---------------------------------------------------------
+    auto matches = [&](const Entry& e) {
+        // The desktop pseudo-tile has no title of its own; give it the name
+        // the label already shows so "desk" finds it like anything else.
+        const std::wstring& title =
+            (e.win.hwnd == m_desktopHwnd) ? kDesktopSearchName : e.win.title;
+        std::wstring exe;
+        if (m_config->searchMatchProcess) {
+            auto it = m_windowMeta.find(e.win.hwnd);
+            if (it != m_windowMeta.end())
+                exe = it->second.exeLower;
+        }
+        return m_search.Matches(title, exe);
+    };
+
+    std::vector<size_t> keep, drop;
+    keep.reserve(all.size());
+    for (size_t i = 0; i < all.size(); ++i)
+        (matches(all[i]) ? keep : drop).push_back(i);
+
+    // Nothing matches is an ANSWER, not an error: the stack empties and the
+    // field says so.  Anything else lies — leaving the previous result on
+    // screen would tell the user their query matched windows it did not, and
+    // that is exactly what "typing a word with no relation to anything open
+    // still shows those windows" looked like.  The session survives the empty
+    // stack (SearchHoldsEmptyStack) so one backspace brings it all back.
+    m_searchNoMatch = keep.empty();
+
+    // Nothing actually moves — a character that matches everything the stack
+    // already holds, or (via the branch above) one that matches nothing.  Put
+    // the arrays back untouched and stop: a reflow with identical endpoints
+    // still looks like nothing, but it would block cycling for its full third
+    // of a second while it played out.
+    bool unchanged = (keep.size() == oldWindowCount);
+    if (unchanged) {
+        for (size_t i : keep) {
+            if (!all[i].visible) { unchanged = false; break; }
+        }
+    }
+    if (unchanged) {
+        m_captures.clear();
+        m_captures.reserve(oldWindowCount);
+        for (size_t i = 0; i < all.size(); ++i) {
+            if (all[i].visible) {
+                m_captures.push_back(std::move(all[i].cap));
+            } else {
+                HiddenWindow hidden;
+                hidden.win     = all[i].win;
+                hidden.capture = std::move(all[i].cap);
+                hidden.order   = all[i].order;
+                m_searchHidden.push_back(std::move(hidden));
+            }
+        }
+        return;   // m_windows was never modified
+    }
+
+    // ---- Order the survivors ---------------------------------------------
+    // Canonical session order, then rotated so the current selection stays in
+    // front.  If the selection was filtered out, the first match takes the
+    // front — which is exactly what typing a name is asking for.
+    std::sort(keep.begin(), keep.end(),
+              [&](size_t a, size_t b) { return all[a].order < all[b].order; });
+    if (oldFront) {
+        for (size_t k = 0; k < keep.size(); ++k) {
+            if (all[keep[k]].win.hwnd == oldFront) {
+                std::rotate(keep.begin(), keep.begin() + k, keep.end());
+                break;
+            }
+        }
+    }
+
+    // ---- Rebuild the visible stack ---------------------------------------
+    m_windows.clear();
+    m_captures.clear();
+    m_windows.reserve(keep.size());
+    m_captures.reserve(keep.size());
+    for (size_t i : keep) {
+        m_windows.push_back(all[i].win);
+        m_captures.push_back(std::move(all[i].cap));
+    }
+
+    const bool animate = AnimCloseEnabled();
+    std::vector<uint32_t> dyingSlotIdx;
+    std::vector<winrt::com_ptr<ID3D11ShaderResourceView>> dyingSRVs;
+
+    for (size_t i : drop) {
+        // Freeze the tile's current frame for the fade-out.  The capture goes
+        // on running in m_searchHidden (one backspace may want it back), so
+        // the fade must draw from a snapshot rather than from a stream that
+        // keeps changing under it.
+        if (animate && all[i].oldSlot >= 0) {
+            dyingSlotIdx.push_back(static_cast<uint32_t>(all[i].oldSlot));
+            dyingSRVs.push_back(all[i].cap
+                ? SrvRef(all[i].cap->GetCurrentFrame())
+                : nullptr);
+        }
+        HiddenWindow hidden;
+        hidden.win     = all[i].win;
+        hidden.capture = std::move(all[i].cap);
+        hidden.order   = all[i].order;
+        m_searchHidden.push_back(std::move(hidden));
+    }
+
+    // Ascending slot order, captures in step — what CloseAnimator::Begin and
+    // the dying-tile draw both expect.
+    {
+        std::vector<size_t> order(dyingSlotIdx.size());
+        for (size_t k = 0; k < order.size(); ++k) order[k] = k;
+        std::sort(order.begin(), order.end(),
+                  [&](size_t a, size_t b) {
+                      return dyingSlotIdx[a] < dyingSlotIdx[b];
+                  });
+        std::vector<uint32_t> sortedIdx;
+        std::vector<winrt::com_ptr<ID3D11ShaderResourceView>> sortedSRVs;
+        sortedIdx.reserve(order.size());
+        sortedSRVs.reserve(order.size());
+        for (size_t k : order) {
+            sortedIdx.push_back(dyingSlotIdx[k]);
+            sortedSRVs.push_back(std::move(dyingSRVs[k]));
+        }
+        dyingSlotIdx = std::move(sortedIdx);
+        dyingSRVs    = std::move(sortedSRVs);
+    }
+
+    // ---- Rebuild the scene for the new count ------------------------------
+    RECT rc{};
+    GetClientRect(m_renderer.GetHwnd(), &rc);
+    float vpW = static_cast<float>(rc.right - rc.left);
+    float vpH = static_cast<float>(rc.bottom - rc.top);
+    if (vpW <= 0) vpW = 1920.0f;
+    if (vpH <= 0) vpH = 1080.0f;
+    UpdateCascadeSpace(vpW, vpH);
+
+    uint32_t displayCount = static_cast<uint32_t>(m_windows.size());
+    if (m_config && m_config->maxWindows < displayCount)
+        displayCount = m_config->maxWindows;
+    m_scene.BuildSlots(displayCount, m_cascadeW, m_cascadeH);
+    RebuildSceneAspects();
+    // The camera moved with the count, so the entry-time flat rects cached
+    // per HWND are expressed in a stale frame — see RemoveClosedWindows.
+    m_entryExitAnimator.ClearEntryFlatCache();
+
+    // ---- Animate the reflow ----------------------------------------------
+    // The window order can change arbitrarily here (a restored window lands
+    // wherever its session order puts it), so the animator always gets an
+    // explicit per-slot source map — the ascending derivation it falls back
+    // to only holds when the new row is a prefix of the old one.
+    ClearClosingCaptures();
+    if (animate) {
+        for (auto& srv : dyingSRVs) {
+            m_closingCaptures.push_back(nullptr);   // no capture to own here
+            m_closingSRVs.push_back(std::move(srv));
+        }
+
+        const std::vector<int> newSlotSource = BuildSlotSourceMap(oldSlotHwnd);
+        // riseIn: a window the filter let back in is RETURNING to a place it
+        // fell out of, so it rises back into it.  The overflow refill's
+        // back-spawn arrival would instead fly it in from behind the whole
+        // stack, straight through every window standing between.
+        m_closeAnim.Begin(m_scene, startSlots, dyingSlotIdx, oldCam,
+                          &newSlotSource, /*riseIn*/ true);
+    }
+    // Close animation off: the scene already holds the rebuilt layout, which
+    // IS the end state — nothing to animate toward.
+
+    // The stack changed under the pointer — re-derive the highlight rather
+    // than leaving it on a slot that now shows something else.
+    m_hoverSlot = -1;
+    m_hover.SetTarget(-1);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::UpdateSearchBox()
+{
+    if (!m_config || !m_config->searchEnabled) {
+        m_searchBox.Reset();
+        return;
+    }
+    m_searchBox.Update(m_renderer.GetDevice(), m_search.Query(),
+                       !m_searchNoMatch, m_config->appTheme,
+                       m_config->searchBox,
+                       static_cast<int>(m_config->searchScale),
+                       m_cascadeH);
+}
+
+// ---------------------------------------------------------------------------
+void FlipController::DrawSearchBox(ID3D11DeviceContext* ctx, float vpW,
+                                   float vpH)
+{
+    if (!m_searchBox.Ready() || !ctx || vpW <= 0.0f || vpH <= 0.0f)
+        return;
+
+    const float w = static_cast<float>(m_searchBox.Width());
+    const float h = static_cast<float>(m_searchBox.Height());
+
+    // Placed on the cascade host (the primary display) from the user's own
+    // percentages — X is the field's CENTRE, Y its BOTTOM edge — so one
+    // setting reads the same on every resolution, which is exactly what the
+    // Settings preview shows.
+    const float primL = static_cast<float>(m_monLayout.primary.left)   - m_overlayOriginX;
+    const float primT = static_cast<float>(m_monLayout.primary.top)    - m_overlayOriginY;
+    const float primR = static_cast<float>(m_monLayout.primary.right)  - m_overlayOriginX;
+    const float primB = static_cast<float>(m_monLayout.primary.bottom) - m_overlayOriginY;
+    const float primW = primR - primL;
+    const float primH = primB - primT;
+
+    const float fx = (m_config ? m_config->searchPosX : 50u) / 100.0f;
+    const float fy = (m_config ? m_config->searchPosY : 94u) / 100.0f;
+
+    float left = primL + primW * fx - w * 0.5f;
+    float top  = primT + primH * fy - h;
+
+    // Keep it on the host whatever the percentages and the size add up to.
+    const float margin = 6.0f;
+    left = std::clamp(left, primL + margin,
+                      (std::max)(primL + margin, primR - w - margin));
+    top  = std::clamp(top, primT + margin,
+                      (std::max)(primT + margin, primB - h - margin));
+
+    QuadDrawCall draw;
+    DirectX::XMStoreFloat4x4(&draw.mvp,
+        DirectX::XMMatrixScaling((w / vpW) * 2.0f, (h / vpH) * 2.0f, 1.0f)
+        * DirectX::XMMatrixTranslation(
+              ((left + w * 0.5f) / vpW) * 2.0f - 1.0f,
+              1.0f - ((top + h * 0.5f) / vpH) * 2.0f, 0.0f));
+    draw.alpha      = 1.0f;
+    draw.blurAmount = 0.0f;
+    m_quad.Draw(ctx, m_searchBox.SRV(), draw);
 }
 
 // ---------------------------------------------------------------------------
@@ -3789,52 +6076,6 @@ void FlipController::UpdateSelectedLabel()
     }
 }
 
-// Per-theme plate/text styling for the selected-window label — matches the
-// CKSettings application themes (config appTheme).  Colors sampled from the
-// corresponding Theme/Themes/*.xaml brushes.
-namespace {
-struct LabelStyle {
-    float topR, topG, topB;        // fill gradient top (flat: == bottom)
-    float botR, botG, botB;        // fill gradient bottom
-    float fillAlpha;               // plate opacity
-    float sheenAdd;                // white added at the very top of the sheen
-    float sheenExtent;             // fraction of height the sheen covers (0 = flat)
-    float borderR, borderG, borderB;
-    float borderMix;               // color pull toward border tone at the edge
-    float borderAlphaBoost;
-    float radiusPx;                // corner radius at uiScale 1
-    float textR, textG, textB;
-    float shadowR, shadowG, shadowB;
-    float shadowBox, shadowNoBox;  // shadow strength with/without the plate
-};
-
-// Index = AppConfig::appTheme (0 Skeuo Dark, 1 Skeuo White, 2 Minimal
-// Dark, 3 Minimal White, 4 Glassmorphism).
-constexpr LabelStyle kLabelStyles[5] = {
-    // 0 — Skeuomorphic Dark: steel gradient + aero sheen (#202A36 family).
-    {  62.f,  74.f,  92.f,   26.f,  30.f,  40.f,  0.55f, 50.f, 0.45f,
-      215.f, 225.f, 238.f,  0.45f, 0.16f,  9.0f,
-      243.f, 246.f, 250.f,    0.f,   0.f,   0.f,  0.38f, 0.60f },
-    // 1 — Skeuomorphic White: bright glass (#FCFEFF cards, #B9C8D6 border).
-    { 252.f, 253.f, 255.f,  212.f, 220.f, 229.f,  0.70f, 26.f, 0.50f,
-      146.f, 162.f, 178.f,  0.50f, 0.12f,  9.0f,
-       27.f,  39.f,  51.f,  255.f, 255.f, 255.f,  0.42f, 0.62f },
-    // 2 — Minimalism Dark: flat near-black (#101214), hairline border.
-    {  22.f,  24.f,  27.f,   16.f,  18.f,  20.f,  0.66f,  0.f, 0.00f,
-      120.f, 126.f, 134.f,  0.30f, 0.08f,  4.5f,
-      242.f, 245.f, 248.f,    0.f,   0.f,   0.f,  0.30f, 0.60f },
-    // 3 — Minimalism White: flat white (#FFFFFF, #DDE2E7 border).
-    { 250.f, 251.f, 253.f,  243.f, 245.f, 248.f,  0.74f,  0.f, 0.00f,
-      178.f, 186.f, 195.f,  0.35f, 0.10f,  4.5f,
-       21.f,  25.f,  29.f,  255.f, 255.f, 255.f,  0.40f, 0.62f },
-    // 4 — Glassmorphism: highly translucent dark glass (#1A2430 base),
-    //     broad sheen, luminous white border, large radius.
-    {  46.f,  60.f,  78.f,   22.f,  32.f,  46.f,  0.46f, 58.f, 0.58f,
-      240.f, 246.f, 252.f,  0.55f, 0.20f, 13.0f,
-      250.f, 252.f, 255.f,    0.f,   0.f,   0.f,  0.44f, 0.62f },
-};
-} // namespace
-
 bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
                                                const std::wstring& title,
                                                bool showTitle, bool showIcon,
@@ -3845,7 +6086,9 @@ bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
         return false;
 
     const int theme = m_config ? std::clamp(m_config->appTheme, 0, 4) : 0;
-    const LabelStyle& st = kLabelStyles[theme];
+    // Shared with the search field (core/ThemePlate) so both pieces of
+    // on-screen chrome are the same object in the same theme.
+    const ThemePlate::Style& st = ThemePlate::Get(theme);
 
     // UI scale keys off the cascade host height so the label has the same
     // physical presence at 1080p and 4K.
@@ -3909,76 +6152,15 @@ bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
     const size_t pxCount = static_cast<size_t>(width) * height;
     std::vector<float> out(pxCount * 4u, 0.0f);
     auto over = [&](size_t idx, float b, float g, float r, float a) {
-        // Premultiplied source-over: dst = src + dst * (1 - srcA).
-        float* d = &out[idx * 4u];
-        const float inv = 1.0f - a;
-        d[0] = b + d[0] * inv;
-        d[1] = g + d[1] * inv;
-        d[2] = r + d[2] * inv;
-        d[3] = a + d[3] * inv;
+        ThemePlate::Over(out, idx, b, g, r, a);
     };
 
     // 1. Theme plate — vertical gradient with an optional top sheen, a
     //    1-px border and rounded corners, all parameterised by the active
-    //    CKSettings theme (kLabelStyles).  Translucent so the cascade
-    //    shows through, tinted for text contrast.
-    if (showBox) {
-        const float radius   = st.radiusPx * uiScale;
-        const float borderPx = 1.4f * uiScale;
-        for (int yy = 0; yy < height; ++yy) {
-            const float t = height > 1
-                ? static_cast<float>(yy) / static_cast<float>(height - 1)
-                : 0.0f;
-            float fr = st.topR + (st.botR - st.topR) * t;
-            float fg = st.topG + (st.botG - st.topG) * t;
-            float fb = st.topB + (st.botB - st.topB) * t;
-            // Sheen band over the upper part (skeuo/glass themes only).
-            if (st.sheenExtent > 0.0f && t < st.sheenExtent) {
-                const float s = (st.sheenExtent - t) / st.sheenExtent;
-                fr += (st.sheenAdd + 4.0f) * s;
-                fg += (st.sheenAdd + 4.0f) * s;
-                fb += (st.sheenAdd + 8.0f) * s;
-            }
-            for (int xx = 0; xx < width; ++xx) {
-                const float fx = static_cast<float>(xx) + 0.5f;
-                const float fy = static_cast<float>(yy) + 0.5f;
-                const float cx = std::clamp(fx, radius,
-                                            static_cast<float>(width) - radius);
-                const float cy = std::clamp(fy, radius,
-                                            static_cast<float>(height) - radius);
-                const float dx = fx - cx, dy = fy - cy;
-                // Signed inside-distance to the rounded-rect boundary.
-                float inDist;
-                if (dx == 0.0f && dy == 0.0f) {
-                    inDist = (std::min)(
-                        (std::min)(fx, static_cast<float>(width)  - fx),
-                        (std::min)(fy, static_cast<float>(height) - fy));
-                } else {
-                    inDist = radius - std::sqrt(dx * dx + dy * dy);
-                }
-                const float cov = std::clamp(inDist + 0.5f, 0.0f, 1.0f);
-                if (cov <= 0.0f)
-                    continue;
-
-                float r = fr, g = fg, b = fb;
-                float a = st.fillAlpha;
-                // Border hugging the outer edge.
-                const float bi = std::clamp(
-                    (borderPx - inDist) / borderPx + 0.35f, 0.0f, 1.0f);
-                if (bi > 0.0f) {
-                    const float bw = bi * st.borderMix;
-                    r += (st.borderR - r) * bw;
-                    g += (st.borderG - g) * bw;
-                    b += (st.borderB - b) * bw;
-                    a += st.borderAlphaBoost * bi;
-                }
-                const float aa = a * cov;
-                over(static_cast<size_t>(yy) * width + xx,
-                     (b / 255.0f) * aa, (g / 255.0f) * aa,
-                     (r / 255.0f) * aa, aa);
-            }
-        }
-    }
+    //    CKSettings theme.  Translucent so the cascade shows through,
+    //    tinted for text contrast.
+    if (showBox)
+        ThemePlate::PaintPlate(out, width, height, st, uiScale);
 
     // 2. Icon — drawn into its own zeroed DIB so DrawIconEx preserves the
     //    icon's per-pixel alpha (same trick as the tray-menu bitmaps in
@@ -4042,71 +6224,21 @@ bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
             GdiFlush();
             SelectObject(memDC, prev);
 
-            auto* tp = static_cast<uint8_t*>(textBits);
-            auto maskAt = [&](int xx, int yy) -> float {
-                if (xx < 0 || yy < 0 || xx >= width || yy >= height)
-                    return 0.0f;
-                const uint8_t* p =
-                    tp + (static_cast<size_t>(yy) * width + xx) * 4u;
-                int mx = p[0];
-                if (p[1] > mx) mx = p[1];
-                if (p[2] > mx) mx = p[2];
-                return static_cast<float>(mx) / 255.0f;
-            };
-
-            const int   shadowOff      = (std::max)(1,
-                static_cast<int>(1.5f * uiScale));
-            const float shadowStrength = showBox ? st.shadowBox
-                                                 : st.shadowNoBox;
-            // Theme text + shadow (light themes cast a white halo so the
-            // dark glyphs stay readable without a plate).
-            const float tb = st.textB / 255.0f;
-            const float tg = st.textG / 255.0f;
-            const float tr2 = st.textR / 255.0f;
-            const float sb = st.shadowB / 255.0f;
-            const float sg = st.shadowG / 255.0f;
-            const float sr = st.shadowR / 255.0f;
-            for (int yy = 0; yy < height; ++yy) {
-                for (int xx = 0; xx < width; ++xx) {
-                    const size_t idx = static_cast<size_t>(yy) * width + xx;
-                    const float sh = maskAt(xx - shadowOff, yy - shadowOff)
-                                   * shadowStrength;
-                    if (sh > 0.0f)
-                        over(idx, sb * sh, sg * sh, sr * sh, sh);
-                    const float m = maskAt(xx, yy);
-                    if (m > 0.0f)
-                        over(idx, tb * m, tg * m, tr2 * m, m);
-                }
-            }
+            ThemePlate::CompositeTextMask(out, width, height,
+                                          static_cast<uint8_t*>(textBits),
+                                          st, uiScale, showBox);
         }
         if (textDib) DeleteObject(textDib);
     }
 
     // ---- Pack to premultiplied BGRA bytes and upload -----------------------
-    std::vector<uint8_t> packed(pxCount * 4u);
-    for (size_t i = 0; i < pxCount * 4u; ++i)
-        packed[i] = static_cast<uint8_t>(
-            std::clamp(out[i], 0.0f, 1.0f) * 255.0f + 0.5f);
-
-    D3D11_TEXTURE2D_DESC desc = {};
-    desc.Width            = static_cast<UINT>(width);
-    desc.Height           = static_cast<UINT>(height);
-    desc.MipLevels        = 1;
-    desc.ArraySize        = 1;
-    desc.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage            = D3D11_USAGE_IMMUTABLE;
-    desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
-
-    D3D11_SUBRESOURCE_DATA init = {};
-    init.pSysMem     = packed.data();
-    init.SysMemPitch = static_cast<UINT>(width) * 4u;
+    std::vector<uint8_t> packed;
+    ThemePlate::Pack(out, packed);
 
     winrt::com_ptr<ID3D11Texture2D> tex;
     winrt::com_ptr<ID3D11ShaderResourceView> srv;
-    bool ok = SUCCEEDED(device->CreateTexture2D(&desc, &init, tex.put()))
-           && SUCCEEDED(device->CreateShaderResourceView(tex.get(), nullptr,
-                                                         srv.put()));
+    bool ok = ThemePlate::CreateTexture(device, packed, width, height,
+                                        tex, srv);
 
     SelectObject(memDC, oldFont);
     DeleteObject(font);
@@ -4143,7 +6275,27 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
     // poses; it fades back in at the FINAL position once the hold ends —
     // CycleStop clears the queue and SwitchToDecel drops the chained flag,
     // so the fade-in already runs during the deceleration animation.
-    const bool suppressed = !m_cycleQueue.empty() || m_cycleAnim.IsChained();
+    //
+    // A free-drag scrub (Window snap off) runs on the chained flag too — it
+    // wants the Linear inner easing — but a hand walking the stack is the
+    // deliberate case, not the runaway one, so it must NOT hide the label.
+    // Only genuine speed does, which is the same thing a held key expresses.
+    //
+    // Every term is a statement about a cycle that is RUNNING, so each one is
+    // gated on the animator actually being active.  The chained flag was not,
+    // and it outlived its animation: a click on a back tile spins the stack
+    // with chained steps, the last of which is cancelled by the teardown, and
+    // the flag stayed set into the NEXT session — which opened with its label
+    // faded out and no way back but a keyboard cycle, because only Begin()
+    // ever cleared the flag.  It is cleared by Cancel() now as well; asking
+    // IsActive() here makes the same mistake impossible to reintroduce.
+    const bool cycling    = m_cycleAnim.IsActive();
+    const bool rapidScrub = cycling && m_cycleAnim.IsScrubbing()
+                         && std::fabs(m_scrubVelocity) > kLabelHoldVel;
+    const bool suppressed = !m_cycleQueue.empty()
+                         || (cycling && m_cycleAnim.IsChained()
+                             && !m_cycleAnim.IsScrubbing())
+                         || rapidScrub;
     // Label animation toggle (Appearance → Animations dropdown): off =
     // instant position snap, instant show/hide instead of the fades.
     const bool animate = AnimLabelEnabled();
@@ -4155,6 +6307,23 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
     // of the cascade (the label dove toward the far end, then swept
     // forward).  During the close reflow the previous target is kept.
     {
+        // The pointer-hover lift is a DRAW offset (see HoverAnimator), so the
+        // scene's slot 0 describes the front tile as if it were still flat.
+        // The label anchors to the tile's TOP edge — read the rest pose while
+        // the tile is up and the pill ends up printed across the window it is
+        // labelling.  It takes the same offset the draw pass applies, so the
+        // gap between tile and pill is the one constant of the pair.
+        //
+        // Only the settled branch needs it: while a cycle runs the anchor
+        // comes from the destination REST pose and nothing is lifted (the
+        // lift has already fallen — see HoverDropGate).
+        float frontLift = 0.0f;
+        if (m_hover.AnyLift() && !m_entryExitAnimator.IsActive()) {
+            const float l = m_hover.Lift(0);
+            if (l > 0.001f)
+                frontLift = l * m_scene.GetSlot(0).scaleY
+                          * HoverAnimator::kRiseFactor;
+        }
         using namespace DirectX;
         XMMATRIX mvp{};
         bool haveMvp = false;
@@ -4166,7 +6335,7 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
                 XMMATRIX world =
                     XMMatrixScaling(t->scaleX, t->scaleY, 1.0f) *
                     XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
-                    XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY())) *
+                    XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + t->rotY)) *
                     XMMatrixTranslation(t->x, t->y, t->z);
                 XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
                 XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
@@ -4181,7 +6350,7 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
         } else if (!m_closeAnim.IsActive()) {
             QuadDrawCall probe;
             float a = 0.0f;
-            m_scene.GetDrawCall(0, m_cascadeAspect, probe.mvp, a);
+            m_scene.GetDrawCall(0, m_cascadeAspect, probe.mvp, a, frontLift);
             mvp = XMLoadFloat4x4(&probe.mvp) * monRemap;
             haveMvp = true;
         }

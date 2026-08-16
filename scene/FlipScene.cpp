@@ -1,4 +1,5 @@
 #include "FlipScene.hpp"
+#include "CoverFlowLayout.hpp"
 #include "../core/DebugLog.h"
 #include <cstdio>
 #include <algorithm>
@@ -10,7 +11,7 @@
 using namespace DirectX;
 
 // ---------------------------------------------------------------------------
-// Win7 Flip3D layout — DYNAMIC DENSITY placement with adaptive camera.
+// Flip3D layout — DYNAMIC DENSITY placement with adaptive camera.
 //
 // Three camera innovations match Win7 behaviour across all window counts:
 //   1. Rise power law: riseRatio = riseRatio10 * pow(N/10, riseGamma)
@@ -25,6 +26,15 @@ using namespace DirectX;
 void FlipScene::BuildSlots(uint32_t count, float vpW, float vpH)
 {
     m_viewportAspect = vpW / vpH;
+
+    // Visual preset dispatch: Cover Flow delegates to its own layout
+    // module; the classic cascade continues below completely untouched.
+    if (m_preset == VisualPreset::CoverFlow) {
+        const uint32_t visibleCF = std::min(count, m_cfg.maxVisible);
+        if (visibleCF == 0) { m_slots.clear(); return; }
+        BuildSlotsCoverFlow(visibleCF, vpW, vpH);
+        return;
+    }
 
     // Dynamic sizing: all SceneConfig constants were tuned for 3440×1440.
     // Scale world positions to maintain consistent screen-space layout
@@ -220,6 +230,49 @@ void FlipScene::BuildSlots(uint32_t count, float vpW, float vpH)
 }
 
 // ---------------------------------------------------------------------------
+// Cover Flow preset — geometry lives in scene/CoverFlowLayout; this wrapper
+// only copies the results into the same cached members the cascade path
+// fills, so every downstream consumer (GetDrawCall, camera getters, the
+// animators, FlatStackBuilder's inverse projection) works unchanged.
+// ---------------------------------------------------------------------------
+void FlipScene::BuildSlotsCoverFlow(uint32_t visible, float vpW, float vpH)
+{
+    CoverFlowLayout::Result r =
+        CoverFlowLayout::Build(m_cfg, visible, m_viewportAspect);
+
+    m_slots = std::move(r.slots);
+    m_eyeX = r.eyeX;  m_eyeY = r.eyeY;  m_eyeZ = r.eyeZ;
+    m_targetX = r.targetX;  m_targetY = r.targetY;  m_targetZ = r.targetZ;
+    // Scene-wide tilt is zero — Cover Flow rotation is carried entirely by
+    // the per-slot rotY, so the entry/exit morph's tilt channel stays flat
+    // and the rot channel does the turning.
+    m_tiltY_actual = 0.0f;
+    m_tiltX_actual = 0.0f;
+    m_globalScale_actual = r.globalScaleActual;
+    m_floorY = r.floorY;
+
+    {
+        wchar_t buf[256];
+        swprintf_s(buf,
+            L"CKFlip COVERFLOW: vp=%.0fx%.0f vis=%u floorY=%.2f Eye=(%.2f,%.2f,%.2f)\n",
+            vpW, vpH, visible, m_floorY, m_eyeX, m_eyeY, m_eyeZ);
+        CKLog::Log(buf);
+    }
+
+    m_windowScales.resize(visible);
+    for (uint32_t i = 0; i < visible; ++i)
+        m_windowScales[i] = { m_slots[i].scaleX, m_slots[i].scaleY };
+}
+
+// ---------------------------------------------------------------------------
+void FlipScene::RelayoutCoverFlowX()
+{
+    if (m_preset != VisualPreset::CoverFlow || m_slots.empty())
+        return;
+    CoverFlowLayout::RelayoutX(m_cfg, m_slots, m_viewportAspect, m_eyeZ);
+}
+
+// ---------------------------------------------------------------------------
 void FlipScene::SetSlotAspect(uint32_t index, float aspect)
 {
     if (index < m_slots.size()) {
@@ -286,6 +339,11 @@ void FlipScene::SetSlotScale(uint32_t index, float widthPx, float heightPx,
     // Cache the computed scale for rotation
     if (index < m_windowScales.size())
         m_windowScales[index] = { s.scaleX, s.scaleY };
+
+    // Cover Flow: bottom-align the resized tile back onto the floor plane
+    // (slot y depends on tile height there — the unit quad is centred).
+    if (m_preset == VisualPreset::CoverFlow)
+        s.y = m_floorY + s.scaleY * 0.5f;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,12 +362,17 @@ void FlipScene::RotateAspects(bool forward)
     for (uint32_t i = 0; i < n && i < static_cast<uint32_t>(m_slots.size()); ++i) {
         m_slots[i].scaleX = m_windowScales[i].sx;
         m_slots[i].scaleY = m_windowScales[i].sy;
+        // Cover Flow: the rotated-in tile height changes the bottom-aligned
+        // slot centre — re-seat it on the floor plane.
+        if (m_preset == VisualPreset::CoverFlow)
+            m_slots[i].y = m_floorY + m_slots[i].scaleY * 0.5f;
     }
 }
 
 // ---------------------------------------------------------------------------
 void FlipScene::GetDrawCall(uint32_t index, float viewportAspect,
-                             XMFLOAT4X4& outMVP, float& outAlpha) const
+                             XMFLOAT4X4& outMVP, float& outAlpha,
+                             float worldYOffset) const
 {
     const TileSlot& s = m_slots[index];
     outAlpha = s.alpha;
@@ -317,15 +380,17 @@ void FlipScene::GetDrawCall(uint32_t index, float viewportAspect,
     // --- World transform ---
     // Scale to tile dimensions, rotate X (pitch) then Y (perspective trapezoid),
     // then translate to slot position.
-    // ALL tiles share the SAME rotation — parallel planes like Win7.
+    // In the cascade preset ALL tiles share the SAME rotation (slot rotY is
+    // 0 everywhere) — parallel planes like Win7.  Cover Flow adds a per-slot
+    // rotY on top of the (zero) scene tilt to turn side tiles inward.
     // Both the optimizer's mat_rotY and DirectX XMMatrixRotationY share the
     // SAME sign convention: [0,2] = -sin(θ), [2,0] = +sin(θ).
     // No negation needed for either axis.
     XMMATRIX world =
         XMMatrixScaling(s.scaleX, s.scaleY, 1.0f) *
         XMMatrixRotationX(XMConvertToRadians(m_tiltX_actual)) *
-        XMMatrixRotationY(XMConvertToRadians(m_tiltY_actual)) *
-        XMMatrixTranslation(s.x, s.y, s.z);
+        XMMatrixRotationY(XMConvertToRadians(m_tiltY_actual + s.rotY)) *
+        XMMatrixTranslation(s.x, s.y + worldYOffset, s.z);
 
     // --- View matrix (camera) ---
     XMVECTOR eye    = XMVectorSet(m_eyeX, m_eyeY, m_eyeZ, 1.0f);
@@ -344,4 +409,46 @@ void FlipScene::GetDrawCall(uint32_t index, float viewportAspect,
 
     XMMATRIX mvp = world * view * proj;
     XMStoreFloat4x4(&outMVP, mvp);
+}
+
+// ---------------------------------------------------------------------------
+// Floor-reflection MVP (Appearance → Reflections).  The reflected quad is
+// the SAME unit quad shifted one tile-height down in unit-quad space BEFORE
+// the world chain: mirroring the tile about its bottom edge produces the
+// identical footprint, so a plain shift + a texture V-flip (done by the
+// caller through the UV crop) renders the mirror image without a negative
+// scale — winding, EdgeFade and the rasterizer state all stay untouched.
+//
+// PRECONDITION — the shift happens in the tile's LOCAL frame, so it equals a
+// true mirror in the floor plane only while tiles stay PERPENDICULAR to that
+// floor.  A Y rotation (the scene tilt and Cover Flow's per-slot rotY) is a
+// yaw and keeps them perpendicular, so both presets are correct today.  An X
+// rotation is a pitch and would NOT be: the mirror would carry on down the
+// tile's leaning plane instead of reflecting off the floor.  SceneConfig
+// currently pins tiltX = tiltXslope = 0; anyone enabling a forward pitch must
+// build the reflection by mirroring about the floor plane instead of shifting
+// in local space.
+// ---------------------------------------------------------------------------
+void FlipScene::GetReflectionDrawCall(uint32_t index, float viewportAspect,
+                                      XMFLOAT4X4& outMVP, float& outAlpha,
+                                      float worldYOffset) const
+{
+    const TileSlot& s = m_slots[index];
+    outAlpha = s.alpha;
+
+    XMMATRIX world =
+        XMMatrixTranslation(0.0f, -1.0f, 0.0f) *
+        XMMatrixScaling(s.scaleX, s.scaleY, 1.0f) *
+        XMMatrixRotationX(XMConvertToRadians(m_tiltX_actual)) *
+        XMMatrixRotationY(XMConvertToRadians(m_tiltY_actual + s.rotY)) *
+        XMMatrixTranslation(s.x, s.y + worldYOffset, s.z);
+
+    XMVECTOR eye    = XMVectorSet(m_eyeX, m_eyeY, m_eyeZ, 1.0f);
+    XMVECTOR target = XMVectorSet(m_targetX, m_targetY, m_targetZ, 1.0f);
+    XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
+    XMMATRIX proj   = XMMatrixPerspectiveFovLH(
+        XMConvertToRadians(m_cfg.fovDeg), viewportAspect, 0.1f, 200.0f);
+
+    XMStoreFloat4x4(&outMVP, world * view * proj);
 }

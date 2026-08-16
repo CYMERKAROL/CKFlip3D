@@ -32,6 +32,17 @@ struct HotkeySpec {
 /// valid main key.
 bool ParseHotkey(const std::wstring& text, HotkeySpec& out);
 
+/// Mouse-button identifier shared by the in-cascade bindings (Controls →
+/// Mouse & keyboard).  Matches the config integers 1:1.
+enum MouseButtonId : int {
+    kMouseNone   = 0,
+    kMouseLeft   = 1,
+    kMouseRight  = 2,
+    kMouseMiddle = 3,
+    kMouseX1     = 4,
+    kMouseX2     = 5,
+};
+
 /// Runtime-configurable trigger behaviour.  Read by the hook thread on the
 /// activation keypress only (never per-event), so updating these is cheap.
 struct TriggerOptions {
@@ -43,30 +54,212 @@ struct TriggerOptions {
     // exactly like a single-key binding.  Ignored when the binding has no
     // modifier (those are inherently toggle).
     bool hotkeyToggleMode = false;
+    // Touchpad gestures are live (config touchpadNav).  The hook itself
+    // never reads the touchpad — it only stops passing the OS's horizontal
+    // wheel through while a session is open, so a two-finger cycle swipe
+    // cannot double as a stray horizontal scroll somewhere behind the
+    // overlay.  Off = the horizontal wheel behaves exactly as before.
+    bool touchpadNav      = true;
+    // Window snap (config windowSnap).  Off = holding the left mouse button
+    // and moving scrubs the stack continuously instead of stepping window by
+    // window.  Deliberately does NOT touch the wheel or the keyboard: those
+    // stay discrete either way.
+    bool windowSnap       = true;
+    // --- Mouse in the cascade (Controls → Mouse & keyboard) ---------------
+    // Master switch for everything the pointer does to the stack.  Off = the
+    // cascade takes keyboard, wheel and touchpad only, no pointer message is
+    // posted, and no hit test runs — the pre-pointer cascade exactly.
+    bool pointerInCascade = false;
+    // Hover + click to pick a window.
+    bool mouseSelect      = true;
+    int  selectButton     = kMouseLeft;
+    // Drag the stack while Window snap is off.  Right by default now that
+    // left picks a window.
+    bool dragEnabled      = true;
+    int  dragButton       = kMouseRight;
+    // Close the hovered window with the mouse.  A pointer feature, so
+    // pointerInCascade gates it along with everything else the mouse does.
+    bool closeFromCascade = true;
+    // The same action from the KEYBOARD (closeHotkey).  Its OWN switch: the key
+    // acts on the selection when nothing is hovered, so it is useful with every
+    // mouse feature off — and someone who wants the click but not the key (or
+    // the other way round) can have either.
+    bool closeKeyEnabled  = true;
+    int  closeButton      = kMouseMiddle;
+
+    // Type-to-filter (Settings → Search).  Off = printable keys are
+    // swallowed as strays exactly as before.
+    bool searchEnabled    = false;
+
     std::vector<std::wstring> ignoredApps;  // exe names or full paths (lowercase)
     std::wstring activationHotkey = L"Win+Tab";  // see ParseHotkey
+    // Commit / cancel / close bindings — same syntax as activationHotkey.
+    // Only the MAIN key is honoured (a modifier-qualified binding would fight
+    // the activation combination that is still being held).
+    std::wstring commitHotkey = L"Enter";
+    std::wstring cancelHotkey = L"Escape";
+    std::wstring closeHotkey  = L"Delete";
 };
 
 /// Update trigger options (thread-safe; callable from the UI/main thread).
 void SetOptions(const TriggerOptions& opts);
 
+/// Shared switcher-session state.  The hook owns it, but a second input
+/// source (hook/touchpadhook) has to open and close sessions through the
+/// SAME flag — otherwise a gesture-opened cascade would not take Enter /
+/// Escape / Tab, and a Win+Tab-opened one would not take gestures.
+/// Setting it does NOT post any message; the caller posts the matching
+/// WM_FLIP_* itself, exactly like the hook's own branches do.
+bool IsSessionActive();
+void SetSessionActive(bool active);
+
+/// Identity of the session currently running (0 = none has ever run).
+///
+/// THREE threads raise and drop the session flag: the hook thread (hotkey),
+/// the touchpad worker (gesture) and the app thread (the controller's
+/// teardown).  The teardown is long and pumps no messages, so a hotkey pressed
+/// during it starts the NEXT session while the previous one is still being
+/// dismantled — and a teardown that just cleared a bare flag would clear the
+/// new session's, leaving the cascade up with the hook disarmed.  Taking the
+/// identity at Activate and handing it back at teardown is what makes the two
+/// tell each other apart.
+uint64_t CurrentSessionEpoch();
+
+/// End the session with this identity, and ONLY that one.
+///
+/// Returns false — changing nothing — when a newer session has since taken
+/// over, which is precisely the case a plain "session = false" got wrong.
+/// Otherwise clears the flag (if still set), resets the per-session state the
+/// unconditional store always reset, and returns true.
+bool EndSessionIfEpoch(uint64_t epoch);
+
+/// True when the in-cascade pointer bindings claim a plain LEFT click.
+///
+/// A one-finger tap on a precision touchpad is ALSO a left click: Windows
+/// synthesises one, the mouse hook sees it, and the pointer path commits the
+/// tile under the cursor.  If the gesture source commits as well, one physical
+/// tap produces two commits from two threads, and whichever message the app
+/// drains first decides which window is raised.  The gesture source asks this
+/// and stands down — the pointer answer is the better one anyway, because it
+/// acts on the tile being pointed at instead of on the front slot.
+bool PointerOwnsLeftClick();
+
+/// Make this process the one that "received the last input event".
+///
+/// Windows refuses a foreground change — including the shell's show-desktop —
+/// from a process that has not just received input.  The overlay is
+/// WS_EX_NOACTIVATE and every keystroke the cascade uses is SWALLOWED by the
+/// hook, so CKFlip normally qualifies only by accident: SwallowModifierRelease
+/// injects a keystroke on the way out of a held-modifier commit, and injected
+/// input counts.  That accident is why committing with the keyboard has
+/// always worked and picking the desktop with the MOUSE did not — a click
+/// injects nothing, the request was refused, and the desktop simply never
+/// appeared.
+///
+/// Injects the same unmapped dummy key the hook already uses for its own
+/// purposes: it produces no character, no application can act on it, and our
+/// own hook passes injected events straight through.
+void AssertInputOwnership();
+
+/// End the session on behalf of an input source that is NOT the keyboard —
+/// a click on a tile, a touchpad tap.
+///
+/// The keyboard paths do their own bookkeeping before they post: committing
+/// with Enter arms the defusal that swallows the next Win/Alt release, so the
+/// Start menu cannot pop after a session that was opened by holding Win.  A
+/// pointer commit cannot do that from inside the hook, because the hook only
+/// sees a click — it has no idea whether that click hit a tile or the
+/// backdrop.  Without this, picking a window with the mouse while still
+/// holding Win left the OS seeing a bare Win press-and-release, and the Start
+/// menu opened over whatever had just been switched to.
+///
+/// Only ever call this for a genuinely non-keyboard commit.  Calling it on a
+/// keyboard path would re-evaluate "is a modifier still down" a few
+/// milliseconds after the hook already answered it, and a race there arms the
+/// defusal for a release that has already happened — eating one later,
+/// unrelated Start-menu press.
+void EndSessionForeign();
+
+/// Re-arm a session the hook has already dropped, WITHOUT resetting the
+/// per-session state SetSessionActive clears.  Exists for one case: the
+/// cancel key with a search query typed, where the hook must still do its
+/// modifier-release bookkeeping (that is what keeps the Start menu shut) but
+/// the controller — the only side that can see the query — decides the
+/// cascade stays open.
+void ResumeSession();
+
+/// Drop a session that never actually opened (FlipController::Activate
+/// aborts when nothing is eligible for the cascade), so the hook does not
+/// keep swallowing input for a cascade that is not there.  A trigger that
+/// is still physically held is left alone: its release still belongs to the
+/// combination and must keep being defused (Start menu / menu bar).
+///
+/// Takes the identity of the session being given up, and drops nothing else —
+/// the failed activation's window scan is slow enough for a second trigger to
+/// have started a real session in the meantime.  See EndSessionIfEpoch.
+void AbortSessionIfIdle(uint64_t epoch);
+
+/// True when the Controls-page activation filters (Ignore in fullscreen
+/// applications, the ignored-apps list) say this activation should not
+/// happen.  Exposed so the touchpad gesture source honours exactly the same
+/// rules as the hotkey — one set of filters, both input paths.
+bool ShouldIgnoreActivation();
+
+/// Hold activation off for `ms` milliseconds (0 releases it immediately).
+///
+/// The Settings app's touchpad-activity panel takes the pointer and reads raw
+/// contacts to preview the gestures — but the core is still listening to the
+/// same pad and the same keyboard, so practising the opening diagonal (or
+/// brushing the hotkey) would fling the real cascade over the settings window.
+/// This gates every activation path at once, because they all pass through
+/// ShouldIgnoreActivation.
+///
+/// The deadline EXPIRES on its own rather than waiting to be cleared: the
+/// suspending process could be killed mid-preview, and a switcher that stayed
+/// permanently disarmed because a settings window died is far worse than one
+/// that re-arms a couple of seconds late.  The caller simply re-sends while it
+/// still wants the hold.
+void SuspendActivation(unsigned ms);
+
+/// Window messages the hook posts to the app window.
+///
+///   activate      — first Win+Tab
+///   cycle         — subsequent Tab / arrow-down / scroll-down while active
+///   cycleBack     — Shift+Tab / arrow-up / scroll-up while active
+///   dismiss       — Win released (commit)
+///   escape        — cancel key pressed while active
+///   cycleStop     — main key released; stop queuing cycles
+///   scrub         — drag with Window snap off; lParam holds a signed
+///                   fixed-point delta (1/10000 window, + = forward)
+///   scrubEnd      — that drag ended; settle onto the nearest window
+///   pointerMove   — pointer moved over the overlay; wParam = screen X,
+///                   lParam = screen Y (both signed LONG)
+///   pointerSelect — select button pressed; same coordinate packing
+///   pointerClose  — close button pressed; same coordinate packing
+///   closeSelected — Delete pressed; close the hovered or front window
+///   searchChar    — a printable key no binding claimed; wParam = character
+///   searchBack    — Backspace while the search query is being typed
+struct Messages {
+    UINT activate      = 0;
+    UINT cycle         = 0;
+    UINT cycleBack     = 0;
+    UINT dismiss       = 0;
+    UINT escape        = 0;
+    UINT cycleStop     = 0;
+    UINT scrub         = 0;
+    UINT scrubEnd      = 0;
+    UINT pointerMove   = 0;
+    UINT pointerSelect = 0;
+    UINT pointerClose  = 0;
+    UINT closeSelected = 0;
+    UINT searchChar    = 0;
+    UINT searchBack    = 0;
+};
+
 /// Install the low-level keyboard hook.
 /// The hook callback is deliberately minimal (no allocations, no blocking
 /// calls) to stay well under the LowLevelHooksTimeout (~300 ms on Win 11).
-///
-/// Messages posted to hwndNotify:
-///   msgActivate  — first Win+Tab
-///   msgCycle     — subsequent Tab / arrow-down / scroll-down while active
-///   msgCycleBack — Shift+Tab / arrow-up / scroll-up while active
-///   msgDismiss   — Win released
-///   msgEscape    — Escape pressed while active (cancel without switching)
-bool Install(HWND hwndNotify,
-             UINT msgActivate,
-             UINT msgCycle,
-             UINT msgCycleBack,
-             UINT msgDismiss,
-             UINT msgEscape,
-             UINT msgCycleStop);
+bool Install(HWND hwndNotify, const Messages& msgs);
 
 void Uninstall();
 

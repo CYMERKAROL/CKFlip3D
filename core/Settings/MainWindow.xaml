@@ -166,6 +166,17 @@
                                     </StackPanel>
                                 </ListBoxItem>
 
+                                <ListBoxItem Tag="Search">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Grid Width="16" Height="16">
+                                            <Path Stroke="{DynamicResource NavIconBrush}" StrokeThickness="1.5"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  Data="M7,1.6 A5.4,5.4 0 1 1 6.99,1.6 M10.9,10.9 L14.6,14.6"/>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource NavItemText}" Text="Search"/>
+                                    </StackPanel>
+                                </ListBoxItem>
+
                                 <ListBoxItem Tag="Diagnostics">
                                     <StackPanel Orientation="Horizontal">
                                         <Grid Width="16" Height="16">
@@ -204,9 +215,63 @@
                                 </ListBoxItem>
                             </ListBox>
 
-                            <TextBlock Grid.Row="1" Margin="22,0,0,12"
-                                       FontFamily="Segoe UI" FontSize="10.5"
-                                       Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.2"/>
+                            <StackPanel Grid.Row="1" Margin="18,0,0,12">
+                                <!-- Log marks: only appear when there is something to
+                                     say, directly above the version so the sidebar's
+                                     bottom edge is the one place that reports on the
+                                     program's own health. -->
+                                <StackPanel x:Name="LogBadges" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <Button x:Name="BadgeCritical" Style="{StaticResource LogBadgeButton}"
+                                            Visibility="Collapsed" Click="LogBadge_Click"
+                                            ToolTip="Errors — click to open the log">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid Width="14" Height="14" Margin="0,0,4,0">
+                                                <Path Stroke="#FFE05C50" StrokeThickness="1.4"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"
+                                                      Data="M7,1.2 A5.8,5.8 0 1 1 6.99,1.2 M4.8,4.8 L9.2,9.2 M9.2,4.8 L4.8,9.2"/>
+                                            </Grid>
+                                            <TextBlock x:Name="BadgeCriticalCount" VerticalAlignment="Center"
+                                                       FontFamily="Segoe UI" FontSize="10.5" FontWeight="SemiBold"
+                                                       Foreground="#FFE05C50"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="BadgeWarning" Style="{StaticResource LogBadgeButton}"
+                                            Visibility="Collapsed" Click="LogBadge_Click"
+                                            ToolTip="Warnings — click to open the log">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid Width="14" Height="14" Margin="0,0,4,0">
+                                                <Path Stroke="#FFE8A33D" StrokeThickness="1.4"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"
+                                                      Data="M7,1.3 L13.2,12 H0.8 Z M7,5.2 V8.4 M7,10 V10.4"/>
+                                            </Grid>
+                                            <TextBlock x:Name="BadgeWarningCount" VerticalAlignment="Center"
+                                                       FontFamily="Segoe UI" FontSize="10.5" FontWeight="SemiBold"
+                                                       Foreground="#FFE8A33D"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="BadgeInfo" Style="{StaticResource LogBadgeButton}"
+                                            Visibility="Collapsed" Click="LogBadge_Click"
+                                            ToolTip="Notices — click to open the log">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid Width="14" Height="14" Margin="0,0,4,0">
+                                                <Path Stroke="#FF4C9AE0" StrokeThickness="1.4"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"
+                                                      Data="M7,1.2 A5.8,5.8 0 1 1 6.99,1.2 M7,6.4 V10 M7,4.2 V4.5"/>
+                                            </Grid>
+                                            <TextBlock x:Name="BadgeInfoCount" VerticalAlignment="Center"
+                                                       FontFamily="Segoe UI" FontSize="10.5" FontWeight="SemiBold"
+                                                       Foreground="#FF4C9AE0"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <TextBlock Margin="4,0,0,0"
+                                           FontFamily="Segoe UI" FontSize="10.5"
+                                           Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.5"/>
+                            </StackPanel>
                         </Grid>
 
                         <!-- right content surface -->
@@ -246,18 +311,33 @@
                                 <Border Grid.Row="2" x:Name="ApplyBar" Height="0" ClipToBounds="True"
                                         Background="{DynamicResource ApplyBarBrush}" BorderBrush="{DynamicResource SeparatorBrush}"
                                         BorderThickness="0,1,0,0" CornerRadius="0,0,5,5">
+                                    <!-- Two columns, not two overlaid panels: the message is
+                                         longer while a setting is holding Apply back, and it
+                                         has to give way to the buttons rather than run under
+                                         them. -->
                                     <Grid Margin="20,0">
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                                    Margin="0,0,16,0">
                                             <Ellipse Width="7" Height="7" Fill="#FFE8A33D" Margin="0,1,8,0"/>
-                                            <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
+                                            <TextBlock x:Name="ApplyBarText" VerticalAlignment="Center"
+                                                       FontFamily="Segoe UI" FontSize="12"
+                                                       TextTrimming="CharacterEllipsis"
                                                        Foreground="{DynamicResource TextSecondaryBrush}"
                                                        Text="You have unsaved changes. Apply to update CKFlip3D."/>
                                         </StackPanel>
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Center">
                                             <Button Style="{StaticResource AeroButton}" Content="Revert"
                                                     Click="BtnRevert_Click" Margin="0,0,8,0" Padding="14,4"/>
-                                            <Button Style="{StaticResource AccentButton}" Content="Apply"
-                                                    Click="BtnApply_Click" Padding="20,4"/>
+                                            <!-- Taken away, not disabled, while the settings hold a
+                                                 combination that cannot be saved — see
+                                                 SettingsModel.WindowSnapSatisfied. -->
+                                            <Button x:Name="ApplyButton" Style="{StaticResource AccentButton}"
+                                                    Content="Apply" Click="BtnApply_Click" Padding="20,4"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>

@@ -1,5 +1,6 @@
 #include "Renderer.hpp"
 #include "../core/DebugLog.h"
+#include "../core/Diagnostics.h"
 #include <d3d11_4.h>
 #include <dwmapi.h>
 
@@ -67,8 +68,11 @@ bool Renderer::CreateD3DWindow(HINSTANCE hInstance)
         wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
         wc.lpszClassName = kD3DOverlayClass;
 
-        if (!RegisterClassExW(&wc))
+        if (!RegisterClassExW(&wc)) {
+            Diag::ReportLastError(Diag::Code::OverlayWindowFailed, Diag::Sev::Critical,
+                                  L"CKFlip3D could not register its overlay window class");
             return false;
+        }
         g_d3dClassRegistered = true;
     }
 
@@ -81,8 +85,11 @@ bool Renderer::CreateD3DWindow(HINSTANCE hInstance)
         0, 0, 1, 1,
         nullptr, nullptr, hInstance, nullptr);
 
-    if (!m_hwnd)
+    if (!m_hwnd) {
+        Diag::ReportLastError(Diag::Code::OverlayWindowFailed, Diag::Sev::Critical,
+                              L"CKFlip3D could not create its overlay window");
         return false;
+    }
 
     BOOL excludePeek = TRUE;
     DwmSetWindowAttribute(m_hwnd, DWMWA_EXCLUDED_FROM_PEEK,
@@ -96,8 +103,12 @@ bool Renderer::CreateDeviceAndSwapChain()
     // Create the DXGI factory first so we can query tearing support.
     winrt::com_ptr<IDXGIFactory2> factory;
     HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(factory.put()));
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::DxgiFactoryFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not reach the graphics subsystem", hr,
+                       L"CreateDXGIFactory1");
         return false;
+    }
 
     // Step 1: query tearing support before creating the swap chain.
     m_tearingSupported = false;
@@ -136,14 +147,18 @@ bool Renderer::CreateDeviceAndSwapChain()
             device.put(), nullptr, context.put());
 
         if (SUCCEEDED(hr)) {
-            MessageBoxW(nullptr,
-                L"No hardware 3D acceleration detected.\n"
-                L"CKFlip3D will run using software rendering (WARP),\n"
-                L"which may be significantly slower.\n\n"
-                L"If you are running in a VM, enable 3D acceleration\n"
-                L"in your VM settings.",
-                L"CKFlip3D \u2014 Warning", MB_OK | MB_ICONWARNING);
+            // Used to be a modal box at startup, which the user dismissed once
+            // and could never see again \u2014 the exact failure mode the log
+            // exists to end.
+            Diag::Report(Diag::Code::GpuSoftwareFallback, Diag::Sev::Warning,
+                         L"No hardware 3D acceleration \u2014 CKFlip3D is rendering in software",
+                         L"the D3D11 hardware device could not be created and "
+                         L"WARP took over; expect low frame rates. In a virtual "
+                         L"machine, enable 3D acceleration in the VM settings");
         } else {
+            Diag::ReportHr(Diag::Code::GpuDeviceFailed, Diag::Sev::Critical,
+                           L"CKFlip3D could not create a Direct3D 11 device", hr,
+                           L"neither hardware nor WARP");
             return false;
         }
     }
@@ -165,11 +180,19 @@ bool Renderer::CreateDeviceAndSwapChain()
                     // Warn if dedicated VRAM is very low (< 128 MB).
                     if (adapterDesc.DedicatedVideoMemory > 0 &&
                         adapterDesc.DedicatedVideoMemory < 128ULL * 1024 * 1024) {
-                        MessageBoxW(nullptr,
-                            L"Very low dedicated video memory detected.\n"
-                            L"CKFlip3D may experience performance issues\n"
-                            L"or run out of GPU memory with many windows.",
-                            L"CKFlip3D \u2014 Warning", MB_OK | MB_ICONWARNING);
+                        // _TRUNCATE: the adapter description is a driver
+                        // string of up to 128 characters and is not this
+                        // program's to bound.
+                        wchar_t detail[320];
+                        _snwprintf_s(detail, _countof(detail), _TRUNCATE,
+                            L"%s reports %llu MB of dedicated video memory; live "
+                            L"previews of many windows may not fit",
+                            adapterDesc.Description,
+                            static_cast<unsigned long long>(
+                                adapterDesc.DedicatedVideoMemory / (1024 * 1024)));
+                        Diag::Report(Diag::Code::GpuLowVideoMemory, Diag::Sev::Warning,
+                                     L"Very little video memory on this display adapter",
+                                     detail, /*sticky=*/true);
                     }
                 }
             }
@@ -190,6 +213,12 @@ bool Renderer::CreateDeviceAndSwapChain()
         if (SUCCEEDED(m_context->QueryInterface(
                 IID_PPV_ARGS(multithread.put()))))
             multithread->SetMultithreadProtected(TRUE);
+        else
+            Diag::Report(Diag::Code::MultithreadUnavailable, Diag::Sev::Warning,
+                         L"CKFlip3D could not lock its graphics device for shared use",
+                         L"ID3D11Multithread is unavailable; live window previews "
+                         L"share this device with capture threads and may freeze "
+                         L"or tear on this driver");
     }
 
     // Step 2: create composition swap chain with premultiplied alpha.
@@ -206,8 +235,12 @@ bool Renderer::CreateDeviceAndSwapChain()
 
     hr = factory->CreateSwapChainForComposition(
         m_device.get(), &desc, nullptr, m_swapChain.put());
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::SwapChainFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not create its drawing surface", hr,
+                       L"CreateSwapChainForComposition");
         return false;
+    }
 
     // Tearing is not supported with composition swap chains.
     m_tearingSupported = false;
@@ -217,22 +250,39 @@ bool Renderer::CreateDeviceAndSwapChain()
     m_device->QueryInterface(IID_PPV_ARGS(dxgiDev.put()));
 
     hr = DCompositionCreateDevice(dxgiDev.get(), IID_PPV_ARGS(g_dcompDevice.put()));
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::CompositionFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not reach the desktop compositor", hr,
+                       L"DCompositionCreateDevice — the overlay cannot be shown "
+                       L"without it; check that Desktop Window Manager is running");
         return false;
+    }
 
     hr = g_dcompDevice->CreateTargetForHwnd(m_hwnd, TRUE, g_dcompTarget.put());
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::CompositionFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not attach its overlay to the screen", hr,
+                       L"CreateTargetForHwnd");
         return false;
+    }
 
     hr = g_dcompDevice->CreateVisual(g_dcompVisual.put());
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::CompositionFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not build its compositor visual", hr,
+                       L"CreateVisual");
         return false;
+    }
 
     g_dcompVisual->SetContent(m_swapChain.get());
     g_dcompTarget->SetRoot(g_dcompVisual.get());
     hr = g_dcompDevice->Commit();
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::CompositionFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not commit its overlay to the compositor",
+                       hr, L"IDCompositionDevice::Commit");
         return false;
+    }
 
     return true;
 }
@@ -244,11 +294,21 @@ bool Renderer::CreateRenderTarget()
 
     winrt::com_ptr<ID3D11Texture2D> backBuffer;
     HRESULT hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.put()));
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::BackbufferResizeFailed, Diag::Sev::Critical,
+                       L"CKFlip3D lost its drawing surface", hr,
+                       L"IDXGISwapChain::GetBuffer");
         return false;
+    }
 
     hr = m_device->CreateRenderTargetView(backBuffer.get(), nullptr, m_rtv.put());
-    return SUCCEEDED(hr);
+    if (FAILED(hr)) {
+        Diag::ReportHr(Diag::Code::BackbufferResizeFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not prepare its drawing surface", hr,
+                       L"CreateRenderTargetView");
+        return false;
+    }
+    return true;
 }
 
 void Renderer::CreateBlendState()
@@ -334,10 +394,39 @@ bool Renderer::Resize(UINT width, UINT height)
     UINT flags = m_tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
     HRESULT hr = m_swapChain->ResizeBuffers(0, width, height,
                                              DXGI_FORMAT_UNKNOWN, flags);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        wchar_t detail[128];
+        swprintf_s(detail, L"ResizeBuffers to %ux%u", width, height);
+        Diag::ReportHr(Diag::Code::BackbufferResizeFailed, Diag::Sev::Critical,
+                       L"CKFlip3D could not resize its overlay to the desktop", hr,
+                       detail);
         return false;
+    }
 
     return CreateRenderTarget();
+}
+
+// ---------------------------------------------------------------------------
+// A Present that fails is either a lost device or a compositor that has gone
+// away, and both look identical from the user's chair: the cascade freezes or
+// never appears.  Naming which one it was is the whole point of asking.
+void Renderer::ReportPresentFailure(HRESULT hr)
+{
+    if (SUCCEEDED(hr))
+        return;
+
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+        const HRESULT reason = m_device ? m_device->GetDeviceRemovedReason() : hr;
+        wchar_t detail[160];
+        swprintf_s(detail, L"device removed reason 0x%08X",
+                   static_cast<unsigned>(reason));
+        Diag::ReportHr(Diag::Code::DeviceRemoved, Diag::Sev::Critical,
+                       L"The graphics device was reset while CKFlip3D was drawing",
+                       hr, detail);
+        return;
+    }
+    Diag::ReportHr(Diag::Code::PresentFailed, Diag::Sev::Warning,
+                   L"CKFlip3D could not present a frame", hr);
 }
 
 void Renderer::BeginFrame()
@@ -373,12 +462,12 @@ void Renderer::BeginFrame()
 void Renderer::EndFrame()
 {
     UINT presentFlags = m_tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
-    m_swapChain->Present(0, presentFlags);
+    ReportPresentFailure(m_swapChain->Present(0, presentFlags));
 }
 
 void Renderer::EndFrameVSync()
 {
-    m_swapChain->Present(1, 0);
+    ReportPresentFailure(m_swapChain->Present(1, 0));
 }
 
 void Renderer::Show()

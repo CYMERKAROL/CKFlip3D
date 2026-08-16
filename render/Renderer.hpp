@@ -50,6 +50,10 @@ private:
     bool CreateRenderTarget();
     void CreateBlendState();
     void CreateDepthStencilState();
+    /// Turn a failed Present into a diagnostic — a lost device and a lost
+    /// compositor look the same from the user's chair, so the entry has to
+    /// say which one it was.
+    void ReportPresentFailure(HRESULT hr);
 
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 

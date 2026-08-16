@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Windows;
 
 namespace CKFlip3D.Settings.Services;
 
@@ -84,19 +85,80 @@ public static class HotkeyService
     // main key is NOT a bare-modifier binding, just an abandoned attempt.
     private static bool _multiMods;
     private static bool _capturing;
+    // Enter and Escape are the session's own commit/cancel keys, so the
+    // ACTIVATION capture refuses them — binding activation to the key that
+    // closes the cascade would make it un-openable.  Capturing the commit and
+    // cancel bindings themselves is the one case where they are exactly what
+    // the user is trying to press, so that capture opts in.  The modal's
+    // Cancel button is then the way out (a bare left click always passes
+    // through to the UI).
+    private static bool _allowReservedKeys;
+
+    // Mouse-button-only capture (the in-cascade bindings).  Here a BARE left
+    // click is exactly what the user may be trying to bind, so it can no
+    // longer be allowed through to the UI — which would leave the modal's
+    // Cancel button unclickable.  The caller therefore hands over that
+    // button's screen rectangle as a dead zone: clicks inside it are ignored
+    // by the capture and reach WPF normally, clicks anywhere else are the
+    // binding.  Esc still cancels.
+    private static bool _mouseOnly;
+    private static RECT _deadZone;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT pt);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
 
     public static bool IsCapturing => _capturing;
+
+    /// <summary>
+    /// Capture a single mouse button (no modifiers, no keyboard keys).
+    /// <paramref name="deadZoneScreen"/> is a screen rectangle — normally the
+    /// modal's button strip — where clicks are left alone so there is always a
+    /// way out that is not the keyboard.
+    /// </summary>
+    public static void StartMouseButtonCapture(Action<string> onPreview,
+                                               Action<string> onCaptured,
+                                               Action onCancelled,
+                                               Rect deadZoneScreen)
+    {
+        StartCapture(onPreview, onCaptured, onCancelled);
+        _mouseOnly = true;
+        _deadZone = new RECT
+        {
+            Left = (int)Math.Round(deadZoneScreen.Left),
+            Top = (int)Math.Round(deadZoneScreen.Top),
+            Right = (int)Math.Round(deadZoneScreen.Right),
+            Bottom = (int)Math.Round(deadZoneScreen.Bottom),
+        };
+    }
+
+    private static bool InDeadZone()
+    {
+        if (_deadZone.Right <= _deadZone.Left || _deadZone.Bottom <= _deadZone.Top)
+            return false;
+        if (!GetCursorPos(out POINT p))
+            return false;
+        return p.X >= _deadZone.Left && p.X < _deadZone.Right
+            && p.Y >= _deadZone.Top && p.Y < _deadZone.Bottom;
+    }
 
     /// <summary>Begin capturing. Callbacks arrive on the UI thread.</summary>
     public static void StartCapture(Action<string> onPreview,
                                     Action<string> onCaptured,
-                                    Action onCancelled)
+                                    Action onCancelled,
+                                    bool allowReservedKeys = false)
     {
         if (_capturing) StopCapture();
 
         _onPreview = onPreview;
         _onCaptured = onCaptured;
         _onCancelled = onCancelled;
+        _allowReservedKeys = allowReservedKeys;
         _ctrl = _shift = _alt = _win = false;
         _multiMods = false;
         _capturing = true;
@@ -117,6 +179,9 @@ public static class HotkeyService
         _onPreview = null;
         _onCaptured = null;
         _onCancelled = null;
+        _allowReservedKeys = false;
+        _mouseOnly = false;
+        _deadZone = default;
         _capturing = false;
     }
 
@@ -149,14 +214,21 @@ public static class HotkeyService
         uint vk = kb.vkCode;
 
         // Esc cancels the capture (it is the session-cancel key, never a
-        // bindable trigger).
-        if (isDown && vk == 0x1B /*VK_ESCAPE*/)
+        // bindable trigger) — unless the caller is capturing that very
+        // binding, in which case it falls through to KeyNameOf below.
+        if (isDown && vk == 0x1B /*VK_ESCAPE*/ && !_allowReservedKeys)
         {
             var cancelled = _onCancelled;
             StopCapture();
             cancelled?.Invoke();
             return (IntPtr)1;
         }
+
+        // Mouse-only capture: the keyboard has nothing to contribute, so every
+        // key is swallowed (no stray input into the page behind the modal) and
+        // only Esc — handled above — means anything.
+        if (_mouseOnly)
+            return (IntPtr)1;
 
         string? modFamily = vk switch
         {
@@ -202,8 +274,8 @@ public static class HotkeyService
 
         if (isDown)
         {
-            // Enter is the session-commit key — not bindable; ignore.
-            if (vk == 0x0D)
+            // Enter is the session-commit key — not bindable as a trigger.
+            if (vk == 0x0D && !_allowReservedKeys)
                 return (IntPtr)1;
 
             string? name = KeyNameOf(vk);
@@ -222,13 +294,22 @@ public static class HotkeyService
             return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 
         int msg = (int)wParam;
+
+        // Mouse-only capture: leave the dead zone (the modal's own buttons)
+        // alone so Cancel keeps working, and take everything else as-is —
+        // including a bare left click, which is a perfectly ordinary binding
+        // for picking a window.
+        if (_mouseOnly && msg == WM_LBUTTONDOWN && InDeadZone())
+            return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
         string? btn = null;
         switch (msg)
         {
             case WM_LBUTTONDOWN:
-                // A bare left click keeps driving the UI (Cancel button);
-                // it is only a candidate when combined with modifiers.
-                if (_ctrl || _shift || _alt || _win) btn = "LButton";
+                // In the activation capture a bare left click keeps driving
+                // the UI (Cancel button); it is only a candidate when
+                // combined with modifiers.
+                if (_mouseOnly || _ctrl || _shift || _alt || _win) btn = "LButton";
                 break;
             case WM_RBUTTONDOWN: btn = "RButton"; break;
             case WM_MBUTTONDOWN: btn = "MButton"; break;
@@ -240,7 +321,7 @@ public static class HotkeyService
 
         if (btn != null)
         {
-            Finish(ModsPrefix() + btn);
+            Finish(_mouseOnly ? btn : ModsPrefix() + btn);
             return (IntPtr)1;   // swallow the captured click
         }
         // Movement, wheel (axes) and plain left clicks pass through.

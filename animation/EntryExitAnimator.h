@@ -160,6 +160,29 @@ public:
     const std::vector<HWND>&     GetOverflowHwnds() const { return m_overflowHwnds; }
     const std::vector<RECT>&     GetFlatSourceRects() const { return m_flatSourceRects; }
 
+    /// Per-slot PAINT depth for the exit morph — a sort key only, parallel to
+    /// the scene's slots.  Empty whenever the caller should just sort on the
+    /// slot's own Z (every entry morph, every cascade-preset exit, and
+    /// between sessions), which is why it is safe to consult unconditionally.
+    ///
+    /// WHY IT EXISTS.  A tile's Z means two different things at the two ends
+    /// of an exit: real depth in the carousel, and nothing but painter order
+    /// at the flat endpoint, where every tile is coplanar and its Z is purely
+    /// an encoding of the desktop's window order.  Interpolating between them
+    /// schedules each pair's depth crossing wherever the two happen to meet —
+    /// measured across every possible endpoint ranking, that lands the swaps
+    /// around 60 % into the morph, at which point the two tiles are nearly
+    /// full-size and share 85 % of the screen on average (98 % worst case).
+    /// One near-fullscreen window replacing another in a single frame is
+    /// exactly the flash this removes.  The paint order instead unwinds from
+    /// the carousel order to the endpoint order inside the first
+    /// kOrderResolveT of the exit, while the tiles are still a spread-out row:
+    /// same first frame, same last frame, same geometry, but the swaps now
+    /// happen where the pair shares 25 % (50 % worst) — which is just the
+    /// carousel's own shingle, and no worse than the overlap the row already
+    /// has while it sits there.
+    const std::vector<float>& GetExitPaintDepths() const { return m_exitPaintZ; }
+
 private:
     // Round-7: fixed Win7 timing — 16 frames at 60 Hz = 266.67 ms,
     // independent of window count.  Win7 reference uses 16 frames for
@@ -204,6 +227,16 @@ private:
     bool     m_firstTick     = false;   // very first Tick after Begin* — see Tick warmup
 
     std::vector<bool> m_exitFadeOut;       // exit-only: per-slot α-fade flag
+    // Exit paint order (see GetExitPaintDepths).  Cover Flow only: the
+    // cascade preset keeps sorting on the slot Z it always did, so its exit
+    // is bit-identical.
+    std::vector<float> m_exitPaintZ;
+    bool     m_exitCarousel  = false;
+    // How much of the exit the paint order takes to unwind from the carousel
+    // order to the endpoint order.  ~2 frames of the 16-frame morph: long
+    // enough not to be a hard cut on the first frame, short enough that every
+    // swap is over while the row is still spread out.
+    static constexpr float kOrderResolveT = 0.12f;
     DesktopEntryMode m_desktopEntryMode = DesktopEntryMode::HiddenUntilCascade;
     int      m_desktopSlotIndex = -1;   // visible-slot index of the desktop tile, -1 if none
     float    m_rawT          = 0.0f;

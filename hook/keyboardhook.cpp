@@ -1,4 +1,5 @@
 #include "keyboardhook.h"
+#include "../core/Diagnostics.h"
 
 #include <shellapi.h>
 #include <atomic>
@@ -26,27 +27,81 @@ namespace {
 // app's normal message queue with no semantic change.
 //
 // All mutable hook state (the wheel accumulator, swallow flags) is touched
-// only on the hook thread.  g_sessionActive is atomic so Install/Uninstall
+// only on the hook thread.  The session word is atomic so Install/Uninstall
 // on the app thread can reset it safely.
 // ---------------------------------------------------------------------------
 
 HHOOK    g_hook          = nullptr;
 HHOOK    g_mouseHook     = nullptr;
 HWND     g_hwndNotify    = nullptr;
-UINT     g_msgActivate   = 0;
-UINT     g_msgCycle      = 0;
-UINT     g_msgCycleBack  = 0;
-UINT     g_msgDismiss    = 0;
-UINT     g_msgEscape     = 0;
-UINT     g_msgCycleStop  = 0;
+Messages g_msg;
 
-std::atomic<bool>   g_sessionActive{false};   // switcher session in flight
+// Free stack movement (Window snap off): drag state, hook thread only.
+// kMouseScrubPixels is how far the pointer travels for one window — tuned so
+// a comfortable wrist drag walks a full 10-window stack.
+constexpr float kMouseScrubPixels = 260.0f;
+bool  g_mouseDragging = false;
+LONG  g_mouseDragLastX = 0;
+float g_mouseDragResidue = 0.0f;   // sub-unit remainder of the fixed-point post
+
+// ---------------------------------------------------------------------------
+// Session state AND session IDENTITY, in ONE atomic.
+//   bit 0     — a switcher session is running
+//   bits 1..  — WHICH session it is (monotonic, never reused)
+//
+// Packed for the same reason g_hkSpec is: two separate atomics cannot be
+// tested and updated together, and "is this still the session I started?" is
+// a question about both halves at once.
+//
+// Why identity is needed at all: THREE threads raise and drop this flag — the
+// hook thread (hotkey), the touchpad worker (gesture) and the app thread (the
+// controller's teardown).  The controller's teardown runs long (DwmFlush,
+// StopCaptures, UncloakAll) with no message pumping, so a hotkey pressed
+// during it opens the NEXT session while the previous one is still tearing
+// down.  A bare bool teardown then cleared the flag of a session that had
+// already begun — leaving the cascade on screen with the hook disarmed, every
+// keystroke passing through to whatever is behind the overlay.  With an
+// identity, EndSessionIfEpoch can refuse to end a session that is not the one
+// it was handed.
+std::atomic<uint64_t> g_session{0};
+
+inline bool     SessionBitOf(uint64_t v)   noexcept { return (v & 1u) != 0; }
+inline uint64_t SessionEpochOf(uint64_t v) noexcept { return v >> 1; }
+
+inline bool SessionRunning() noexcept
+{
+    return SessionBitOf(g_session.load(std::memory_order_relaxed));
+}
+
+/// A NEW session begins, so it gets a new identity.  Returns that identity.
+uint64_t RaiseSession() noexcept
+{
+    uint64_t cur = g_session.load(std::memory_order_relaxed);
+    uint64_t next;
+    do {
+        next = ((SessionEpochOf(cur) + 1) << 1) | 1u;
+    } while (!g_session.compare_exchange_weak(cur, next,
+                                              std::memory_order_relaxed));
+    return SessionEpochOf(next);
+}
+
+/// The running session ends.  Its identity stays spent, so nothing can
+/// mistake a later session for it.
+inline void DropSession() noexcept
+{
+    g_session.fetch_and(~uint64_t{1}, std::memory_order_relaxed);
+}
 
 // When the session is committed early (Enter) while combo modifiers are
 // still physically held, the next release of a Win/Alt combo modifier must
 // still be swallowed (dummy-key trick) so the Start menu / window menu bar
-// doesn't pop.  Hook-thread only.
-bool g_suppressNextModRelease = false;
+// doesn't pop.
+//
+// Atomic because EndSessionForeign arms it from whichever thread the
+// non-keyboard commit came in on (the render thread for a mouse click, the
+// touchpad worker for a tap) — see that function.  Every other use is still
+// hook-thread only, and the semantics are unchanged.
+std::atomic<bool> g_suppressNextModRelease{false};
 
 // Bare-modifier binding: true while the last main-key DOWN was consumed by
 // us, so the matching UP must be swallowed too.  When the press was passed
@@ -63,9 +118,13 @@ std::atomic<bool> g_hookInstallOk{false};
 // Cycle only on full ±WHEEL_DELTA (120) multiples, and reject opposite-
 // direction events within 80 ms of the last posted cycle (debounce the
 // tiny reverse spikes modern wheels emit mid-scroll).
-int32_t   g_wheelAccum      = 0;
-ULONGLONG g_lastCyclePostMs = 0;
-int       g_lastCycleDir    = 0;   // +1 = cycled forward, -1 = cycled back
+//
+// Read/modified on the hook thread only, but atomic so SetSessionActive()
+// can clear them from whichever thread opens a session (the touchpad
+// gesture worker does).  Single-threaded semantics are unchanged.
+std::atomic<int32_t>   g_wheelAccum{0};
+std::atomic<ULONGLONG> g_lastCyclePostMs{0};
+std::atomic<int>       g_lastCycleDir{0};   // +1 = cycled forward, -1 = cycled back
 constexpr ULONGLONG kWheelFlipDebounceMs = 80;
 
 constexpr WORD kVkDummy = 0xFF;
@@ -81,7 +140,39 @@ std::atomic<bool>  g_optIgnoreFullscreen{false};
 std::atomic<bool>  g_optWheelCycle{true};
 std::atomic<bool>  g_optKeyboardNav{true};
 std::atomic<bool>  g_optToggleMode{false};
+std::atomic<bool>  g_optTouchpadNav{true};
+std::atomic<bool>  g_optWindowSnap{true};
 std::atomic<bool>  g_optHasIgnoredApps{false};
+std::atomic<bool>  g_optPointerInCascade{true};
+std::atomic<bool>  g_optMouseSelect{true};
+std::atomic<int>   g_optSelectButton{kMouseLeft};
+std::atomic<bool>  g_optDragEnabled{true};
+std::atomic<int>   g_optDragButton{kMouseRight};
+std::atomic<bool>  g_optCloseFromCascade{true};
+std::atomic<int>   g_optCloseButton{kMouseMiddle};
+std::atomic<bool>  g_optCloseKeyEnabled{true};
+std::atomic<bool>  g_optSearchEnabled{false};
+// Commit / cancel / close main keys (see TriggerOptions).  Plain VKs — the
+// parse happens once in SetOptions, never on the hook thread.
+std::atomic<unsigned> g_optCommitVk{VK_RETURN};
+std::atomic<unsigned> g_optCancelVk{VK_ESCAPE};
+std::atomic<unsigned> g_optCloseVk{VK_DELETE};
+
+// Set the moment a character reaches the search query, and cleared when a
+// session starts or ends.
+//
+// You cannot type while holding Win+Tab: letting go of the modifier to reach
+// the keyboard IS the commit, so the cascade closed on the first character —
+// and whatever was typed after that went to Windows as Win+key shortcuts.
+// So the first typed character promotes THIS session to toggle semantics: the
+// modifier release stops committing and the cascade waits for the commit or
+// cancel key, exactly as the Toggle activation option does permanently.
+// Nothing about a session where nobody types changes.
+std::atomic<bool>  g_searchLatched{false};
+
+// Activation hold deadline (see SuspendActivation).  A tick count, so it
+// expires by itself if whoever armed it never comes back.
+std::atomic<ULONGLONG> g_suspendUntilMs{0};
 
 // Parsed activation combination (see HotkeySpec).  Defaults to Win+Tab.
 // Packed into ONE atomic (bits 0-7 = modMask, bits 8-39 = mainVk,
@@ -168,12 +259,45 @@ bool ForegroundIsIgnoredApp()
 
 // Combined activation filter — when true, the hotkey is passed through to
 // the OS untouched (no capture, no blocking).
-bool ShouldIgnoreActivation()
+bool ShouldIgnoreActivationImpl()
 {
+    // Held off by the Settings app's touchpad-activity preview (see
+    // SuspendActivation).  First, and cheapest: one atomic read.
+    const ULONGLONG until = g_suspendUntilMs.load(std::memory_order_relaxed);
+    if (until != 0 && GetTickCount64() < until)
+        return true;
+
     if (g_optIgnoreFullscreen.load(std::memory_order_relaxed)
         && ForegroundIsFullscreen())
         return true;
     return ForegroundIsIgnoredApp();
+}
+
+// VK for a configured mouse-button binding (0 = unbound).
+unsigned VkForButtonId(int id)
+{
+    switch (id) {
+    case kMouseLeft:   return VK_LBUTTON;
+    case kMouseRight:  return VK_RBUTTON;
+    case kMouseMiddle: return VK_MBUTTON;
+    case kMouseX1:     return VK_XBUTTON1;
+    case kMouseX2:     return VK_XBUTTON2;
+    default:           return 0;
+    }
+}
+
+// Screen coordinates travel as two signed LONGs (wParam / lParam) rather than
+// packed into one — a virtual desktop can easily run past what a SHORT holds,
+// and a wrapped coordinate would put the hit test on the wrong monitor.
+inline void PostPointer(UINT msg, LONG x, LONG y)
+{
+    // g_hwndNotify too, not just the message id: Uninstall clears it, and
+    // PostMessage(nullptr, ...) would quietly post a THREAD message to the
+    // hook thread's own queue instead of going nowhere.
+    if (msg != 0 && g_hwndNotify != nullptr)
+        PostMessage(g_hwndNotify, msg,
+                    static_cast<WPARAM>(static_cast<LONG_PTR>(x)),
+                    static_cast<LPARAM>(static_cast<LONG_PTR>(y)));
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +391,21 @@ void ResetWheelState()
     g_lastCycleDir    = 0;
 }
 
+// Toggle semantics for THIS session: the user's permanent setting, or the
+// search latch a typed character raised (see g_searchLatched).
+bool ToggleSemantics()
+{
+    return g_optToggleMode.load(std::memory_order_relaxed)
+        || g_searchLatched.load(std::memory_order_relaxed);
+}
+
+// A session is beginning: nothing from the last one carries over.
+void BeginSessionState()
+{
+    g_searchLatched.store(false, std::memory_order_relaxed);
+    ResetWheelState();
+}
+
 // Swallow a Win/Alt keyup so the OS doesn't open the Start menu (Win) or
 // activate the window menu bar (Alt).  The dummy-key sandwich makes the OS
 // see "some key" between the modifier press and release, which cancels the
@@ -283,6 +422,56 @@ void SwallowModifierRelease(DWORD vk)
     inputs[2].ki.wVk     = static_cast<WORD>(vk);
     inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(3, inputs, sizeof(INPUT));
+}
+
+// ---------------------------------------------------------------------------
+// The printable character a keystroke would produce, or 0.
+//
+// A low-level hook runs BEFORE the key reaches the input state, so
+// GetKeyboardState here describes the previous keystroke — hence the state
+// array is built from GetAsyncKeyState instead.  The layout is the FOREGROUND
+// window's, not ours: whoever is behind the overlay is the app the user was
+// last typing into, and their layout is the one their fingers expect.
+//
+// ToUnicodeEx is not a pure function — a dead key (n < 0) arms a compose state
+// that the next call would fold into.  Running the translation a second time
+// consumes it, which is the standard way to leave the state as we found it.
+wchar_t TranslateToChar(const KBDLLHOOKSTRUCT* kb)
+{
+    // Ctrl / Alt combinations are commands, not text.  (AltGr shows up as
+    // Ctrl+Alt, so this also declines AltGr characters rather than risk
+    // eating a shortcut — a niche loss against a real correctness win.)
+    if ((GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        || (GetAsyncKeyState(VK_MENU) & 0x8000))
+        return 0;
+
+    BYTE state[256] = {};
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) state[VK_SHIFT] = 0x80;
+    if (GetKeyState(VK_CAPITAL) & 1)         state[VK_CAPITAL] = 0x01;
+
+    const HKL layout = GetKeyboardLayout(
+        GetWindowThreadProcessId(GetForegroundWindow(), nullptr));
+
+    WCHAR buf[8] = {};
+    int n = ToUnicodeEx(kb->vkCode, kb->scanCode, state, buf,
+                        static_cast<int>(std::size(buf)), 0, layout);
+    if (n < 0) {
+        // Dead key — flush the compose state and take nothing.
+        ToUnicodeEx(kb->vkCode, kb->scanCode, state, buf,
+                    static_cast<int>(std::size(buf)), 0, layout);
+        return 0;
+    }
+    // n == 2 is a dead key that did NOT combine, handed back as the dead
+    // character followed by the one just typed.  The call above has already
+    // consumed the compose state, so returning nothing here would swallow the
+    // keystroke outright — take the character the user actually pressed, which
+    // is the last one.  (n > 2 is a layout handing back a ligature we have no
+    // single character for; still declined.)
+    if (n != 1 && n != 2)
+        return 0;
+
+    const wchar_t c = buf[n - 1];
+    return (c >= 0x20 && c != 0x7F) ? c : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +493,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
     bool     mainIsMouse = false;
     UnpackHotkeySpec(g_hkSpec.load(std::memory_order_relaxed),
                      modMask, mainVk, mainIsMouse);
-    const bool active = g_sessionActive.load(std::memory_order_relaxed);
+    const bool active = SessionRunning();
 
     const uint8_t modBit    = ModifierBitOf(kb->vkCode);
     const bool    isMainKey = !mainIsMouse && MatchesMainVk(kb->vkCode, mainVk);
@@ -318,19 +507,18 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         if (isMainKey && modMask == 0) {
             if (isDown) {
                 if (!active) {
-                    if (ShouldIgnoreActivation())
+                    if (ShouldIgnoreActivationImpl())
                         return CallNextHookEx(g_hook, nCode, wParam, lParam);
-                    g_sessionActive.store(true, std::memory_order_relaxed);
-                    ResetWheelState();
-                    PostMessage(g_hwndNotify, g_msgActivate, 0, 0);
+                    RaiseSession();
+                    BeginSessionState();
+                    PostMessage(g_hwndNotify, g_msg.activate, 0, 0);
                 } else {
-                    PostMessage(g_hwndNotify, g_msgCycle, 0, 0);
+                    PostMessage(g_hwndNotify, g_msg.cycle, 0, 0);
                 }
                 g_bareMainConsumed = true;
                 return 1;
             }
-            if (isUp && (g_bareMainConsumed
-                         || g_sessionActive.load(std::memory_order_relaxed))) {
+            if (isUp && (g_bareMainConsumed || SessionRunning())) {
                 // Swallow the release that belongs to a swallowed press —
                 // for Win/Alt also defuse the Start-menu / menu-bar side
                 // effect.
@@ -351,21 +539,21 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         if (isUp && (modMask & modBit) && !PairStillDown(kb->vkCode)) {
             const bool needSwallow =
                 (modBit == kModWin || modBit == kModAlt);
-            if (active && g_optToggleMode.load(std::memory_order_relaxed)) {
+            if (active && ToggleSemantics()) {
                 if (needSwallow) {
                     SwallowModifierRelease(kb->vkCode);
                     return 1;
                 }
             } else if (active) {
-                g_sessionActive.store(false, std::memory_order_relaxed);
+                DropSession();
                 g_suppressNextModRelease = false;
                 ResetWheelState();
-                PostMessage(g_hwndNotify, g_msgDismiss, 0, 0);
+                PostMessage(g_hwndNotify, g_msg.dismiss, 0, 0);
                 if (needSwallow) {
                     SwallowModifierRelease(kb->vkCode);
                     return 1;
                 }
-            } else if (g_suppressNextModRelease) {
+            } else if (g_suppressNextModRelease.load(std::memory_order_relaxed)) {
                 // Session was committed early (Enter) — this release still
                 // belongs to the combo; keep the Start menu shut.
                 g_suppressNextModRelease = false;
@@ -384,8 +572,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // typically released — the bare main key keeps cycling (matching
         // single-key-binding behaviour).  Activation still requires the
         // full combination.
-        const bool cycleWithoutMods = active
-            && g_optToggleMode.load(std::memory_order_relaxed);
+        const bool cycleWithoutMods = active && ToggleSemantics();
         if (isDown && (ModsSatisfied(modMask) || cycleWithoutMods)) {
             bool shiftHeld = !(modMask & kModShift)
                           && ((GetAsyncKeyState(VK_LSHIFT) & 0x8000)
@@ -394,22 +581,22 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 // Session not started yet — honour the trigger filters
                 // (fullscreen apps / ignore list).  Pass the key through so
                 // the OS handles the combo normally instead of blocking it.
-                if (ShouldIgnoreActivation())
+                if (ShouldIgnoreActivationImpl())
                     return CallNextHookEx(g_hook, nCode, wParam, lParam);
-                g_sessionActive.store(true, std::memory_order_relaxed);
+                RaiseSession();
                 g_suppressNextModRelease = false;
-                ResetWheelState();
-                PostMessage(g_hwndNotify, g_msgActivate, 0, 0);
+                BeginSessionState();
+                PostMessage(g_hwndNotify, g_msg.activate, 0, 0);
             } else {
                 PostMessage(g_hwndNotify,
-                            shiftHeld ? g_msgCycleBack : g_msgCycle, 0, 0);
+                            shiftHeld ? g_msg.cycleBack : g_msg.cycle, 0, 0);
             }
             return 1;
         }
         if (isUp && active) {
             // Main key released while session active — tell controller to
             // stop queuing cycles so continuous scroll doesn't over-shoot.
-            PostMessage(g_hwndNotify, g_msgCycleStop, 0, 0);
+            PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
             return 1;
         }
         // Fall through (mods not satisfied) — the session-active catch-all
@@ -424,42 +611,91 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         const bool arrowsOn = g_optKeyboardNav.load(std::memory_order_relaxed);
         if (arrowsOn && (kb->vkCode == VK_DOWN || kb->vkCode == VK_RIGHT)) {
             if (isDown)
-                PostMessage(g_hwndNotify, g_msgCycle, 0, 0);
+                PostMessage(g_hwndNotify, g_msg.cycle, 0, 0);
             else if (isUp)
-                PostMessage(g_hwndNotify, g_msgCycleStop, 0, 0);
+                PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
             return 1;
         }
         if (arrowsOn && (kb->vkCode == VK_UP || kb->vkCode == VK_LEFT)) {
             if (isDown)
-                PostMessage(g_hwndNotify, g_msgCycleBack, 0, 0);
+                PostMessage(g_hwndNotify, g_msg.cycleBack, 0, 0);
             else if (isUp)
-                PostMessage(g_hwndNotify, g_msgCycleStop, 0, 0);
+                PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
             return 1;
         }
 
-        // Enter = commit the current selection.  Required for bindings with
-        // no hold modifier (bare key / mouse button); a convenience for the
-        // classic combos.  If combo modifiers are still held, their release
-        // is suppressed once so the Start menu doesn't pop afterwards.
-        if (isDown && kb->vkCode == VK_RETURN) {
-            g_sessionActive.store(false, std::memory_order_relaxed);
+        // Commit the current selection (Enter by default, see commitHotkey).
+        // Required for bindings with no hold modifier (bare key / mouse
+        // button); a convenience for the classic combos.  If combo modifiers
+        // are still held, their release is suppressed once so the Start menu
+        // doesn't pop afterwards.
+        if (isDown
+            && kb->vkCode == g_optCommitVk.load(std::memory_order_relaxed)) {
+            DropSession();
             // Suppress the upcoming combo-modifier release only while one
             // is actually still held — in toggle mode the modifiers are
             // usually up long before commit, and a stale flag would eat
             // the next unrelated Win/Alt release.
             g_suppressNextModRelease = (modMask != 0) && AnyComboModDown(modMask);
             ResetWheelState();
-            PostMessage(g_hwndNotify, g_msgDismiss, 0, 0);
+            PostMessage(g_hwndNotify, g_msg.dismiss, 0, 0);
             return 1;
         }
 
-        // Escape = cancel
-        if (isDown && kb->vkCode == VK_ESCAPE) {
-            g_sessionActive.store(false, std::memory_order_relaxed);
+        // Cancel (Escape by default, see cancelHotkey).  The hook ends the
+        // session here exactly as it always has; when a search query is being
+        // typed the controller re-arms it (KeyboardHook::SetSessionActive)
+        // because there the first Esc only clears the query — that decision
+        // needs the query, which lives on the other side.  Keeping the
+        // modifier-release bookkeeping on this side is what matters: it is
+        // the part that stops the Start menu popping over the cascade.
+        if (isDown
+            && kb->vkCode == g_optCancelVk.load(std::memory_order_relaxed)) {
+            DropSession();
             g_suppressNextModRelease = (modMask != 0) && AnyComboModDown(modMask);
             ResetWheelState();
-            PostMessage(g_hwndNotify, g_msgEscape, 0, 0);
+            PostMessage(g_hwndNotify, g_msg.escape, 0, 0);
             return 1;
+        }
+
+        // Close the hovered (or selected) window — the switcher doubling as
+        // a window manager.  Gated on the same toggle as the close click.
+        {
+            const unsigned closeVk =
+                g_optCloseVk.load(std::memory_order_relaxed);
+            // The key has its OWN switch — not the mouse master, and not the
+            // close CLICK's switch either.  It acts on the selection when no
+            // tile is hovered, so it works with every pointer feature off, and
+            // wanting one of the two bindings without the other is reasonable
+            // in both directions.
+            if (isDown && closeVk != 0 && kb->vkCode == closeVk
+                && g_optCloseKeyEnabled.load(std::memory_order_relaxed)) {
+                if (g_msg.closeSelected != 0)
+                    PostMessage(g_hwndNotify, g_msg.closeSelected, 0, 0);
+                return 1;
+            }
+        }
+
+        // ---- Type-to-filter ----------------------------------------------
+        // LAST, deliberately: every binding above claims its key first, so
+        // "any character no binding wants" is exactly what reaches the query.
+        if (isDown && g_optSearchEnabled.load(std::memory_order_relaxed)) {
+            if (kb->vkCode == VK_BACK) {
+                if (g_msg.searchBack != 0)
+                    PostMessage(g_hwndNotify, g_msg.searchBack, 0, 0);
+                return 1;
+            }
+            const wchar_t ch = TranslateToChar(kb);
+            if (ch != 0 && g_msg.searchChar != 0) {
+                // Typing means the hand has left the hotkey — from here the
+                // session holds itself open (see g_searchLatched), so
+                // releasing Win/Alt no longer commits and the rest of the
+                // word cannot escape into Windows as Win+key shortcuts.
+                g_searchLatched.store(true, std::memory_order_relaxed);
+                PostMessage(g_hwndNotify, g_msg.searchChar,
+                            static_cast<WPARAM>(ch), 0);
+                return 1;
+            }
         }
 
         // Eat all other keys while session is active (prevent stray input).
@@ -500,7 +736,22 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
         return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
 
     const auto* ms = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
-    const bool active = g_sessionActive.load(std::memory_order_relaxed);
+
+    // Input injected by a LOWER-INTEGRITY process is not the user.  This exe
+    // runs elevated, so UIPI already stops a medium-IL process from posting to
+    // our windows — but SendInput goes into the GLOBAL input stream, which UIPI
+    // does not gate, and the cascade's bindings include a DESTRUCTIVE one
+    // (close the hovered window).  Refusing those events closes that hole.
+    //
+    // Deliberately NOT the blanket LLMHF_INJECTED the keyboard path uses:
+    // touchpad tap-to-click, Remote Desktop and accessibility tools all reach
+    // us as injected-but-same-or-higher-IL input, and rejecting those would
+    // take the mouse away from users who depend on them.  Lower IL is the part
+    // that is actually untrusted.
+    if (ms->flags & LLMHF_LOWER_IL_INJECTED)
+        return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+
+    const bool active = SessionRunning();
 
     uint8_t  modMask     = 0;
     unsigned mainVk      = 0;
@@ -518,22 +769,21 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
                 // Toggle mode: with the session open the bare main button
                 // keeps cycling even after the combo modifiers were
                 // released (see the keyboard-path counterpart).
-                const bool cycleWithoutMods = active
-                    && g_optToggleMode.load(std::memory_order_relaxed);
+                const bool cycleWithoutMods = active && ToggleSemantics();
                 if (ModsSatisfied(modMask) || cycleWithoutMods) {
                     if (!active) {
-                        if (ShouldIgnoreActivation())
+                        if (ShouldIgnoreActivationImpl())
                             return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
-                        g_sessionActive.store(true, std::memory_order_relaxed);
+                        RaiseSession();
                         g_suppressNextModRelease = false;
-                        ResetWheelState();
-                        PostMessage(g_hwndNotify, g_msgActivate, 0, 0);
+                        BeginSessionState();
+                        PostMessage(g_hwndNotify, g_msg.activate, 0, 0);
                     } else {
                         bool shiftHeld = !(modMask & kModShift)
                                       && ((GetAsyncKeyState(VK_LSHIFT) & 0x8000)
                                        || (GetAsyncKeyState(VK_RSHIFT) & 0x8000));
                         PostMessage(g_hwndNotify,
-                                    shiftHeld ? g_msgCycleBack : g_msgCycle, 0, 0);
+                                    shiftHeld ? g_msg.cycleBack : g_msg.cycle, 0, 0);
                     }
                     return 1;
                 }
@@ -541,15 +791,110 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
                     return 1;   // swallow strays while the cascade is open
             } else {
                 if (active) {
-                    PostMessage(g_hwndNotify, g_msgCycleStop, 0, 0);
+                    PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
                     return 1;
                 }
             }
         }
     }
 
-    if (!active)
+    if (!active) {
+        if (g_mouseDragging) {
+            // Session ended under a held button — drop the drag silently.
+            g_mouseDragging = false;
+            g_mouseDragResidue = 0.0f;
+        }
         return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+    }
+
+    // ---- Pointer over the cascade ----------------------------------------
+    // A third input source alongside the keyboard and the touchpad, and just
+    // as additive: the hover message is only posted when something is
+    // listening for it, and every branch here is behind its own toggle, so a
+    // user who wants none of this gets the pre-pointer cascade exactly.
+    const bool pointerOn =
+        g_optPointerInCascade.load(std::memory_order_relaxed);
+    const bool selectOn = pointerOn
+        && g_optMouseSelect.load(std::memory_order_relaxed);
+    const bool closeOn  = pointerOn
+        && g_optCloseFromCascade.load(std::memory_order_relaxed);
+    const bool dragOn   = pointerOn
+        && g_optDragEnabled.load(std::memory_order_relaxed);
+    const unsigned selectVk = selectOn
+        ? VkForButtonId(g_optSelectButton.load(std::memory_order_relaxed)) : 0;
+    const unsigned closeVk  = closeOn
+        ? VkForButtonId(g_optCloseButton.load(std::memory_order_relaxed)) : 0;
+    const unsigned dragVk   = dragOn
+        ? VkForButtonId(g_optDragButton.load(std::memory_order_relaxed)) : 0;
+
+    // The hover highlight and the close click both need to know which tile is
+    // under the pointer, so the move is reported whenever either is live.
+    if (wParam == WM_MOUSEMOVE && (selectOn || closeOn))
+        PostPointer(g_msg.pointerMove, ms->pt.x, ms->pt.y);
+
+    {
+        bool btnDown = false;
+        const unsigned btnVk = MouseButtonVk(wParam, ms, btnDown);
+        if (btnVk != 0) {
+            // Select wins a collision with the other two bindings — it is the
+            // one the user is most likely to have meant, and the Settings page
+            // warns before letting a duplicate be saved.
+            if (selectVk != 0 && btnVk == selectVk) {
+                if (btnDown)
+                    PostPointer(g_msg.pointerSelect, ms->pt.x, ms->pt.y);
+                return 1;   // both edges — the release belongs to the press
+            }
+            if (closeVk != 0 && btnVk == closeVk) {
+                if (btnDown)
+                    PostPointer(g_msg.pointerClose, ms->pt.x, ms->pt.y);
+                return 1;
+            }
+        }
+    }
+
+    // ---- Free stack movement (Window snap off) ---------------------------
+    // Hold the drag button (right by default) and move: the stack rides the
+    // pointer instead of stepping window by window.  Wheel and keyboard are
+    // untouched — they stay discrete by design.  With Window snap on (the
+    // default) none of this runs and the mouse behaves exactly as it always
+    // has.
+    if (!g_optWindowSnap.load(std::memory_order_relaxed) && dragVk != 0) {
+        bool dragBtnDown = false;
+        const unsigned dragBtnVk = MouseButtonVk(wParam, ms, dragBtnDown);
+        if (dragBtnVk == dragVk && dragBtnDown) {
+            g_mouseDragging    = true;
+            g_mouseDragLastX   = ms->pt.x;
+            g_mouseDragResidue = 0.0f;
+            return 1;
+        }
+        if (dragBtnVk == dragVk && !dragBtnDown && g_mouseDragging) {
+            g_mouseDragging = false;
+            PostMessage(g_hwndNotify, g_msg.scrubEnd, 0, 0);
+            return 1;
+        }
+        if (wParam == WM_MOUSEMOVE && g_mouseDragging) {
+            const float dxPx = static_cast<float>(ms->pt.x - g_mouseDragLastX);
+            g_mouseDragLastX = ms->pt.x;
+            // Dragging right pulls the row right, so the PREVIOUS window
+            // comes forward — the same sense as the touchpad swipe.
+            float windows = -dxPx / kMouseScrubPixels + g_mouseDragResidue;
+            LONG fixed = static_cast<LONG>(windows * 10000.0f);
+            g_mouseDragResidue = windows - static_cast<float>(fixed) / 10000.0f;
+            if (fixed != 0)
+                PostMessage(g_hwndNotify, g_msg.scrub, 0,
+                            static_cast<LPARAM>(fixed));
+            return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+        }
+    }
+
+    // Horizontal wheel: with touchpad gestures live, a two-finger cycle
+    // swipe also reaches the OS as a horizontal scroll.  The gesture is
+    // handled from raw input (hook/touchpadhook), so eat the scroll here —
+    // it would otherwise land on whatever sits under the cursor.  With
+    // touchpad navigation off, nothing changes.
+    if (wParam == WM_MOUSEHWHEEL
+        && g_optTouchpadNav.load(std::memory_order_relaxed))
+        return 1;
 
     if (wParam == WM_MOUSEWHEEL) {
         // Wheel cycling disabled: still swallow the scroll while the
@@ -587,13 +932,13 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
         // Drain the accumulator in WHEEL_DELTA steps.  Each full notch
         // posts exactly one cycle.
         while (g_wheelAccum >= WHEEL_DELTA) {
-            PostMessage(g_hwndNotify, g_msgCycleBack, 0, 0);
+            PostMessage(g_hwndNotify, g_msg.cycleBack, 0, 0);
             g_wheelAccum     -= WHEEL_DELTA;
             g_lastCyclePostMs = now;
             g_lastCycleDir    = +1;
         }
         while (g_wheelAccum <= -WHEEL_DELTA) {
-            PostMessage(g_hwndNotify, g_msgCycle, 0, 0);
+            PostMessage(g_hwndNotify, g_msg.cycle, 0, 0);
             g_wheelAccum     += WHEEL_DELTA;
             g_lastCyclePostMs = now;
             g_lastCycleDir    = -1;
@@ -620,7 +965,18 @@ DWORD WINAPI HookThreadProc(LPVOID /*param*/)
     HMODULE hMod = GetModuleHandleW(nullptr);
     g_hook      = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, hMod, 0);
 
+    if (!g_hook)
+        Diag::ReportLastError(Diag::Code::KeyboardHookFailed, Diag::Sev::Critical,
+                              L"CKFlip3D could not watch the keyboard",
+                              L"SetWindowsHookEx(WH_KEYBOARD_LL)");
+
     g_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, hMod, 0);
+    if (!g_mouseHook)
+        Diag::ReportLastError(Diag::Code::MouseHookFailed, Diag::Sev::Warning,
+                              L"CKFlip3D could not watch the mouse",
+                              L"SetWindowsHookEx(WH_MOUSE_LL) — the wheel will not "
+                              L"cycle the stack and no mouse binding in the cascade "
+                              L"will fire; the keyboard is unaffected");
 
     // Mouse hook is optional; only the keyboard hook is required for the
     // install to be considered successful.
@@ -782,25 +1138,16 @@ bool ParseHotkey(const std::wstring& text, HotkeySpec& out)
 }
 
 // ---------------------------------------------------------------------------
-bool Install(HWND hwndNotify,
-             UINT msgActivate,
-             UINT msgCycle,
-             UINT msgCycleBack,
-             UINT msgDismiss,
-             UINT msgEscape,
-             UINT msgCycleStop)
+bool Install(HWND hwndNotify, const Messages& msgs)
 {
     if (g_hookThread)
         return false;
 
     g_hwndNotify   = hwndNotify;
-    g_msgActivate  = msgActivate;
-    g_msgCycle     = msgCycle;
-    g_msgCycleBack = msgCycleBack;
-    g_msgDismiss   = msgDismiss;
-    g_msgEscape    = msgEscape;
-    g_msgCycleStop = msgCycleStop;
-    g_sessionActive.store(false, std::memory_order_relaxed);
+    g_msg          = msgs;
+    g_mouseDragging = false;
+    g_mouseDragResidue = 0.0f;
+    DropSession();
     g_suppressNextModRelease = false;
     g_wheelAccum      = 0;
     g_lastCyclePostMs = 0;
@@ -852,24 +1199,242 @@ void Uninstall()
         return;
 
     g_hwndNotify  = nullptr;
-    g_sessionActive.store(false, std::memory_order_relaxed);
+    DropSession();
     g_suppressNextModRelease = false;
     g_wheelAccum      = 0;
     g_lastCyclePostMs = 0;
     g_lastCycleDir    = 0;
 }
 
+// ---------------------------------------------------------------------------
+// Shared session state (see the header).  Only the atomic flag and the
+// wheel accumulator are touched — the hook-thread-private swallow flags
+// belong to the keyboard path and stay untouched, which is exactly right:
+// a gesture never presses a modifier, so there is no release to defuse.
+// ---------------------------------------------------------------------------
+bool IsSessionActive()
+{
+    return SessionRunning();
+}
+
+uint64_t CurrentSessionEpoch()
+{
+    return SessionEpochOf(g_session.load(std::memory_order_relaxed));
+}
+
+bool EndSessionIfEpoch(uint64_t epoch)
+{
+    uint64_t cur = g_session.load(std::memory_order_relaxed);
+    for (;;) {
+        if (SessionEpochOf(cur) != epoch)
+            return false;          // a NEWER session owns the flag — hands off
+        if (!SessionBitOf(cur)) {
+            // Ours, and already ended through one of the keyboard paths.  The
+            // per-session reset still belongs here, because that is what the
+            // unconditional store this replaced always did.
+            BeginSessionState();
+            return true;
+        }
+        if (g_session.compare_exchange_weak(cur, epoch << 1,
+                                            std::memory_order_relaxed)) {
+            BeginSessionState();
+            return true;
+        }
+    }
+}
+
+void SetSessionActive(bool active)
+{
+    if (active) RaiseSession();
+    else        DropSession();
+    BeginSessionState();
+}
+
+void AssertInputOwnership()
+{
+    // The keyup half alone would do, but a matched pair keeps the injected
+    // sequence well-formed for anything else watching the input stream.
+    INPUT inputs[2] = {};
+    inputs[0].type       = INPUT_KEYBOARD;
+    inputs[0].ki.wVk     = kVkDummy;
+    inputs[1].type       = INPUT_KEYBOARD;
+    inputs[1].ki.wVk     = kVkDummy;
+    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, inputs, sizeof(INPUT));
+}
+
+void EndSessionForeign()
+{
+    uint8_t  modMask     = 0;
+    unsigned mainVk      = 0;
+    bool     mainIsMouse = false;
+    UnpackHotkeySpec(g_hkSpec.load(std::memory_order_relaxed),
+                     modMask, mainVk, mainIsMouse);
+
+    // Arm the defusal BEFORE dropping the session flag: the release could
+    // arrive on the hook thread between the two, and it must find the flag
+    // already set or it will reach the OS.
+    g_suppressNextModRelease.store(
+        (modMask != 0) && AnyComboModDown(modMask), std::memory_order_relaxed);
+    DropSession();
+    BeginSessionState();
+}
+
+void ResumeSession()
+{
+    // Deliberately NOT BeginSessionState(): this re-arms a session the hook
+    // dropped a moment ago and that the controller decided is still running
+    // (the cancel key clearing a search query rather than closing).  Wiping
+    // the search latch here would hand the still-held modifier back its
+    // commit-on-release, and the very next key-up would close the cascade the
+    // user just chose to keep.
+    //
+    // fetch_or, NOT RaiseSession(): the epoch must not advance.  This is the
+    // same session resuming, and minting a fresh identity here would make the
+    // teardown that eventually runs for it fail to recognise its own session.
+    g_session.fetch_or(1u, std::memory_order_relaxed);
+}
+
+bool ShouldIgnoreActivation()
+{
+    return ShouldIgnoreActivationImpl();
+}
+
+bool PointerOwnsLeftClick()
+{
+    return g_optPointerInCascade.load(std::memory_order_relaxed)
+        && g_optMouseSelect.load(std::memory_order_relaxed)
+        && g_optSelectButton.load(std::memory_order_relaxed) == kMouseLeft;
+}
+
+void SuspendActivation(unsigned ms)
+{
+    g_suspendUntilMs.store(ms == 0 ? 0 : GetTickCount64() + ms,
+                           std::memory_order_relaxed);
+}
+
+void AbortSessionIfIdle(uint64_t epoch)
+{
+    uint8_t  modMask     = 0;
+    unsigned mainVk      = 0;
+    bool     mainIsMouse = false;
+    UnpackHotkeySpec(g_hkSpec.load(std::memory_order_relaxed),
+                     modMask, mainVk, mainIsMouse);
+
+    // Held trigger → the classic Win+Tab path owns the teardown; leave it be
+    // so the release still commits and stays swallowed.
+    if (modMask != 0 && AnyComboModDown(modMask))
+        return;
+    if (!mainIsMouse && mainVk != 0
+        && (GetAsyncKeyState(static_cast<int>(mainVk)) & 0x8000))
+        return;
+
+    // By identity, for the same reason the teardown is (see EndSessionIfEpoch).
+    // The window scan this follows is slow — enumeration plus an OpenProcess
+    // per program — so a second trigger can easily raise a NEW session while
+    // the failed one is still being given up, and dropping the flag blindly
+    // would disarm the hook for a cascade that is about to open.
+    //
+    // The two guards above happen to cover a held key, but they cover NOTHING
+    // for a mouse-button binding: modMask is 0 and mainIsMouse skips the second
+    // test, so that configuration reached the bare drop every time.
+    EndSessionIfEpoch(epoch);
+}
+
+// ---------------------------------------------------------------------------
 void SetOptions(const TriggerOptions& opts)
 {
     g_optIgnoreFullscreen.store(opts.ignoreFullscreen, std::memory_order_relaxed);
     g_optWheelCycle.store(opts.mouseWheelCycle, std::memory_order_relaxed);
     g_optKeyboardNav.store(opts.keyboardNav, std::memory_order_relaxed);
     g_optToggleMode.store(opts.hotkeyToggleMode, std::memory_order_relaxed);
+    g_optTouchpadNav.store(opts.touchpadNav, std::memory_order_relaxed);
+    g_optWindowSnap.store(opts.windowSnap, std::memory_order_relaxed);
+    g_optPointerInCascade.store(opts.pointerInCascade, std::memory_order_relaxed);
+    g_optMouseSelect.store(opts.mouseSelect, std::memory_order_relaxed);
+    g_optSelectButton.store(std::clamp(opts.selectButton, 0, 5),
+                            std::memory_order_relaxed);
+    g_optDragEnabled.store(opts.dragEnabled, std::memory_order_relaxed);
+    g_optDragButton.store(std::clamp(opts.dragButton, 0, 5),
+                          std::memory_order_relaxed);
+    g_optCloseFromCascade.store(opts.closeFromCascade, std::memory_order_relaxed);
+    g_optCloseButton.store(std::clamp(opts.closeButton, 0, 5),
+                           std::memory_order_relaxed);
+    g_optCloseKeyEnabled.store(opts.closeKeyEnabled, std::memory_order_relaxed);
+    g_optSearchEnabled.store(opts.searchEnabled, std::memory_order_relaxed);
 
     HotkeySpec spec;
-    ParseHotkey(opts.activationHotkey, spec);   // falls back to Win+Tab
+    if (!ParseHotkey(opts.activationHotkey, spec))   // falls back to Win+Tab
+        Diag::Report(Diag::Code::HotkeyUnparsable, Diag::Sev::Warning,
+                     L"The activation hotkey could not be understood",
+                     (L"\"" + opts.activationHotkey
+                      + L"\" is not a combination CKFlip3D can bind; "
+                        L"Win+Tab is in use instead").c_str());
     g_hkSpec.store(PackHotkeySpec(spec.modMask, spec.mainVk, spec.mainIsMouse),
                    std::memory_order_relaxed);
+
+    // Commit / cancel: the MAIN key only.  A mouse-button commit would fight
+    // the in-cascade pointer bindings for the same click, and a modifier-
+    // qualified one would need the activation combination released first —
+    // both fail closed here, back onto the defaults that always work.
+    {
+        auto fellBack = [](const wchar_t* role, const std::wstring& asked,
+                           const wchar_t* used) {
+            // _TRUNCATE, not swprintf_s: `asked` comes straight out of
+            // config.json and can be any length at all, and the secure form
+            // would treat that as a programming error and kill the process.
+            wchar_t detail[256];
+            _snwprintf_s(detail, _countof(detail), _TRUNCATE,
+                       L"\"%s\" cannot be a %s key — it must be a single "
+                       L"keyboard key with no modifiers; %s is in use instead",
+                       asked.c_str(), role, used);
+            Diag::Report(Diag::Code::BindingUnparsable, Diag::Sev::Warning,
+                         L"A key binding could not be understood", detail);
+        };
+
+        HotkeySpec commit;
+        if (!ParseHotkey(opts.commitHotkey, commit) || commit.mainIsMouse
+            || commit.mainVk == 0) {
+            commit.mainVk = VK_RETURN;
+            fellBack(L"commit", opts.commitHotkey, L"Enter");
+        }
+        g_optCommitVk.store(commit.mainVk, std::memory_order_relaxed);
+
+        HotkeySpec cancel;
+        if (!ParseHotkey(opts.cancelHotkey, cancel) || cancel.mainIsMouse
+            || cancel.mainVk == 0) {
+            cancel.mainVk = VK_ESCAPE;
+            fellBack(L"cancel", opts.cancelHotkey, L"Escape");
+        }
+        g_optCancelVk.store(cancel.mainVk, std::memory_order_relaxed);
+
+        HotkeySpec close;
+        if (!ParseHotkey(opts.closeHotkey, close) || close.mainIsMouse
+            || close.mainVk == 0) {
+            close.mainVk = VK_DELETE;
+            fellBack(L"close-window", opts.closeHotkey, L"Delete");
+        }
+        g_optCloseVk.store(close.mainVk, std::memory_order_relaxed);
+    }
+
+    // Two pointer bindings on one button is resolved in a fixed order, so the
+    // second one silently never happens.  The Settings page warns before
+    // saving it; this catches a config that was written by hand or by an
+    // older build.
+    if (opts.pointerInCascade) {
+        const int select = opts.mouseSelect      ? opts.selectButton : 0;
+        const int close  = opts.closeFromCascade ? opts.closeButton  : 0;
+        const int drag   = opts.dragEnabled && !opts.windowSnap ? opts.dragButton : 0;
+        const bool clash = (select && select == close)
+                        || (select && select == drag)
+                        || (close  && close  == drag);
+        if (clash)
+            Diag::Report(Diag::Code::BindingCollision, Diag::Sev::Warning,
+                         L"Two mouse actions in the cascade are on the same button",
+                         L"picking wins over closing, and closing over dragging, "
+                         L"so the others will never happen (Controls → Mouse & "
+                         L"keyboard)");
+    }
 
     std::vector<std::wstring> lowered;
     lowered.reserve(opts.ignoredApps.size());

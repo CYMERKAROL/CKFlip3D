@@ -1,0 +1,126 @@
+<UserControl x:Class="CKFlip3D.Settings.Views.LogPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:CKFlip3D.Settings.Views">
+
+    <UserControl.Resources>
+        <v:SeverityBrushConverter x:Key="SevBrush"/>
+        <v:SeverityTintConverter x:Key="SevTint"/>
+        <v:SeverityLabelConverter x:Key="SevLabel"/>
+        <v:SeverityGeometryConverter x:Key="SevGeometry"/>
+        <v:CountLabelConverter x:Key="CountLabel"/>
+        <v:BoolToVisibilityConverter x:Key="BoolVis"/>
+        <v:StringToVisibilityConverter x:Key="StringVis"/>
+    </UserControl.Resources>
+
+    <Grid Margin="24,4,16,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- header: what this is, and the way out of it -->
+        <Grid Grid.Row="0" Margin="0,0,8,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="Summary" VerticalAlignment="Center"
+                       FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap"
+                       Margin="0,0,16,0"
+                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <Button Grid.Column="1" x:Name="ClearAllButton" Style="{StaticResource AeroButton}"
+                    VerticalAlignment="Center" Padding="14,4"
+                    Content="Clear all" Click="ClearAll_Click"/>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" Style="{StaticResource AeroScrollViewer}"
+                      VerticalScrollBarVisibility="Auto" Padding="0,0,8,20">
+            <StackPanel>
+
+                <!-- nothing wrong: say so plainly rather than showing a void -->
+                <Border x:Name="EmptyState" Visibility="Collapsed"
+                        CornerRadius="6" Padding="20,22" Margin="0,4,0,0"
+                        Background="{DynamicResource ApplyBarBrush}"
+                        BorderBrush="{DynamicResource SeparatorBrush}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Width="22" Height="22" Margin="0,1,14,0" VerticalAlignment="Top">
+                            <Ellipse Stroke="#FF6FBF73" StrokeThickness="1.6" Margin="1"/>
+                            <Path Stroke="#FF6FBF73" StrokeThickness="1.8"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round" Data="M6.5,11.2 L9.6,14.2 L15.5,7.6"/>
+                        </Grid>
+                        <StackPanel>
+                            <TextBlock FontFamily="Segoe UI" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                       Text="Nothing to report"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap"
+                                       MaxWidth="470" Margin="0,4,0,0"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       Text="Everything is working as it should be!"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <ItemsControl x:Name="EntryList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border CornerRadius="6" Margin="0,0,0,10" Padding="16,14"
+                                    Background="{Binding Severity, Converter={StaticResource SevTint}}"
+                                    BorderThickness="1"
+                                    BorderBrush="{Binding Severity, Converter={StaticResource SevBrush}}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- severity mark: drawn, not a font glyph, so it
+                                         reads the same on every machine -->
+                                    <Grid Width="18" Height="18" Margin="0,1,13,0"
+                                          VerticalAlignment="Top">
+                                        <Path Data="{Binding Severity, Converter={StaticResource SevGeometry}}"
+                                              Stroke="{Binding Severity, Converter={StaticResource SevBrush}}"
+                                              StrokeThickness="1.5"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              StrokeLineJoin="Round"/>
+                                    </Grid>
+
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock FontFamily="Segoe UI" FontSize="13" FontWeight="SemiBold"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}"
+                                                   Text="{Binding Message}"/>
+                                        <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap"
+                                                   Margin="0,5,0,0"
+                                                   Visibility="{Binding Detail, Converter={StaticResource StringVis}}"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Text="{Binding Detail}"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <Border CornerRadius="3" Padding="6,1" Margin="0,0,8,0"
+                                                    Background="{DynamicResource ApplyBarBrush}">
+                                                <TextBlock FontFamily="Consolas" FontSize="10.5"
+                                                           Foreground="{Binding Severity, Converter={StaticResource SevBrush}}"
+                                                           Text="{Binding Code}"/>
+                                            </Border>
+                                            <TextBlock FontFamily="Segoe UI" FontSize="10.5"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource FooterTextBrush}"
+                                                       Text="{Binding Converter={StaticResource CountLabel}}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <Button Grid.Column="2" VerticalAlignment="Top"
+                                            Style="{StaticResource LogDismissButton}"
+                                            Tag="{Binding}" Click="ClearOne_Click"
+                                            ToolTip="Clear this entry"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

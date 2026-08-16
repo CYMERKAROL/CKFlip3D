@@ -14,8 +14,29 @@
                 <StackPanel x:Name="DisplayRows"/>
             </HeaderedContentControl>
 
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Input devices">
+                <StackPanel x:Name="InputRows"/>
+            </HeaderedContentControl>
+
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Configuration">
                 <StackPanel x:Name="ConfigRows"/>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Log">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Open the log"/>
+                            <TextBlock x:Name="LogSummary" Style="{StaticResource SettingHintText}"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
+                                Content="Open log" Click="OpenLog_Click"/>
+                    </Grid>
+                </StackPanel>
             </HeaderedContentControl>
 
             <Grid Margin="0,2,0,0">

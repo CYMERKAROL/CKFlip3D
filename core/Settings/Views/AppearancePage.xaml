@@ -3,10 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:v="clr-namespace:CKFlip3D.Settings.Views">
 
-    <UserControl.Resources>
-        <v:ScaleConverter x:Key="Scale"/>
-    </UserControl.Resources>
-
     <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
                   Padding="24,4,16,20">
         <StackPanel>
@@ -38,19 +34,17 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Visual preset"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Alternative looks for the 3D switcher."/>
+                                       Text="Alternative looks for the 3D switcher. Cascade is the classic diagonal stack; Cover Flow lines the windows up in a centered row with the side windows leaning gently outward."/>
                         </StackPanel>
-                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
-                                   FontFamily="Segoe UI" FontSize="11" FontStyle="Italic"
-                                   Foreground="{DynamicResource TextFaintBrush}" Text="Coming soon..."/>
-                        <ComboBox Grid.Column="2" Style="{StaticResource AeroComboBox}" IsEnabled="False"
-                                  VerticalAlignment="Center" SelectedIndex="0">
+                        <ComboBox Grid.Column="1" x:Name="PresetCombo" Style="{StaticResource AeroComboBox}"
+                                  VerticalAlignment="Center" MinWidth="150"
+                                  SelectionChanged="PresetCombo_SelectionChanged">
                             <ComboBoxItem Content="Cascade"/>
+                            <ComboBoxItem Content="Cover Flow"/>
                         </ComboBox>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
@@ -246,6 +240,20 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Reflections"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Subtle glass reflection under the stack — each window mirrors softly below its bottom edge, like standing on a glass floor. Works with both visual presets."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding Reflections}"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
@@ -361,6 +369,32 @@
                                                 <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                                           IsChecked="{Binding AnimLabel}"/>
                                             </Grid>
+                                            <Rectangle Style="{StaticResource RowSeparator}"/>
+                                            <!-- Grayed out while picking with
+                                                 the mouse is off — nothing
+                                                 hovers then. -->
+                                            <Grid IsEnabled="{Binding MouseSelect}">
+                                                <Grid.Style>
+                                                    <Style TargetType="Grid">
+                                                        <Style.Triggers>
+                                                            <Trigger Property="IsEnabled" Value="False">
+                                                                <Setter Property="Opacity" Value="0.45"/>
+                                                            </Trigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Grid.Style>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Hover lift"/>
+                                                    <TextBlock Style="{StaticResource SettingHintText}"
+                                                               Text="The window under the mouse rises off the stack and settles back. Off snaps it."/>
+                                                </StackPanel>
+                                                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                                          IsChecked="{Binding AnimHover}"/>
+                                            </Grid>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -453,83 +487,14 @@
             </HeaderedContentControl>
 
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Preview">
-                <Grid HorizontalAlignment="Left">
-                    <!-- miniature mock of the flip cascade; reacts to the sliders
-                         above.  Layout mirrors the real FlipScene geometry: the
-                         front window sits bottom-right, the stack recedes to the
-                         upper-left while rising, with heavy overlap and the
-                         farthest tiles fading (BuildSlots: x = baseX - spread·dt,
-                         y = baseY + rise·dt, minAlpha 0.88 + far-tile fade). -->
-                    <Border Width="380" Height="170" CornerRadius="5" ClipToBounds="True"
-                            BorderBrush="#FF44617C" BorderThickness="1" Background="#FF05080C">
-                        <Grid>
-                            <!-- fake wallpaper -->
-                            <Border Opacity="{Binding BackgroundOpacity, Converter={StaticResource Scale}, ConverterParameter=0.01}">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                        <GradientStop Color="#FF1E5A8E" Offset="0"/>
-                                        <GradientStop Color="#FF3E8CC2" Offset="0.45"/>
-                                        <GradientStop Color="#FF77B8DD" Offset="0.75"/>
-                                        <GradientStop Color="#FF2B6E55" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                                <Border.Effect>
-                                    <BlurEffect Radius="{Binding BackgroundBlur, Converter={StaticResource Scale}, ConverterParameter=0.18}"/>
-                                </Border.Effect>
-                            </Border>
-                            <!-- cascade tiles: back (upper-left, faded) → front (lower-right) -->
-                            <Canvas>
-                                <Border Canvas.Left="6"  Canvas.Top="14" Width="150" Height="84" CornerRadius="1.5"
-                                        Background="#5ECBDDEA" BorderBrush="#7E8FB0C8" BorderThickness="1" Opacity="0.62">
-                                    <Border.RenderTransform>
-                                        <SkewTransform AngleY="-4"/>
-                                    </Border.RenderTransform>
-                                </Border>
-                                <Border Canvas.Left="40" Canvas.Top="20" Width="170" Height="96" CornerRadius="1.5"
-                                        Background="#74D2E2EE" BorderBrush="#9097B6CC" BorderThickness="1" Opacity="0.74">
-                                    <Border.RenderTransform>
-                                        <SkewTransform AngleY="-4"/>
-                                    </Border.RenderTransform>
-                                </Border>
-                                <Border Canvas.Left="80" Canvas.Top="27" Width="192" Height="108" CornerRadius="1.5"
-                                        Background="#8CD9E7F1" BorderBrush="#A89FBDD2" BorderThickness="1" Opacity="0.86">
-                                    <Border.RenderTransform>
-                                        <SkewTransform AngleY="-4"/>
-                                    </Border.RenderTransform>
-                                </Border>
-                                <!-- front window with mock content -->
-                                <Border Canvas.Left="128" Canvas.Top="35" Width="216" Height="122" CornerRadius="1.5"
-                                        BorderBrush="#FF89A8C2" BorderThickness="1">
-                                    <Border.RenderTransform>
-                                        <SkewTransform AngleY="-4"/>
-                                    </Border.RenderTransform>
-                                    <Border.Background>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                            <GradientStop Color="#F2F4F9FD" Offset="0"/>
-                                            <GradientStop Color="#E6DCE8F2" Offset="1"/>
-                                        </LinearGradientBrush>
-                                    </Border.Background>
-                                    <StackPanel Margin="9,7">
-                                        <Rectangle Height="6" Width="72" HorizontalAlignment="Left" RadiusX="2" RadiusY="2" Fill="#FF7FA3C0"/>
-                                        <Rectangle Height="3" Width="160" HorizontalAlignment="Left" Margin="0,9,0,0" Fill="#FFB9CCDD"/>
-                                        <Rectangle Height="3" Width="138" HorizontalAlignment="Left" Margin="0,5,0,0" Fill="#FFB9CCDD"/>
-                                        <Rectangle Height="3" Width="150" HorizontalAlignment="Left" Margin="0,5,0,0" Fill="#FFB9CCDD"/>
-                                        <Rectangle Height="3" Width="120" HorizontalAlignment="Left" Margin="0,5,0,0" Fill="#FFB9CCDD"/>
-                                    </StackPanel>
-                                </Border>
-                            </Canvas>
-                            <!-- floor reflection sheen -->
-                            <Border VerticalAlignment="Bottom" Height="36" IsHitTestVisible="False">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#00FFFFFF" Offset="0"/>
-                                        <GradientStop Color="#28FFFFFF" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                            </Border>
-                        </Grid>
-                    </Border>
-                </Grid>
+                <StackPanel>
+                    <!-- Live miniature: the core's own cascade / Cover Flow
+                         geometry and cycle animation, drawn at this screen's
+                         aspect (Views/FlipPreview + PreviewScene). -->
+                    <v:FlipPreview/>
+                    <TextBlock x:Name="PreviewHint" Style="{StaticResource SettingHintText}"
+                               Margin="0,10,0,0"/>
+                </StackPanel>
             </HeaderedContentControl>
 
         </StackPanel>

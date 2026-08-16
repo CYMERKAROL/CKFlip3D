@@ -16,18 +16,67 @@ public partial class GeneralPage : UserControl
     {
         InitializeComponent();
         LoadUacShield();
-        Loaded += (_, _) => { SyncFromModel(); UpdateExcludedSummary(); };
+        Loaded += (_, _) => { SyncFromModel(); UpdateExcludedSummary(); UpdateMaxWindowsHint(); };
         App.Settings.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(Models.SettingsModel.PerfProfile)
                                or nameof(Models.SettingsModel.AutoPerfTune)
                                or nameof(Models.SettingsModel.StartDelayMs)
+                               or nameof(Models.SettingsModel.WindowSnap)
+                               or nameof(Models.SettingsModel.PointerInCascade)
                                or null)
                 SyncFromModel();
             if (e.PropertyName is nameof(Models.SettingsModel.ExcludedApps) or null)
                 UpdateExcludedSummary();
+            if (e.PropertyName is nameof(Models.SettingsModel.VisualPreset)
+                               or nameof(Models.SettingsModel.MaxWindows)
+                               or null)
+                UpdateMaxWindowsHint();
         };
     }
+
+    // ---- Window snap -------------------------------------------------------
+    // Free movement (snap OFF) is the drag button's feature, and that button
+    // lives behind the pointer master, so the two only make sense together.
+    //
+    // The switch is NOT disabled while the master is off, and nothing is said
+    // in advance: snapping ON is the default and works perfectly well without
+    // a mouse in the cascade, so a warning sitting under a setting that is
+    // behaving itself is just noise. It appears the moment the combination is
+    // actually asked for — and then Apply steps aside until it is resolved
+    // (MainWindow.UpdateApplyBar, SettingsModel.WindowSnapSatisfied), so the
+    // state can be reached and looked at, but never saved.
+
+    private void SyncWindowSnap()
+    {
+        SnapToggle.IsChecked = App.Settings.WindowSnap;
+        SnapRequirement.Visibility = App.Settings.WindowSnapSatisfied
+            ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void SnapToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncing) return;
+        App.Settings.WindowSnap = SnapToggle.IsChecked == true;
+    }
+
+    private void EnablePointer_Click(object sender, RoutedEventArgs e) =>
+        App.Settings.PointerInCascade = true;
+
+    /// <summary>
+    /// The count means something different per preset: the cascade recedes
+    /// into depth, while Cover Flow is one row across one screen and has to
+    /// divide it. Say which one is in play instead of leaving the jump to 5 on
+    /// preset change looking arbitrary.
+    /// </summary>
+    private void UpdateMaxWindowsHint() =>
+        MaxWindowsHint.Text = App.Settings.VisualPreset == 1
+            ? "How many windows the switcher shows at once (2–10). Cover Flow "
+              + "divides one screen between them evenly, so every window in the "
+              + "row shows the same slice of itself and the whole deck gets "
+              + "smaller as you ask for more. Five is the size it opens at; ten "
+              + "still shows ten."
+            : "How many windows the 3D cascade shows at once (2–10).";
 
     // ---- Cascade exclusion list --------------------------------------------
 
@@ -90,6 +139,7 @@ public partial class GeneralPage : UserControl
         _syncing = true;
         PerfCombo.SelectedIndex = App.Settings.PerfProfile + 1; // -1=Auto → index 0
         SyncStartDelay();
+        SyncWindowSnap();
 
         // Warn up front when the startup toggle cannot work because the
         // core exe is nowhere to be found.

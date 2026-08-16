@@ -40,8 +40,21 @@ void BuildStackRects(const std::vector<WindowInfo>& windows,
 /// rect's NDC corners through the scene's camera onto a fixed flat-Z plane.
 /// Each window keeps its own aspect; cascade slot data is not consulted.
 ///
-/// Z assignment: slot[i].z = flatZ + i * kFlatZStep (strictly monotonic in i,
-/// preserving painter's-algorithm draw order across the entire morph).
+/// Z assignment: slot[i].z = flatZ + rank(i) * kFlatZStep, where rank(i) is
+/// `depthRanks[i]` when supplied and plain `i` otherwise.
+///
+/// The bare index works only while SLOT ORDER IS DEPTH ORDER, which holds for
+/// the classic cascade (FlipScene::BuildSlots emits monotonically increasing z)
+/// but NOT for Cover Flow, whose depth follows |carousel offset| — its
+/// left-hand slots have rising indices at falling depth.  Feeding the cascade
+/// endpoint's depth ranking through `depthRanks` keeps the flat and cascade
+/// endpoints in the SAME relative order, so no two tiles swap painter's order
+/// mid-morph.  Passing the identity permutation (or nullptr) reproduces the
+/// previous behaviour exactly.
+///
+/// The rank participates in the inverse projection, so x/y/scale are solved at
+/// the final z — the on-screen rect is exact regardless of which rank a slot
+/// receives.
 /// alpha = 1.0 for every slot (spec §3.1 StabilizeFlatStack).
 ///
 /// `flatZOverride` ≤ 0 (the default) anchors the flat plane at the cascade's
@@ -58,6 +71,13 @@ std::vector<TileSlot> BuildFlatSlotsFromRects(
     float cascadeAspect,
     float originX, float originY,
     const DirectX::XMMATRIX& remapNDC,
-    float flatZOverride = -1.0f);
+    float flatZOverride = -1.0f,
+    const std::vector<uint32_t>* depthRanks = nullptr);
+
+/// Depth ranking of a cascade endpoint: rank[i] = position of slot i when the
+/// slots are ordered near-to-far by z (stable, ties broken by slot index).
+/// For the classic cascade this is the identity permutation, so passing it to
+/// BuildFlatSlotsFromRects changes nothing there.
+std::vector<uint32_t> DepthRanks(const std::vector<TileSlot>& slots);
 
 } // namespace FlatStackBuilder

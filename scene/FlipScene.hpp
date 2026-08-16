@@ -75,7 +75,21 @@ struct TileSlot {
     float scaleX = 1.0f;
     float scaleY = 1.0f;
     float alpha  = 1.0f;
+    // Per-tile Y rotation in degrees, ADDED to the scene-wide tilt.
+    // The classic cascade leaves it at 0 for every slot (all tiles share
+    // the scene tilt — bit-identical to the pre-rotY pipeline); the Cover
+    // Flow preset uses it to turn side tiles toward the centre.  All
+    // animators interpolate it like any other slot field.
+    float rotY   = 0.0f;
     // tileScale removed — all tiles same world-space size
+};
+
+/// Visual preset selector (config `visualPreset`).  Cascade is the classic
+/// Win7 Flip3D layout; CoverFlow is the centred carousel (scene/
+/// CoverFlowLayout).  Latched by the controller at Activate.
+enum class VisualPreset : int {
+    Cascade  = 0,
+    CoverFlow = 1,
 };
 
 /// Builds the 3D Flip3D stack layout and produces draw-ready MVP matrices.
@@ -95,9 +109,38 @@ public:
     /// forward=true: shift left (element 0 → end), matching std::rotate begin+1.
     /// forward=false: shift right (last element → front).
     void     RotateAspects(bool forward);
+    /// `worldYOffset` lifts (or sinks) the tile along world Y for this draw
+    /// only — the pointer-hover highlight, which must not touch slot state
+    /// because the cycle / close / entry-exit animators own it.  0 (the
+    /// default) is the untouched transform every other call site gets.
     void     GetDrawCall(uint32_t index, float viewportAspect,
-                         DirectX::XMFLOAT4X4& outMVP, float& outAlpha) const;
+                         DirectX::XMFLOAT4X4& outMVP, float& outAlpha,
+                         float worldYOffset = 0.0f) const;
+    /// Draw-ready MVP for the tile's floor reflection: the same transform
+    /// chain as GetDrawCall with a unit-quad-space shift one tile-height
+    /// down (the quad then occupies the mirror position below the tile's
+    /// bottom edge; the caller flips the texture V via the UV crop).  No
+    /// negative scaling — winding is preserved, so the default rasterizer
+    /// state draws it like any other quad.
+    void     GetReflectionDrawCall(uint32_t index, float viewportAspect,
+                                   DirectX::XMFLOAT4X4& outMVP,
+                                   float& outAlpha,
+                                   float worldYOffset = 0.0f) const;
     uint32_t SlotCount() const { return static_cast<uint32_t>(m_slots.size()); }
+
+    /// Select the layout the next BuildSlots produces.  Latched by the
+    /// controller at Activate (a mid-session config reload never switches
+    /// the preset under a live cascade).
+    void         SetVisualPreset(VisualPreset p) { m_preset = p; }
+    VisualPreset GetVisualPreset() const         { return m_preset; }
+
+    /// Cover Flow: re-space the row from the tiles' ACTUAL widths, once the
+    /// real window proportions have been applied through SetSlotScale /
+    /// SetSlotAspect.  BuildSlots can only estimate them (a nominal 16:9
+    /// rect), which leaves too much overlap for wide windows and holes for
+    /// narrow ones.  Rewrites slot x, and on long rows the side lean (rotY)
+    /// that keeps the deck two tiles deep.  No-op in the cascade preset.
+    void RelayoutCoverFlowX();
 
     /// Direct access to slot data for animation interpolation.
     const TileSlot& GetSlot(uint32_t index) const { return m_slots[index]; }
@@ -128,9 +171,21 @@ public:
     float GetCamDist()    const { return m_cfg.camDist; }
 
 private:
+    /// Cover Flow variant of BuildSlots — delegates the geometry to
+    /// scene/CoverFlowLayout and stores the results in the same cached
+    /// members the cascade path fills.  The public API (SetSlotScale,
+    /// RotateAspects, GetDrawCall, camera getters) is layout-agnostic.
+    void BuildSlotsCoverFlow(uint32_t visible, float vpW, float vpH);
+
     SceneConfig           m_cfg;
     std::vector<TileSlot> m_slots;
     float m_viewportAspect = 1.78f;
+    VisualPreset          m_preset = VisualPreset::Cascade;
+    // Cover Flow floor plane (world Y of every tile's bottom edge).  Tiles
+    // are bottom-aligned onto it so differently sized windows stand on a
+    // common "glass shelf" and reflections emanate from one line.  Unused
+    // (0) in the cascade preset.
+    float m_floorY = 0.0f;
 
     // Cached camera parameters (computed once in BuildSlots, used in GetDrawCall)
     float m_eyeX = 0, m_eyeY = 0, m_eyeZ = 0;

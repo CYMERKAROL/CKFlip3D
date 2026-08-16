@@ -51,9 +51,11 @@ public sealed class UninstallEngine
                     try
                     {
                         progress.Report(new InstallProgress(4, "Stopping CKFlip3D…", name));
-                        proc.CloseMainWindow();
-                        if (!proc.WaitForExit(3000)) proc.Kill();
-                        proc.WaitForExit(5000);
+                        // Same reason as the installer (see RunningApp): the core
+                        // has to be asked through the window it really has, or it
+                        // is killed with windows still cloaked — and its session
+                        // marker outlives it, ready to accuse the next install.
+                        RunningApp.Stop(proc);
                     }
                     catch { }
                     finally { proc.Dispose(); }

@@ -172,7 +172,16 @@ void EntryExitAnimator::BuildOverflowChoreography(
     // the deck under painter's order (the old "out-of-bounds window
     // appears at N+1 / N-1" flicker).  The inverse projection keeps the
     // on-screen position exact regardless of plane depth.
-    const TileSlot& backSlot = m_cascadeSlots[n - 1];
+    //
+    // "Back-most" is the slot with MAXIMUM Z, not slot n-1: in the
+    // cascade preset those coincide, but in Cover Flow slot n-1 is the
+    // inner-left carousel position — anchoring there would let overflow
+    // tiles paint in front of the outer side tiles.
+    size_t backSlotIdx = 0;
+    for (size_t si = 1; si < n; ++si)
+        if (m_cascadeSlots[si].z > m_cascadeSlots[backSlotIdx].z)
+            backSlotIdx = si;
+    const TileSlot& backSlot = m_cascadeSlots[backSlotIdx];
     const float overflowFlatZ = backSlot.z + FlatStackBuilder::kFlatZStep;
 
     m_overflowFlat = FlatStackBuilder::BuildFlatSlotsFromRects(
@@ -252,6 +261,11 @@ void EntryExitAnimator::BeginEntry(FlipScene& scene,
                                     const std::vector<RECT>& taskbarRectOverrides,
                                     int64_t keyPressQPC)
 {
+    // Entry never overrides the paint order — the slot Z is real depth the
+    // whole way in.
+    m_exitPaintZ.clear();
+    m_exitCarousel = false;
+
     // 1. Snapshot the cascade as the t=1 endpoint.
     uint32_t n = scene.SlotCount();
     m_cascadeSlots.resize(n);
@@ -298,9 +312,14 @@ void EntryExitAnimator::BeginEntry(FlipScene& scene,
     // Trim to the visible slot count so flat parallels cascade in size.
     if (stackRects.size() > n) stackRects.resize(n);
     m_flatSourceRects = stackRects;
+    // Rank the flat endpoint's depth the same way the cascade endpoint is
+    // ordered, so no two tiles swap painter's order mid-morph.  Identity
+    // for the cascade preset (its slot order is already its depth order).
+    const std::vector<uint32_t> depthRanks =
+        FlatStackBuilder::DepthRanks(m_cascadeSlots);
     m_flatSlots = FlatStackBuilder::BuildFlatSlotsFromRects(
         stackRects, scene, vpW, vpH, cascadeAspect,
-        originX, originY, remapNDC);
+        originX, originY, remapNDC, -1.0f, &depthRanks);
 
     // 2d. Desktop tile entry mode (Bug 6).  Locate the desktop tile's
     //     visible slot.  For the fade modes, force its flat α to 0 so the
@@ -400,6 +419,15 @@ void EntryExitAnimator::BeginExit(FlipScene& scene,
     for (size_t i = 0; i < m_exitFadeOut.size() && i < tileFadeOutOnExit.size(); ++i)
         m_exitFadeOut[i] = tileFadeOutOnExit[i];
 
+    // Cover Flow lays its tiles out as a row at nearly one depth, so the
+    // endpoint's window order and the row's geometric order disagree freely —
+    // and the resulting depth crossings land late, when the tiles have grown
+    // back to full size.  See GetExitPaintDepths.  The cascade preset opts
+    // out: its tiles genuinely occupy distinct depths, and it keeps sorting
+    // on the slot Z exactly as before.
+    m_exitCarousel = (scene.GetVisualPreset() == VisualPreset::CoverFlow);
+    m_exitPaintZ.clear();
+
 
     // 1. Snapshot cascade as the start (timelineT = 1) state.
     uint32_t n = scene.SlotCount();
@@ -428,9 +456,12 @@ void EntryExitAnimator::BeginExit(FlipScene& scene,
 
     if (stackRects.size() > n) stackRects.resize(n);
     m_flatSourceRects = stackRects;
+    // Same cascade-consistent depth ranking as BeginEntry (see there).
+    const std::vector<uint32_t> depthRanks =
+        FlatStackBuilder::DepthRanks(m_cascadeSlots);
     m_flatSlots = FlatStackBuilder::BuildFlatSlotsFromRects(
         stackRects, scene, vpW, vpH, cascadeAspect,
-        originX, originY, remapNDC);
+        originX, originY, remapNDC, -1.0f, &depthRanks);
 
     // 3. Round-6 Fix 19 — prefer cached entry flat slots for matching HWNDs
     //    so the exit lerp's flat aspect matches what the entry started from.
@@ -582,6 +613,10 @@ void EntryExitAnimator::Tick(FlipScene& scene)
         s.planarBlend *= flatGate;
         s.depthBlend  *= flatGate;
         s.scaleBlend  *= flatGate;
+        // Per-tile rotY (Cover Flow) is spatial too — gate it with the
+        // rest so the first visible frames stay truly flat.  No-op for
+        // the cascade preset (rot channel is a no-op there anyway).
+        s.rotBlend    *= flatGate;
     }
 
     // The endpoint write removes the one-frame cascade flash that
@@ -613,6 +648,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
             if (ease < 0.002f) ease = 0.0f;   // sub-threshold clamp
             s.planarBlend *= ease; s.depthBlend *= ease;
             s.scaleBlend *= ease; s.tiltBlend *= ease;
+            s.rotBlend *= ease;   // Cover Flow rotY lands flat with the rest
         }
     }
 
@@ -628,7 +664,27 @@ void EntryExitAnimator::Tick(FlipScene& scene)
         o.scaleX = Lerp(F.scaleX, C.scaleX, s.scaleBlend);
         o.scaleY = Lerp(F.scaleY, C.scaleY, s.scaleBlend);
         o.alpha  = Lerp(F.alpha,  C.alpha,  s.depthBlend);
-        // s.rotBlend is sampled but unapplied (TileSlot has no rotY in CKFlip).
+        // Per-tile rotY rides the authored rot channel (most delayed).
+        // Flat slots are rotY = 0, so the cascade preset (all cascade
+        // rotY = 0 too) is untouched; Cover Flow side tiles lean out
+        // late in the entry and straighten first on exit.
+        o.rotY   = Lerp(F.rotY,   C.rotY,   s.rotBlend);
+    }
+
+    // Paint order for a Cover Flow exit — a sort key, never geometry.  It
+    // runs the SAME lerp between the two endpoint depths, so it agrees with
+    // the slot Z at both ends; only the blend differs, unwinding inside the
+    // first kOrderResolveT instead of trailing the geometric depth channel.
+    // Every pair still crosses at most once (the difference stays linear in
+    // the blend), it just crosses while the row is still spread out.  See
+    // GetExitPaintDepths for the measurements.
+    if (m_reverse && m_exitCarousel) {
+        const float orderBlend = 1.0f - SmoothStep(0.0f, kOrderResolveT, m_rawT);
+        m_exitPaintZ.resize(n);
+        for (uint32_t i = 0; i < n; ++i)
+            m_exitPaintZ[i] = Lerp(m_flatSlots[i].z, m_cascadeSlots[i].z, orderBlend);
+    } else {
+        m_exitPaintZ.clear();
     }
 
     // Bug 6 — desktop pseudo-tile entry fade.  In the fade modes the
@@ -691,6 +747,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
             o.z      = Lerp(F.z,      C.z,      s.depthBlend);
             o.scaleX = Lerp(F.scaleX, C.scaleX, s.scaleBlend);
             o.scaleY = Lerp(F.scaleY, C.scaleY, s.scaleBlend);
+            o.rotY   = Lerp(F.rotY,   C.rotY,   s.rotBlend);
 
             // Bug 9'' — per-tile staggered fade window in timelineT.
             float fadeStart = (k < m_overflowFadeStart.size()) ? m_overflowFadeStart[k] : 0.0f;
@@ -719,6 +776,10 @@ void EntryExitAnimator::Finalize(FlipScene& scene)
         ApplyState(scene, finalSlots, 0.0f, 0.0f);
         m_morphBlend = 0.0f;
         m_justDoneExit = true;
+        // The scene now HOLDS the endpoint Z, so the plain slot sort already
+        // yields the endpoint order — drop the override rather than leave a
+        // stale key behind.
+        m_exitPaintZ.clear();
         // Exit's flat endpoint includes the overflow windows at their real
         // positions (α=1) so the final presented frame matches the desktop
         // the overlay is about to reveal.  Vectors are discarded by

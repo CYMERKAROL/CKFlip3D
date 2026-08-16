@@ -283,6 +283,24 @@ static void RefineSlotToScreenBounds(float& cx, float& cy,
 }
 
 // ---------------------------------------------------------------------------
+std::vector<uint32_t> DepthRanks(const std::vector<TileSlot>& slots)
+{
+    const size_t n = slots.size();
+    std::vector<uint32_t> order(n);
+    for (size_t i = 0; i < n; ++i) order[i] = static_cast<uint32_t>(i);
+    // Stable near-to-far sort: equal depths (Cover Flow mirrors a left and a
+    // right slot at every step) keep their slot-index order.
+    std::stable_sort(order.begin(), order.end(),
+                     [&slots](uint32_t a, uint32_t b) {
+                         return slots[a].z < slots[b].z;
+                     });
+    std::vector<uint32_t> rank(n, 0);
+    for (size_t r = 0; r < n; ++r)
+        rank[order[r]] = static_cast<uint32_t>(r);
+    return rank;
+}
+
+// ---------------------------------------------------------------------------
 std::vector<TileSlot> BuildFlatSlotsFromRects(
     const std::vector<RECT>& stackRects,
     const FlipScene& scene,
@@ -290,7 +308,8 @@ std::vector<TileSlot> BuildFlatSlotsFromRects(
     float cascadeAspect,
     float originX, float originY,
     const DirectX::XMMATRIX& remapNDC,
-    float flatZOverride)
+    float flatZOverride,
+    const std::vector<uint32_t>* depthRanks)
 {
     std::vector<TileSlot> out;
     const size_t n = stackRects.size();
@@ -336,7 +355,13 @@ std::vector<TileSlot> BuildFlatSlotsFromRects(
         float R = static_cast<float>(overlayRect.right);
         float B = static_cast<float>(overlayRect.bottom);
 
-        const float slotZ = flatZ + static_cast<float>(i) * kFlatZStep;
+        // Depth tiebreak: the cascade endpoint's near-to-far rank when the
+        // caller supplied one, else the raw slot index (identical for the
+        // cascade preset, whose slot order IS its depth order).
+        const uint32_t depthRank =
+            (depthRanks && i < depthRanks->size()) ? (*depthRanks)[i]
+                                                   : static_cast<uint32_t>(i);
+        const float slotZ = flatZ + static_cast<float>(depthRank) * kFlatZStep;
 
         // 4 corners projected to world-space at the same Z this slot will
         // render at.  Re-projecting per slot preserves screen corners with

@@ -823,4 +823,68 @@
         <Setter Property="Fill" Value="{DynamicResource RowSeparatorBrush}"/>
     </Style>
 
+    <!-- The X on a log tile.  Quiet until pointed at: it sits on top of a
+         coloured card that is already asking for attention, and a second
+         thing shouting on the same tile would only compete with it. -->
+    <Style x:Key="LogDismissButton" TargetType="Button">
+        <Setter Property="Width" Value="22"/>
+        <Setter Property="Height" Value="22"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chip" CornerRadius="4" Background="Transparent">
+                        <Path x:Name="Glyph" Width="9" Height="9" Stretch="None"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Data="M0.5,0.5 L8.5,8.5 M8.5,0.5 L0.5,8.5"
+                              Stroke="{DynamicResource TextSecondaryBrush}"
+                              StrokeThickness="1.4"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chip" Property="Background"
+                                    Value="{DynamicResource ApplyBarBrush}"/>
+                            <Setter TargetName="Glyph" Property="Stroke"
+                                    Value="{DynamicResource TextPrimaryBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Chip" Property="Opacity" Value="0.6"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- One severity mark in the sidebar: the drawn icon plus its count,
+         clickable as a whole.  Hidden entirely when the count is zero — a
+         greyed-out zero is still something to read past. -->
+    <Style x:Key="LogBadgeButton" TargetType="Button">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Margin" Value="0,0,6,0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chip" CornerRadius="4" Padding="4,2"
+                            Background="Transparent">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chip" Property="Background"
+                                    Value="{DynamicResource ApplyBarBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Chip" Property="Opacity" Value="0.6"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
 </ResourceDictionary>

@@ -130,10 +130,12 @@ public sealed class InstallEngine
                 try
                 {
                     progress.Report(new InstallProgress(2, "Closing running instances…", name));
-                    proc.CloseMainWindow();
-                    if (!proc.WaitForExit(3000))
-                        proc.Kill();
-                    proc.WaitForExit(5000);
+                    // See RunningApp: asking the window that actually exists,
+                    // rather than the "main" one the core does not have, is what
+                    // lets it uncloak windows, restore the taskbar and release
+                    // its session marker instead of being shot mid-update and
+                    // blaming the new build for a crash.
+                    RunningApp.Stop(proc);
                 }
                 catch { /* already gone or inaccessible */ }
                 finally { proc.Dispose(); }

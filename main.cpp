@@ -7,7 +7,9 @@
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                     LPWSTR /*lpCmdLine*/, int /*nCmdShow*/)
 {
-    // Single-instance guard.
+    // Single-instance guard.  Nothing is recorded when it fires: the second
+    // copy closing itself IS the guard working, and a log entry for it would
+    // be the program reporting its own correct behaviour.
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"CKFlip3D_SingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (hMutex) CloseHandle(hMutex);

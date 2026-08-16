@@ -18,10 +18,15 @@ private:
     static constexpr UINT IDM_EXIT     = 4001;
     static constexpr UINT_PTR kTrayRetryTimer   = 10;
     static constexpr UINT     kTrayRetryMax     = 45;   // × 2 s ≈ 90 s window
+    // How long one CKFLIP3D_INPUT_SUSPEND arms the hold for.  Comfortably
+    // longer than the sender's refresh interval, short enough that a sender
+    // that vanished re-arms the switcher within a couple of seconds.
+    static constexpr unsigned kInputSuspendMs   = 2500;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg,
                                     WPARAM wParam, LPARAM lParam);
-    static void OnHotkeyEvent(HotkeyEvent event, void* userData);
+    static void OnHotkeyEvent(HotkeyEvent event, float amount,
+                              int x, int y, void* userData);
 
     bool CreateMessageWindow(HINSTANCE hInstance);
     void InitTrayIcon();
@@ -50,6 +55,10 @@ private:
     UINT              m_msgConfigReload = 0; // RegisterWindowMessage(CKFLIP3D_CONFIG_RELOAD)
     UINT              m_msgRestart      = 0; // RegisterWindowMessage(CKFLIP3D_RESTART)
     UINT              m_msgTaskbarCreated = 0; // RegisterWindowMessage(TaskbarCreated)
+    // RegisterWindowMessage(CKFLIP3D_INPUT_SUSPEND) — the Settings app's
+    // touchpad-activity preview holding activation off while it reads the
+    // pad (wParam = 1 arm, 0 release).  See KeyboardHook::SuspendActivation.
+    UINT              m_msgInputSuspend   = 0;
     UINT              m_trayRetries     = 0;  // logon-race retry counter
     bool              m_restartPending  = false; // relaunch self after the loop exits
 };

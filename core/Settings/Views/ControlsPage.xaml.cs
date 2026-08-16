@@ -1,141 +1,112 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using CKFlip3D.Settings.Services;
 
 namespace CKFlip3D.Settings.Views;
 
 public partial class ControlsPage : UserControl
 {
-    private bool _syncingToggle;
-
     public ControlsPage()
     {
         InitializeComponent();
-        Loaded += (_, _) => { UpdateIgnoredSummary(); SyncToggleMode(); };
-        Unloaded += (_, _) => HotkeyService.StopCapture();
+        Loaded += (_, _) => { UpdateIgnoredSummary(); SyncBindings(); SyncTouchpad(); };
         App.Settings.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(Models.SettingsModel.IgnoredApps) or null)
                 UpdateIgnoredSummary();
             if (e.PropertyName is nameof(Models.SettingsModel.ActivationHotkey)
-                               or nameof(Models.SettingsModel.HotkeyToggleMode)
+                               or nameof(Models.SettingsModel.PointerInCascade)
+                               or nameof(Models.SettingsModel.MouseSelect)
+                               or nameof(Models.SettingsModel.CloseFromCascade)
                                or null)
-                SyncToggleMode();
+                SyncBindings();
+            if (e.PropertyName is nameof(Models.SettingsModel.TouchpadNav)
+                               or nameof(Models.SettingsModel.TouchpadActivateGesture)
+                               or nameof(Models.SettingsModel.TouchpadCycleFingers)
+                               or null)
+                SyncTouchpad();
         };
     }
 
-    // ---- Toggle activation row ---------------------------------------------
-    // A binding without modifiers (bare key, bare mouse button, bare Win)
-    // is inherently toggle in the core, so the switch is shown ON and
-    // grayed out — without writing the forced state into the persisted
-    // HotkeyToggleMode value.  For combos the switch edits the model
-    // normally.
+    // ---- Mouse & keyboard row -----------------------------------------------
+    // A one-line summary of what is bound, so the page still answers "what
+    // opens it?" without opening the sub-page.
 
-    private static bool IsSingleKeyBinding(string combo) =>
-        !combo.Contains('+');
-
-    private void SyncToggleMode()
+    private void SyncBindings()
     {
-        _syncingToggle = true;
-        if (IsSingleKeyBinding(App.Settings.ActivationHotkey))
-        {
-            ToggleModeCheck.IsChecked = true;
-            ToggleModeCheck.IsEnabled = false;
-            ToggleModeRow.Opacity = 0.55;
-            ToggleModeHint.Text = "Single-key bindings always toggle — the cascade "
-                + "stays open until Enter commits or Esc cancels.";
-        }
-        else
-        {
-            ToggleModeCheck.IsEnabled = true;
-            ToggleModeCheck.IsChecked = App.Settings.HotkeyToggleMode;
-            ToggleModeRow.Opacity = 1.0;
-            ToggleModeHint.Text = "Keeps the cascade open after the hotkey is released "
-                + "— commit with Enter, cancel with Esc, and keep cycling with the main "
-                + "key. Off restores the classic hold-to-keep-open behaviour.";
-        }
-        _syncingToggle = false;
+        string mouse = !App.Settings.PointerInCascade
+            ? "The mouse does not act on the stack."
+            : (App.Settings.MouseSelect, App.Settings.CloseFromCascade) switch
+            {
+                (true, true) => "Clicking picks a window and another button closes one.",
+                (true, false) => "Clicking picks a window.",
+                (false, true) => "Clicking closes a window.",
+                _ => "The mouse does not act on the stack.",
+            };
+        BindingsHint.Text = $"{App.Settings.ActivationHotkey} opens the cascade. {mouse} "
+                          + "Commit and cancel keys live in here too.";
     }
 
-    private void ToggleMode_Changed(object sender, RoutedEventArgs e)
+    private void ManageBindings_Click(object sender, RoutedEventArgs e)
     {
-        if (_syncingToggle || !ToggleModeCheck.IsEnabled) return;
-        App.Settings.HotkeyToggleMode = ToggleModeCheck.IsChecked == true;
+        if (Window.GetWindow(this) is MainWindow main)
+            main.PushSubPage(new MouseKeyboardPage(), "Mouse & keyboard");
     }
 
-    // ---- Activation hotkey capture -----------------------------------------
+    // ---- Touchpad rows ------------------------------------------------------
+    // The customisation menu needs both a touchpad to configure and the
+    // navigation master switch on; either missing grays it out (and the
+    // switch itself grays out without a touchpad).
 
-    private void ChangeHotkey_Click(object sender, RoutedEventArgs e)
+    private void SyncTouchpad()
     {
-        if (Window.GetWindow(this) is not MainWindow main)
-            return;
+        bool present = TouchpadService.IsPresent;
+        bool enabled = present && App.Settings.TouchpadNav;
 
-        var display = new TextBlock
-        {
-            Text = "…",
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 20,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 14, 0, 14),
-        };
-        display.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
+        TouchpadNavRow.IsEnabled = present;
+        TouchpadNavRow.Opacity = present ? 1.0 : 0.55;
+        if (!present)
+            TouchpadNavHint.Text = "No precision touchpad was found on this device.";
 
-        var body = new StackPanel();
-        body.Children.Add(new TextBlock
-        {
-            Text = "Press the new activation combination — keyboard keys, mouse "
-                 + "buttons or both (mouse movement and wheel are ignored). "
-                 + "A bare left click cannot be bound. Esc cancels.",
-            TextWrapping = TextWrapping.Wrap,
-            FontFamily = new FontFamily("Segoe UI"),
-            FontSize = 12,
-            Foreground = (Brush)FindResource("TextPrimaryBrush"),
-        });
-        body.Children.Add(display);
-
-        HotkeyService.StartCapture(
-            onPreview: text => display.Text = text,
-            onCaptured: combo => Dispatcher.BeginInvoke(() => ConfirmAndAssign(main, combo)),
-            onCancelled: () => Dispatcher.BeginInvoke(main.CloseModal));
-
-        main.ShowModal("Set activation hotkey", body,
-            ("Cancel", false, HotkeyService.StopCapture));
+        TouchpadRow.IsEnabled = enabled;
+        TouchpadRow.Opacity = enabled ? 1.0 : 0.55;
+        TouchpadHint.Text =
+            !present ? "No precision touchpad was found on this device."
+            : !App.Settings.TouchpadNav
+                ? "Turn Touchpad navigation on (Navigation, below) to customise the gestures."
+                : $"{DescribeActivation()}, {Count(App.Settings.TouchpadCycleFingers)} fingers "
+                  + "left and right move through the stack. Sensitivity, direction, "
+                  + "tap-to-commit and a live activity preview live in here.";
     }
 
-    private static void ConfirmAndAssign(MainWindow main, string combo)
+    private static string Count(int n) => n switch
     {
-        string? warning = HotkeyService.GetWarning(combo);
-        if (warning == null)
-        {
-            main.CloseModal();
-            App.Settings.ActivationHotkey = combo;
-            return;
-        }
+        2 => "two", 4 => "four", _ => n.ToString(),
+    };
 
-        // Swap the still-open capture modal's content in place — closing it
-        // first and immediately reopening lets the close fade's Completed
-        // handler collapse the freshly shown confirmation.
+    private static string DescribeActivation() => App.Settings.TouchpadActivateGesture switch
+    {
+        1 => "A two-finger ↘ diagonal opens the cascade",
+        2 => "A two-finger ↙ diagonal opens the cascade",
+        3 => "A four-finger ↘ diagonal opens the cascade",
+        4 => "A four-finger ↙ diagonal opens the cascade",
+        _ => "No opening gesture",
+    };
 
-        var body = new TextBlock
-        {
-            Text = $"Detected: {combo}\n\n{warning}",
-            TextWrapping = TextWrapping.Wrap,
-            FontFamily = new FontFamily("Segoe UI"),
-            FontSize = 12,
-            Foreground = (Brush)main.FindResource("TextPrimaryBrush"),
-        };
-        main.ShowModal("Use this combination?", body,
-            ("Use anyway", true, () => App.Settings.ActivationHotkey = combo),
-            ("Cancel", false, null));
+    private void ManageTouchpad_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is MainWindow main)
+            main.PushSubPage(new TouchpadPage(), "Touchpad gestures");
     }
+
+    // ---- Ignored applications -----------------------------------------------
 
     private void UpdateIgnoredSummary()
     {
         int count = App.Settings.IgnoredAppsList.Count;
         IgnoredSummary.Text = count == 0
-            ? "No applications are ignored. Win + Tab is passed through to Windows while a listed program is in the foreground."
-            : $"{count} application(s) ignored. Win + Tab is passed through to Windows while any of them is in the foreground.";
+            ? "No applications are ignored. The hotkey is passed through to Windows while a listed program is in the foreground."
+            : $"{count} application(s) ignored. The hotkey is passed through to Windows while any of them is in the foreground.";
     }
 
     private void ManageIgnored_Click(object sender, RoutedEventArgs e)
@@ -148,9 +119,30 @@ public partial class ControlsPage : UserControl
     {
         App.Settings.ActivationHotkey = "Win+Tab";
         App.Settings.HotkeyToggleMode = false;
+        App.Settings.CommitHotkey = "Enter";
+        App.Settings.CancelHotkey = "Escape";
+        App.Settings.CloseHotkey = "Delete";
+        App.Settings.CloseKeyEnabled = true;
         App.Settings.IgnoreFullscreen = false;
         App.Settings.MouseWheelCycle = true;
         App.Settings.KeyboardNav = true;
         App.Settings.IgnoredApps = "";
+        // Opt-in by default — see MouseKeyboardPage.RestoreDefaults_Click.
+        App.Settings.PointerInCascade = false;
+        App.Settings.MouseSelect = true;
+        App.Settings.MouseSelectButton = 1;
+        App.Settings.CloseFromCascade = true;
+        App.Settings.MouseCloseButton = 3;
+        App.Settings.MouseDragEnabled = true;
+        App.Settings.MouseDragButton = 2;
+        App.Settings.TouchpadNav = true;
+        App.Settings.TouchpadActivateGesture = 1;
+        App.Settings.TouchpadCancelSwipe = true;
+        App.Settings.TouchpadCycleFingers = 2;
+        App.Settings.TouchpadReverse = false;
+        App.Settings.TouchpadSensitivity = 50;
+        App.Settings.TouchpadSmoothing = 35;
+        App.Settings.TouchpadCommitGesture = 1;
+        App.Settings.WindowSnap = true;
     }
 }

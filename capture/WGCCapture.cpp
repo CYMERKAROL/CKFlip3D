@@ -1,5 +1,6 @@
 #include "WGCCapture.hpp"
 #include "../core/DebugLog.h"
+#include "../core/Diagnostics.h"
 
 #include <d3d11_4.h>
 #include <dxgi.h>
@@ -165,6 +166,14 @@ bool WGCCapture::StartForWindow(HWND hwnd, ID3D11Device* device)
     catch (...) {
         // WGC failed — try GDI PrintWindow fallback.
         CKLog::Log(L"CKFlip: WGC failed, trying PrintWindow fallback\n");
+        // ReportOnce: this sits in a per-window loop, and a machine where
+        // Graphics Capture is unavailable fails for every window in the stack.
+        Diag::ReportOnce(Diag::Code::CaptureItemFailed, Diag::Sev::Warning,
+                         L"Windows could not hand CKFlip3D a live window preview",
+                         L"Graphics Capture refused at least one window; those "
+                         L"tiles fall back to a single still frame taken with "
+                         L"PrintWindow, which cannot update and may come out "
+                         L"blank for hardware-accelerated windows");
         return CaptureWithPrintWindow(hwnd, device);
     }
 }
@@ -220,6 +229,11 @@ bool WGCCapture::StartInternal(
         return true;
     }
     catch (...) {
+        Diag::ReportOnce(Diag::Code::CaptureStartFailed, Diag::Sev::Warning,
+                         L"A window preview could not be started",
+                         L"the Graphics Capture session failed after the item "
+                         L"was created; that tile shows a placeholder or a "
+                         L"stale frame for this session");
         return false;
     }
 }
@@ -724,7 +738,7 @@ bool WGCCapture::CaptureWithPrintWindow(HWND hwnd, ID3D11Device* device)
 
 // ---------------------------------------------------------------------------
 // v8.5 — find the vertical centre of the captured texture's content band.
-bool WGCCapture::DetectContentCenterV(float& outCenterUvY)
+bool WGCCapture::DetectContentCenterV(float& outCenterUvY, int expectedBandPx)
 {
     if (!m_cachedTexture || !m_d3dDevice || !m_d3dContext)
         return false;
@@ -777,6 +791,17 @@ bool WGCCapture::DetectContentCenterV(float& outCenterUvY)
 
     if (firstRow < 0 || lastRow < firstRow)
         return false;
+
+    // Plausibility gate (see the header).  A band far taller than the bar is
+    // not the bar — something else got composited into the capture — and its
+    // centre would crop the wrong slice.  1.75× leaves room for a shadow or a
+    // stray row without accepting a flyout twice the bar's height.
+    if (expectedBandPx > 0) {
+        const int bandPx = lastRow - firstRow + 1;
+        if (static_cast<float>(bandPx)
+            > static_cast<float>(expectedBandPx) * 1.75f)
+            return false;
+    }
 
     outCenterUvY = (static_cast<float>(firstRow) + static_cast<float>(lastRow) + 1.0f)
                  * 0.5f / static_cast<float>(H);

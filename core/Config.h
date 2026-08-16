@@ -21,6 +21,9 @@ struct AppConfig {
     // sized front tiles and the fade out/in on held-key rapid cycling.
     // Off = the label snaps instantly and shows/hides without fades.
     bool     animLabel        = true;
+    // Pointer-hover lift: the tile under the mouse rises off the cascade and
+    // settles back when the pointer leaves.  Off = the highlight snaps.
+    bool     animHover        = true;
     bool     motionBlur       = true;     // Motion blur during animation
     bool     livePreview      = true;     // Live WGC window thumbnails (false = static snapshots)
     // Live wallpaper backdrop: stream the desktop capture behind the
@@ -44,6 +47,16 @@ struct AppConfig {
     uint32_t maxWindows       = 10;       // Max windows displayed in stack (2-10)
 
     // --- Appearance ---
+    // Visual preset for the 3D switcher (Appearance → Visual preset):
+    // 0 = Cascade (classic Win7 Flip3D layout), 1 = Cover Flow (centred
+    // carousel, scene/CoverFlowLayout).  Latched at Activate — a reload
+    // mid-session applies on the next activation.
+    int      visualPreset     = 0;
+    // Glass floor reflection under the stack (Appearance → Reflections):
+    // each tile draws a faint mirrored copy below its bottom edge with a
+    // glassy falloff.  Works in both visual presets.  Off (default) keeps
+    // the classic look and costs nothing.
+    bool     reflections      = false;
     // Background opacity target while the cascade is shown (0-100 %).
     // 0 = fully black backdrop, 100 = wallpaper fully visible.
     // 28 matches the original kBgAlpha = 0.28f cascade look.
@@ -99,6 +112,123 @@ struct AppConfig {
     // "Win+XButton1", ...).  Parsed by KeyboardHook::ParseHotkey; invalid
     // strings fall back to Win+Tab.
     std::wstring activationHotkey = L"Win+Tab";
+    // Key that COMMITS the selection while the cascade is open, and the one
+    // that CANCELS it.  Same syntax as activationHotkey (KeyboardHook::
+    // ParseHotkey); an unparsable string falls back to the default.
+    std::wstring commitHotkey = L"Enter";
+    std::wstring cancelHotkey = L"Escape";
+    // Key that CLOSES the hovered (or selected) window from the cascade.
+    std::wstring closeHotkey  = L"Delete";
+
+    // --- Mouse in the cascade (Controls → Mouse & keyboard) ---
+    // Mouse button identifiers shared by the three bindings below:
+    //   0 = off, 1 = left, 2 = right, 3 = middle, 4 = X1, 5 = X2.
+    //
+    // Master switch for everything the pointer does to the stack — hover,
+    // picking, closing and dragging.  Off (default) = the cascade takes
+    // keyboard, wheel and touchpad exactly as it always has, with no pointer
+    // message posted and no hit test run.
+    //
+    // Off by default deliberately: an upgrade must not silently hand a
+    // familiar switcher new mouse behaviour, least of all a binding that
+    // CLOSES a window on a middle click.  Everything below stays available,
+    // one switch away.
+    bool     pointerInCascade  = false;
+    // Hover + click to pick a window.  The tile under the pointer lifts (see
+    // animHover) and clicking it commits — a distant window first spins to
+    // the front, then the ordinary exit morph plays.
+    bool     mouseSelect       = true;
+    int      mouseSelectButton = 1;      // left
+    // DRAG the stack while Window snap is off.  Right button by default,
+    // because left now picks a window.  The touchpad swipe is unaffected by
+    // this toggle — it has its own gestures.
+    bool     mouseDragEnabled  = true;
+    int      mouseDragButton   = 2;      // right
+    // Close the hovered window with the mouse (mouseCloseButton).  Sends
+    // WM_CLOSE — the app decides what happens next, exactly as if its own close
+    // button had been pressed.  A pointer feature, so pointerInCascade gates it.
+    bool     closeFromCascade  = true;
+    int      mouseCloseButton  = 3;      // middle
+    // The same action from the KEYBOARD (closeHotkey, Delete by default): close
+    // the hovered window, or the selected one when the pointer is elsewhere.
+    //
+    // Its own switch rather than a share of closeFromCascade, because the two
+    // are genuinely different bindings: one needs a mouse and the other does
+    // not, and a keyboard-only user must be able to keep the key while every
+    // pointer feature is off — or drop the key while keeping the click.
+    bool     closeKeyEnabled   = true;
+
+    // --- Search (Settings → Search) ---
+    // Type while the cascade is open and it narrows to the matching windows;
+    // clearing the query brings the rest back.  Off (default) = printable keys
+    // are swallowed as strays exactly as before.
+    bool     searchEnabled     = false;
+    // Draw the themed field below the cascade.  Off = the filtering still
+    // works, it just has no on-screen field (for a deliberately bare look).
+    bool     searchBox         = true;
+    // Match the owning executable's name as well as the window title, so
+    // "chrome" finds a tab whose title mentions neither.
+    bool     searchMatchProcess = true;
+    // Where the field sits on the cascade host, as a percentage of the
+    // primary monitor: X is the field's CENTRE, Y its BOTTOM edge, so the
+    // default (50, 94) is centred just above the taskbar.  Percentages rather
+    // than pixels so one setting reads the same on every display.
+    uint32_t searchPosX        = 50;
+    uint32_t searchPosY        = 94;
+    // Field size, 50-200 % of its natural size.
+    uint32_t searchScale       = 100;
+
+    // --- Touchpad (Windows Precision Touchpad gestures) ---
+    // Master switch (Controls → Navigation → Touchpad navigation).  Off =
+    // the raw-input listener is never even registered, so a machine without
+    // a touchpad — or a user who wants none of this — pays nothing and the
+    // keyboard/mouse paths stay bit-identical.
+    bool     touchpadNav        = true;
+    // Fingers for the swipe that cycles the stack while it is open (2 or 4 —
+    // three is Windows' own, see touchpadActivateGesture).  Horizontal only:
+    // |dx| must dominate |dy|, so a two-finger scroll straight up/down still
+    // reaches the wheel path unchanged.
+    int      touchpadCycleFingers = 2;
+    // Swipe left = next window (false, the default: the row follows the
+    // fingers) or previous (true).
+    bool     touchpadReverse    = false;
+    // Swipe distance per cycle step, 1-100.  100 = a flick of ~2 % of the
+    // pad width steps once, 1 = ~14 %.  50 ≈ 8 %.
+    int      touchpadSensitivity = 50;
+    // Gesture that OPENS the cascade — a DIAGONAL stroke, because Windows'
+    // own slide recogniser only claims the four cardinal directions, so a
+    // diagonal is free for the taking and nothing of the user's Windows
+    // configuration has to be touched.  Two or four fingers, never three:
+    // three-finger slides are the ones Windows ships bound to Alt+Tab and
+    // Task View, and its recogniser is loose enough about the angle that even
+    // a diagonal trips them.
+    // 0 = off,
+    // 1 = two fingers  "\" (top-left → bottom-right),
+    // 2 = two fingers  "/" (top-right → bottom-left),
+    // 3 = four fingers "\",
+    // 4 = four fingers "/".
+    int      touchpadActivateGesture = 1;
+    // Gesture that COMMITS the selection while the cascade is open — the
+    // touchpad equivalent of Enter:
+    // 0 = off, 1 = one-finger tap, 2 = two-finger tap, 3 = two fingers down.
+    int      touchpadCommitGesture = 1;
+    // Input smoothing, 0-100.  Runs an exponential filter over the contact
+    // centroid and drops sub-threshold jitter, so a resting hand or a
+    // twitchy pad cannot nudge the stack.  0 = raw contact deltas.
+    int      touchpadSmoothing  = 35;
+    // The opening stroke drawn backwards cancels the session, like Escape.
+    bool     touchpadCancelSwipe = true;
+
+    // --- Free stack movement ---
+    // Window snap (Controls → Navigation).  ON (default) = every input step
+    // lands the stack on a whole window, exactly as it always has.  OFF =
+    // dragging with the mouse or swiping the touchpad scrubs the stack
+    // CONTINUOUSLY — it follows the pointer at whatever speed the pointer
+    // moves, can be held between two windows, and settles onto the nearest one
+    // when released.  Deliberately does NOT apply to the keyboard or the mouse
+    // wheel: those are discrete inputs and keep stepping one window at a time
+    // either way.
+    bool     windowSnap         = true;
 
     // --- Misc ---
     bool     showDebugInfo    = false;    // Output debug strings

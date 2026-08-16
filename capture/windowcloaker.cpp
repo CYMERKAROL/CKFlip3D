@@ -1,5 +1,6 @@
 #include "windowcloaker.h"
 #include "../core/DebugLog.h"
+#include "../core/Diagnostics.h"
 
 namespace WindowCloaker {
 namespace {
@@ -210,12 +211,28 @@ int CloakVisibleAppWindows(DWORD myPid, const std::vector<HWND>& exclude)
 
 void UncloakAll()
 {
+    // A cloak that fails to lift is the worst outcome this file has: the
+    // window is still there, still in the taskbar, and invisible until
+    // something else happens to repaint it.  It is exactly the kind of failure
+    // that used to leave no trace at all.
+    size_t stuck = 0;
     for (HWND hwnd : g_cloakedWindows) {
         if (!IsWindow(hwnd))
             continue;
         BOOL uncloakVal = FALSE;
-        DwmSetWindowAttribute(hwnd, DWMWA_CLOAK_VALUE,
-                              &uncloakVal, sizeof(uncloakVal));
+        if (FAILED(DwmSetWindowAttribute(hwnd, DWMWA_CLOAK_VALUE,
+                                         &uncloakVal, sizeof(uncloakVal))))
+            ++stuck;
+    }
+    if (stuck > 0) {
+        wchar_t detail[192];
+        swprintf_s(detail,
+                   L"%zu window%s stayed hidden after the cascade closed; they "
+                   L"are still running and still in the taskbar. Opening and "
+                   L"closing the switcher again releases them",
+                   stuck, stuck == 1 ? L"" : L"s");
+        Diag::Report(Diag::Code::UncloakFailed, Diag::Sev::Critical,
+                     L"CKFlip3D could not bring some windows back", detail);
     }
 
     if (!g_cloakedWindows.empty()) {

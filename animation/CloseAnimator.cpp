@@ -35,7 +35,9 @@ void CloseAnimator::ComputeBackSpawn()
 void CloseAnimator::Begin(FlipScene& scene,
                           const std::vector<TileSlot>& startSlots,
                           const std::vector<uint32_t>& dyingSlotIndices,
-                          const CameraPose& oldCam)
+                          const CameraPose& oldCam,
+                          const std::vector<int>* newSlotSource,
+                          bool riseIn)
 {
     // Multi-close merge: if a transition is already running, its dying
     // tiles are carried over so they CONTINUE from their current mid-fall
@@ -62,6 +64,7 @@ void CloseAnimator::Begin(FlipScene& scene,
     Cancel();
     m_dyingStart = std::move(carriedStart);
     m_dyingDrop  = std::move(carriedDrop);
+    m_riseIn     = riseIn;
 
     const uint32_t newCount = scene.SlotCount();
     m_targetSlots.resize(newCount);
@@ -100,26 +103,40 @@ void CloseAnimator::Begin(FlipScene& scene,
     for (TileSlot& s : m_dyingStart)
         compensate(s);
 
-    // Survivor mapping: old slot indices not closed, ascending.  Erase
-    // preserves relative order, so NEW slot i shows the window that held
-    // OLD slot survivors[i].  Any remaining new slots (overflow refill)
-    // have no old pose and spawn in from the back instead.
-    std::vector<uint32_t> survivors;
-    survivors.reserve(startSlots.size());
-    size_t d = 0;
-    for (uint32_t i = 0; i < static_cast<uint32_t>(startSlots.size()); ++i) {
-        if (d < dyingSlotIndices.size() && dyingSlotIndices[d] == i) {
-            ++d;
-            continue;
+    // Per-new-slot source poses.  Explicit map (Cover Flow's carousel) or,
+    // by default, the classic derivation: old slot indices not closed,
+    // ascending — erase preserves relative order, so NEW slot i shows the
+    // window that held OLD slot survivors[i].  Any remaining new slots
+    // (overflow refill) have no old pose and spawn in from the back.
+    m_slotStart.assign(newCount, TileSlot{});
+    m_slotHasStart.assign(newCount, false);
+    if (newSlotSource && newSlotSource->size() == newCount) {
+        for (uint32_t i = 0; i < newCount; ++i) {
+            const int s = (*newSlotSource)[i];
+            if (s < 0 || static_cast<size_t>(s) >= startSlots.size())
+                continue;   // no predecessor — spawn in from the back
+            m_slotStart[i] = startSlots[static_cast<size_t>(s)];
+            compensate(m_slotStart[i]);
+            m_slotHasStart[i] = true;
         }
-        survivors.push_back(i);
-    }
-    m_survivorCount = std::min(newCount,
-                               static_cast<uint32_t>(survivors.size()));
-    m_survivorStart.resize(m_survivorCount);
-    for (uint32_t i = 0; i < m_survivorCount; ++i) {
-        m_survivorStart[i] = startSlots[survivors[i]];
-        compensate(m_survivorStart[i]);
+    } else {
+        std::vector<uint32_t> survivors;
+        survivors.reserve(startSlots.size());
+        size_t d = 0;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(startSlots.size()); ++i) {
+            if (d < dyingSlotIndices.size() && dyingSlotIndices[d] == i) {
+                ++d;
+                continue;
+            }
+            survivors.push_back(i);
+        }
+        const uint32_t survivorCount =
+            std::min(newCount, static_cast<uint32_t>(survivors.size()));
+        for (uint32_t i = 0; i < survivorCount; ++i) {
+            m_slotStart[i] = startSlots[survivors[i]];
+            compensate(m_slotStart[i]);
+            m_slotHasStart[i] = true;
+        }
     }
 
     // Dying tiles: camera-compensated pre-removal pose + a straight-down
@@ -149,8 +166,13 @@ void CloseAnimator::Begin(FlipScene& scene,
     // compensated old pose, spawn-ins hidden at the back-spawn point).
     for (uint32_t i = 0; i < newCount; ++i) {
         TileSlot& slot = scene.GetSlotMut(i);
-        if (i < m_survivorCount) {
-            slot = m_survivorStart[i];
+        if (m_slotHasStart[i]) {
+            slot = m_slotStart[i];
+        } else if (m_riseIn) {
+            // Returning to its own place from below — the fall, reversed.
+            slot = m_targetSlots[i];
+            slot.y    -= m_targetSlots[i].scaleY * kDropFactor;
+            slot.alpha = 0.0f;
         } else {
             slot = m_targetSlots[i];
             slot.x     = m_backSpawn.x;
@@ -183,8 +205,8 @@ void CloseAnimator::FinishImmediate(FlipScene& scene)
     m_dyingSlots.clear();
     m_dyingStart.clear();
     m_dyingDrop.clear();
-    m_survivorStart.clear();
-    m_survivorCount = 0;
+    m_slotStart.clear();
+    m_slotHasStart.clear();
 
     m_active   = false;
     m_rawT     = 1.0f;
@@ -197,12 +219,13 @@ void CloseAnimator::Cancel()
     m_active   = false;
     m_justDone = false;
     m_rawT     = 0.0f;
-    m_survivorCount = 0;
-    m_survivorStart.clear();
+    m_slotStart.clear();
+    m_slotHasStart.clear();
     m_targetSlots.clear();
     m_dyingStart.clear();
     m_dyingSlots.clear();
     m_dyingDrop.clear();
+    m_riseIn = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,11 +254,19 @@ void CloseAnimator::Tick(FlipScene& scene)
         return;
 
     uint32_t n = scene.SlotCount();
-    if (n == 0 || n != static_cast<uint32_t>(m_targetSlots.size())) {
+    if (n != static_cast<uint32_t>(m_targetSlots.size())) {
         // Scene was rebuilt underneath us — its slots are the new truth.
         // Bail out without writing anything (stale world positions under
         // a re-derived camera are exactly the mid-morph removal bug the
         // old RemoveClosedWindows guard documents).
+        Cancel();
+        return;
+    }
+    if (n == 0 && m_dyingSlots.empty()) {
+        // Nothing on either side.  An EMPTY target with dying tiles is a
+        // legitimate end state, though — the search filter can take the last
+        // window out of the stack — and those tiles still have a fall to
+        // finish, so it is only the truly empty case that bails here.
         Cancel();
         return;
     }
@@ -260,14 +291,52 @@ void CloseAnimator::Tick(FlipScene& scene)
         TileSlot& slot      = scene.GetSlotMut(i);
         const TileSlot& dst = m_targetSlots[i];
 
-        if (i < m_survivorCount) {
-            const TileSlot& src = m_survivorStart[i];
+        if (m_slotHasStart[i]) {
+            const TileSlot& src = m_slotStart[i];
+            // The carousel's side-swap fade exists for CYCLING, where one
+            // window leaves an end of the row and a different one arrives at
+            // the other — a lerp there would drag a tile across the whole
+            // screen.  A rise-in reflow is not that: the row is simply
+            // getting longer, and the same window is taking its new place in
+            // it.  Fading through there is what read as "the window suddenly
+            // jumped from the right side to the left"; sliding is both
+            // truthful and short, because it only moves by a position or two.
+            if (!m_riseIn && src.rotY * dst.rotY < -0.001f) {
+                // Cover Flow side swap (see CycleAnimator): the survivor
+                // crosses from one side of the carousel to the other —
+                // fade through instead of a cross-screen slide.  The
+                // reflow window drives the fade, so the tile holds its
+                // old pose through the pre-reflow fall like every other
+                // survivor.  Unreachable in the cascade preset.
+                if (reflowP < 0.5f) {
+                    slot       = src;
+                    slot.alpha = src.alpha
+                               * (1.0f - Easing::OutQuad(reflowP * 2.0f));
+                } else {
+                    slot       = dst;
+                    slot.alpha = dst.alpha
+                               * Easing::OutQuad((reflowP - 0.5f) * 2.0f);
+                }
+                continue;
+            }
             slot.x      = src.x      + (dst.x      - src.x)      * ec;
             slot.y      = src.y      + (dst.y      - src.y)      * ec;
             slot.z      = src.z      + (dst.z      - src.z)      * ec;
             slot.scaleX = src.scaleX + (dst.scaleX - src.scaleX) * ec;
             slot.scaleY = src.scaleY + (dst.scaleY - src.scaleY) * ec;
+            slot.rotY   = src.rotY   + (dst.rotY   - src.rotY)   * ec;
             slot.alpha  = src.alpha  + (dst.alpha  - src.alpha)  * ec;
+        } else if (m_riseIn) {
+            // Returning window: the dying tile's fall run backwards, at its
+            // OWN destination.  It never crosses the stack, so it cannot
+            // pass through the windows already standing there — which a
+            // back-spawn arrival does, and is the overlap this replaces.
+            // OutQuad against the fall's InQuad: it decelerates into place
+            // the way the fall accelerated out of it.
+            float ep = Easing::OutQuad(reflowP);
+            slot        = dst;
+            slot.y      = dst.y - dst.scaleY * kDropFactor * (1.0f - ep);
+            slot.alpha  = dst.alpha * ep;
         } else if (reflowP <= 0.0f) {
             // Overflow refill, waiting phase: parked hidden at back-spawn
             // while the dying tile's fall is the eye's focus.

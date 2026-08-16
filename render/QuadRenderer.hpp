@@ -54,6 +54,15 @@ public:
                        ID3D11ShaderResourceView* srv,
                        const QuadDrawCall& draw);
 
+    /// Draw a tile's glass floor reflection (config `reflections`).  The
+    /// caller provides the mirrored MVP (quad shifted one tile-height down
+    /// in unit-quad space) and a vertically flipped UV crop; the dedicated
+    /// PS fades the mirror out quadratically away from the tile's bottom
+    /// edge.  `draw.alpha` should carry slotAlpha * reflection strength.
+    void DrawReflection(ID3D11DeviceContext* ctx,
+                        ID3D11ShaderResourceView* srv,
+                        const QuadDrawCall& draw);
+
 #ifdef CKFLIP_DEBUG_TASKBAR
     /// Bug 11' diagnostic — identical to Draw() but binds a PS that treats
     /// the input texture as STRAIGHT alpha and converts it to premultiplied
@@ -84,6 +93,7 @@ private:
     winrt::com_ptr<ID3D11PixelShader>   m_psDim;
     winrt::com_ptr<ID3D11PixelShader>   m_psPlaceholder;
     winrt::com_ptr<ID3D11PixelShader>   m_psWallpaper;
+    winrt::com_ptr<ID3D11PixelShader>   m_psReflection;
 #ifdef CKFLIP_DEBUG_TASKBAR
     winrt::com_ptr<ID3D11PixelShader>   m_psAssumeStraightAlpha;
     winrt::com_ptr<ID3D11PixelShader>   m_psDebugRed;

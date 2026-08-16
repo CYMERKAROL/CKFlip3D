@@ -64,7 +64,17 @@ public:
     /// this scans for rows containing bright (icon/clock/text) pixels so the
     /// draw can UV-crop to the real content instead of guessing top/bottom.
     /// Returns false if no frame is cached or no content band is found.
-    bool DetectContentCenterV(float& outCenterUvY);
+    ///
+    /// `expectedBandPx` (0 = no check) is how tall the band is supposed to be
+    /// — the visible bar's own height.  A band far taller than that is not
+    /// the taskbar's content: something else was composited into the capture
+    /// (a flyout, a thumbnail popup, the Start menu's glow on the button).
+    /// Its centre would be somewhere in the middle of that other thing, and
+    /// cropping around it draws the wrong slice of the texture — a taskbar
+    /// that looks doubled or smeared.  Rejecting it falls back to the full
+    /// texture, which is the known-good path on captures that are already
+    /// bar-sized, so the failure mode is "no crop" instead of "wrong crop".
+    bool DetectContentCenterV(float& outCenterUvY, int expectedBandPx = 0);
 
 #ifdef CKFLIP_DEBUG_TASKBAR
     /// Debug-only (Bug 11' v8.2 §12 Test B + v8.4 §6).  Copies

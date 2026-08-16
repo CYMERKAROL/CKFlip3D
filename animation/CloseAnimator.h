@@ -108,10 +108,35 @@ public:
     ///                      newly closed windows' visible tiles.
     ///   oldCam           — camera pose BEFORE the rebuild (the frame the
     ///                      startSlots poses were authored under).
+    ///   newSlotSource    — optional per-NEW-slot source: the old slot
+    ///                      index whose window now occupies it, or -1 to
+    ///                      spawn in from the back.  nullptr (the default,
+    ///                      and always the case for the cascade preset)
+    ///                      derives the classic mapping instead: survivors
+    ///                      fill the new slots in ascending order and the
+    ///                      remainder spawn in.  Cover Flow passes an
+    ///                      explicit map because its slot order is a
+    ///                      carousel — a window can move to a slot that
+    ///                      the ascending derivation would never pair it
+    ///                      with, and windows outside the visible row can
+    ///                      surface into it.
+    ///   riseIn           — how a slot with no predecessor ARRIVES.  False
+    ///                      (the default) slides it in from the back-spawn
+    ///                      point, which is right for an overflow refill:
+    ///                      the window really was behind the stack.  True
+    ///                      rises it from below its own destination — the
+    ///                      dying tile's fall, played backwards — which is
+    ///                      right when the window is RETURNING to a place
+    ///                      it left that way, as the search filter's do.
+    ///                      A back-spawn there would fly every returning
+    ///                      window the length of the stack, through all the
+    ///                      others.
     void Begin(FlipScene& scene,
                const std::vector<TileSlot>& startSlots,
                const std::vector<uint32_t>& dyingSlotIndices,
-               const CameraPose& oldCam);
+               const CameraPose& oldCam,
+               const std::vector<int>* newSlotSource = nullptr,
+               bool riseIn = false);
 
     /// Advance on the QPC clock and write the interpolated slot states.
     /// On rawT >= 1 snaps to the target and raises the JustFinished edge.
@@ -150,13 +175,19 @@ private:
     int64_t  m_startQPC = 0;
     int64_t  m_qpcFreq  = 0;
 
-    uint32_t m_survivorCount = 0;           // target slots with a mapped start pose
-    std::vector<TileSlot> m_survivorStart;  // per NEW slot i (i < m_survivorCount), camera-compensated
+    // Per NEW slot: the camera-compensated pose its window held before the
+    // close (m_slotHasStart false → nothing held it, so the slot spawns in
+    // from the back instead).  The cascade derivation fills a prefix, which
+    // is what the old m_survivorCount encoded; Cover Flow's carousel map
+    // can leave gaps anywhere in the row.
+    std::vector<TileSlot> m_slotStart;
+    std::vector<bool>     m_slotHasStart;
     std::vector<TileSlot> m_targetSlots;    // per NEW slot (rebuilt scene snapshot)
     std::vector<TileSlot> m_dyingStart;     // dying tiles' camera-compensated start poses
     std::vector<TileSlot> m_dyingSlots;     // dying tiles' animated current poses
     std::vector<float>    m_dyingDrop;      // per-dying world-space drop distance (screen-down)
     TileSlot m_backSpawn{};                 // spawn-in entry point behind the last slot
+    bool     m_riseIn = false;              // arriving slots rise from below (see Begin)
 
     void ComputeBackSpawn();
 };

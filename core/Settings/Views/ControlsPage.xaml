@@ -6,44 +6,47 @@
                   Padding="24,4,16,20">
         <StackPanel>
 
-            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Hotkeys">
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Input">
                 <StackPanel>
+                    <!-- Mouse & keyboard sub-menu: the activation hotkey, the
+                         commit/cancel keys and the three in-cascade mouse
+                         buttons, all in one place so a binding can be chosen
+                         while the others are visible. -->
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Activation hotkey"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The combination that opens the 3D cascade — keyboard keys, mouse buttons or both. With a held modifier (Ctrl/Shift/Alt/Win), releasing it commits the selection; single-key bindings toggle instead (Enter commits, Esc cancels). Click to record a new combination."/>
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Mouse &amp; keyboard"/>
+                            <TextBlock x:Name="BindingsHint" Style="{StaticResource SettingHintText}"/>
                         </StackPanel>
-                        <Button Grid.Column="1" x:Name="HotkeyButton" Style="{StaticResource AeroButton}"
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                                 VerticalAlignment="Center" MinWidth="120"
-                                Click="ChangeHotkey_Click">
-                            <TextBlock Style="{StaticResource MonoValueText}"
-                                       Text="{Binding ActivationHotkey}"/>
-                        </Button>
+                                Content="Customize…" Click="ManageBindings_Click"/>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
-                    <Grid x:Name="ToggleModeRow">
+                    <!-- Touchpad sub-menu.  Grayed out when the device has no
+                         precision touchpad, or while touchpad navigation is
+                         switched off in the Navigation card below. -->
+                    <Grid x:Name="TouchpadRow">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Toggle activation"/>
-                            <TextBlock x:Name="ToggleModeHint" Style="{StaticResource SettingHintText}"
-                                       Text="Keeps the cascade open after the hotkey is released — commit with Enter, cancel with Esc, and keep cycling with the main key. Off restores the classic hold-to-keep-open behaviour."/>
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Touchpad gestures"/>
+                            <TextBlock x:Name="TouchpadHint" Style="{StaticResource SettingHintText}"/>
                         </StackPanel>
-                        <!-- Managed from code-behind (no direct binding): a
-                             single-key binding is inherently toggle, so the
-                             switch shows as ON and grays out without touching
-                             the persisted value. -->
-                        <CheckBox Grid.Column="1" x:Name="ToggleModeCheck" Style="{StaticResource AeroToggle}"
-                                  Checked="ToggleMode_Changed" Unchecked="ToggleMode_Changed"/>
+                        <Button Grid.Column="1" x:Name="TouchpadButton" Style="{StaticResource AeroButton}"
+                                VerticalAlignment="Center" MinWidth="120"
+                                Content="Customize…" Click="ManageTouchpad_Click"/>
                     </Grid>
-                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Activation filters">
+                <StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -52,7 +55,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Ignore in fullscreen applications"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="When a fullscreen app (game, video, presentation) is in the foreground, Win + Tab is passed through to Windows instead of opening the cascade — nothing gets blocked."/>
+                                       Text="When a fullscreen app (game, video, presentation) is in the foreground, the hotkey is passed through to Windows instead of opening the cascade — nothing gets blocked."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding IgnoreFullscreen}"/>
@@ -66,7 +69,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Ignored applications"/>
                             <TextBlock x:Name="IgnoredSummary" Style="{StaticResource SettingHintText}"
-                                       Text="Win + Tab is passed through to Windows while any of these programs is in the foreground."/>
+                                       Text="The hotkey is passed through to Windows while any of these programs is in the foreground."/>
                         </StackPanel>
                         <Button Grid.Column="1" Style="{StaticResource AeroButton}" VerticalAlignment="Center"
                                 Content="Manage list…" Click="ManageIgnored_Click"/>
@@ -103,6 +106,20 @@
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding KeyboardNav}"/>
                     </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <Grid x:Name="TouchpadNavRow">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Touchpad navigation"/>
+                            <TextBlock x:Name="TouchpadNavHint" Style="{StaticResource SettingHintText}"
+                                       Text="Swipe two fingers left and right to flip through the cascade, and open it with a two-finger diagonal. Windows' own touchpad gestures are left exactly as they are. Off disables every touchpad gesture — the raw-input listener is not even started."/>
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" x:Name="TouchpadNavToggle" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding TouchpadNav}"/>
+                    </Grid>
                 </StackPanel>
             </HeaderedContentControl>
 
@@ -113,6 +130,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
+                               TextWrapping="Wrap" Margin="0,0,16,0"
                                Foreground="{DynamicResource TextSecondaryBrush}"
                                Text="Restore the default trigger behaviour and clear the ignore list."/>
                     <Button Grid.Column="1" Style="{StaticResource AeroButton}"

@@ -20,16 +20,26 @@ set "BUILD=%ROOT%\build"
 set "DIST=%ROOT%\dist"
 set "STAGING=%HERE%Payload\staging"
 
-rem ---- locate the .NET SDK (PATH, then the user-local install) ----------
-where dotnet >nul 2>nul
-if errorlevel 1 (
+rem ---- locate a real .NET SDK (PATH, then the user-local install) --------
+rem NOT `where dotnet`: a runtime-only install puts dotnet.exe on PATH with no
+rem SDK behind it, so the old check passed, the user-local SDK was never
+rem prepended, `dotnet publish` failed — and, because that failure slipped past
+rem `if errorlevel 1` (see below), the script went on to re-sign and announce a
+rem STALE installer as a fresh one.  `dotnet --list-sdks` exits 0 even with
+rem nothing installed, so test whether it listed anything.
+set "SDK_OK="
+for /f "delims=" %%v in ('dotnet --list-sdks 2^>nul') do set "SDK_OK=1"
+if not defined SDK_OK (
     if exist "%LOCALAPPDATA%\Microsoft\dotnet\dotnet.exe" (
         set "PATH=%LOCALAPPDATA%\Microsoft\dotnet;%PATH%"
-    ) else (
-        echo ERROR: .NET SDK not found. Install with:
-        echo   winget install Microsoft.DotNet.SDK.10
-        exit /b 1
     )
+)
+set "SDK_OK="
+for /f "delims=" %%v in ('dotnet --list-sdks 2^>nul') do set "SDK_OK=1"
+if not defined SDK_OK (
+    echo ERROR: .NET SDK not found ^(runtime alone is not enough^). Install with:
+    echo   winget install Microsoft.DotNet.SDK.10
+    exit /b 1
 )
 
 rem ---- 1. Settings app ---------------------------------------------------
@@ -84,7 +94,14 @@ echo === Publishing CKFlip3D.Setup.exe ===
 dotnet publish "%HERE%CKFlip3D.Setup.csproj" -c Release -r win-x64 --self-contained true ^
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true ^
   -p:EnableCompressionInSingleFile=true -o "%DIST%"
-if errorlevel 1 exit /b 1
+rem NOT `if errorlevel 1`: that reads as "errorlevel >= 1", and the dotnet
+rem muxer reports a missing SDK as a NEGATIVE code (-2147450725) which passes
+rem it untouched.  That is precisely how a failed publish once ended with
+rem "Build OK" over an installer nobody had rebuilt.  Test for "not zero".
+if not "%errorlevel%"=="0" (
+    echo ERROR: dotnet publish failed — the installer was NOT rebuilt.
+    exit /b 1
+)
 
 rem The zip was compiled into the exe as an embedded resource. Remove the
 rem build-time intermediate and the pdb so dist\ ships exactly one file.

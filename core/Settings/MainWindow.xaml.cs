@@ -27,6 +27,12 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         StateChanged += OnWindowStateChanged;
 
+        // The log is read from disk and followed while the window lives, so
+        // anything the core records during this session reaches the sidebar
+        // without the user reopening anything.
+        DiagnosticsLog.Changed += () => Dispatcher.BeginInvoke(UpdateLogBadges);
+        DiagnosticsLog.StartWatching();
+
         // Live theme switching: the model property changes (combo box,
         // Revert, Reset) and the window fades through the swap.
         App.Settings.PropertyChanged += (_, e) =>
@@ -221,6 +227,11 @@ public partial class MainWindow : Window
         NavPanel.BeginAnimation(OpacityProperty, navFade);
         NavShift.BeginAnimation(TranslateTransform.XProperty, navSlide);
 
+        // Ask the questions only this app can answer (an unsupported Windows,
+        // a core that is not where it should be), then show what is there.
+        DiagnosticsLog.RunEnvironmentChecks();
+        UpdateLogBadges();
+
         // Multi-monitor settings only make sense with 2+ monitors.
         if (MonitorInterop.EnumerateMonitors().Count < 2)
         {
@@ -242,6 +253,53 @@ public partial class MainWindow : Window
             timer.Tick += (_, _) => { timer.Stop(); OfferCoreLaunch(); };
             timer.Start();
         }
+
+        StartCoreWatch();
+    }
+
+    // =====================================================================
+    // Core liveness while the window is open
+    // =====================================================================
+
+    private System.Windows.Threading.DispatcherTimer? _coreWatch;
+    private bool _coreWasRunning;
+
+    /// <summary>
+    /// RunEnvironmentChecks asks whether the core is running exactly once, as
+    /// the window opens. A core that DIED while someone was sitting in front
+    /// of the settings therefore went unreported: the Diagnostics page said
+    /// "not running" in its runtime rows — those are re-read on every visit —
+    /// while the log, which is the thing whose whole job is to report this,
+    /// stayed silent and the sidebar stayed clean.
+    ///
+    /// Edge-triggered deliberately. Appending on every tick would turn one
+    /// fact into a count climbing forever, and the log groups by code, so it
+    /// would read "CKFlip3D is not running ×300". Only the transitions are
+    /// events. The rising edge clears for the same reason the Launch button
+    /// does: the entry describes a state, and the state is over.
+    /// </summary>
+    private void StartCoreWatch()
+    {
+        _coreWasRunning = CoreLocator.IsCoreRunning();
+
+        _coreWatch = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2),
+        };
+        _coreWatch.Tick += (_, _) =>
+        {
+            bool now = CoreLocator.IsCoreRunning();
+            if (now == _coreWasRunning) return;
+            _coreWasRunning = now;
+
+            if (now) DiagnosticsLog.ClearCode(DiagnosticsLog.Code.CoreNotRunning);
+            else     DiagnosticsLog.ReportCoreNotRunning();
+        };
+        _coreWatch.Start();
+
+        // The timer holds a reference to this window; without stopping it the
+        // dispatcher keeps polling a window that is on its way out.
+        Closed += (_, _) => _coreWatch?.Stop();
     }
 
     // =====================================================================
@@ -262,7 +320,7 @@ public partial class MainWindow : Window
             ("Not now", false, null));
     }
 
-    private void LaunchCore()
+    private async void LaunchCore()
     {
         string? exe = CoreLocator.FindCoreExe();
         if (exe == null)
@@ -285,7 +343,25 @@ public partial class MainWindow : Window
         catch
         {
             // UAC declined / launch failure — nothing to repair.
+            return;
         }
+
+        // CK0602 was raised when this window opened and the core was absent.
+        // Starting it answers that entry, but nothing was retracting it, so the
+        // warning and its sidebar count sat there over a switcher that was by
+        // then running — the log stating something untrue about the machine.
+        //
+        // ShellExecute returns as soon as the elevation prompt is answered and
+        // the elevated process starts SEPARATELY, so its being up cannot be
+        // inferred from the call returning: poll instead, and clear only on the
+        // evidence that it is actually there. If it never arrives (declined at
+        // a second prompt, immediate exit) the entry is left exactly as it was,
+        // because then it is still true.
+        for (int i = 0; i < 40 && !CoreLocator.IsCoreRunning(); i++)
+            await System.Threading.Tasks.Task.Delay(250);
+
+        if (CoreLocator.IsCoreRunning())
+            DiagnosticsLog.ClearCode(DiagnosticsLog.Code.CoreNotRunning);
     }
 
     private TextBlock MakeModalText(string text) => new()
@@ -359,6 +435,7 @@ public partial class MainWindow : Window
             "Appearance"   => ((UserControl)GetPage<AppearancePage>(), "Appearance"),
             "MultiMonitor" => (GetPage<MultiMonitorPage>(), "Multi-monitor"),
             "Controls"     => (GetPage<ControlsPage>(), "Controls"),
+            "Search"       => (GetPage<SearchPage>(), "Search"),
             "Diagnostics"  => (GetPage<DiagnosticsPage>(), "Diagnostics"),
             "Recovery"     => (GetPage<RecoveryPage>(), "Recovery"),
             "About"        => (GetPage<AboutPage>(), "About"),
@@ -389,6 +466,46 @@ public partial class MainWindow : Window
         page.DataContext = App.Settings;
         ShowBackOrb();
         SetPage(page, title);
+    }
+
+    // =====================================================================
+    // Log marks (sidebar, above the version)
+    // =====================================================================
+
+    /// <summary>
+    /// Keep the marks in step with the log. Called on every change, including
+    /// ones the core makes while this window is open — a failure that happens
+    /// during a session should announce itself, not wait for a restart.
+    /// </summary>
+    private void UpdateLogBadges()
+    {
+        int errors = DiagnosticsLog.CountOf(DiagSeverity.Critical);
+        int warnings = DiagnosticsLog.CountOf(DiagSeverity.Warning);
+        int infos = DiagnosticsLog.CountOf(DiagSeverity.Info);
+
+        void Apply(Button button, TextBlock label, int count)
+        {
+            button.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            label.Text = count.ToString(System.Globalization.CultureInfo.CurrentCulture);
+        }
+
+        Apply(BadgeCritical, BadgeCriticalCount, errors);
+        Apply(BadgeWarning, BadgeWarningCount, warnings);
+        Apply(BadgeInfo, BadgeInfoCount, infos);
+
+        LogBadges.Visibility = (errors + warnings + infos) > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        // Unread entries pulse once so a mark that was already on screen still
+        // registers when its count goes up; read ones simply sit there.
+        LogBadges.Opacity = DiagnosticsLog.HasUnseen ? 1.0 : 0.72;
+    }
+
+    private void LogBadge_Click(object sender, RoutedEventArgs e)
+    {
+        if (PageHost.Content is LogPage)
+            return;                       // already looking at it
+        PushSubPage(new LogPage(), "Log");
     }
 
     private void BackOrb_Click(object sender, RoutedEventArgs e)
@@ -437,6 +554,16 @@ public partial class MainWindow : Window
         ApplyBar.BeginAnimation(HeightProperty,
             new DoubleAnimation(target, TimeSpan.FromMilliseconds(220))
             { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } });
+
+        // A combination that cannot work is not offered for saving: Apply
+        // LEAVES rather than greys out, so the bar reads as "there is nothing
+        // to press here yet" instead of "press harder".  Revert stays — it is
+        // the way back out — and the message says which setting is holding it.
+        bool ok = App.Settings.WindowSnapSatisfied;
+        ApplyButton.Visibility = ok ? Visibility.Visible : Visibility.Collapsed;
+        ApplyBarText.Text = ok
+            ? "You have unsaved changes. Apply to update CKFlip3D."
+            : "Window snap can only be off with “Let the mouse act on the stack” on.";
     }
 
     private void BtnApply_Click(object sender, RoutedEventArgs e)
@@ -447,10 +574,26 @@ public partial class MainWindow : Window
         // anything the core only reads at startup.
         ConfigService.RestartCore();
 
+        // Settings that were saved but never reached the switcher are the
+        // quietest way for this button to lie: the file is right, the running
+        // program is not, and nothing on screen says so.
+        if (CoreLocator.FindCoreExe() != null && !CoreLocator.IsCoreRunning())
+        {
+            DiagnosticsLog.Append(DiagnosticsLog.Code.CoreUnreachable,
+                DiagSeverity.Warning,
+                "The running CKFlip3D did not accept the new settings",
+                "the settings were saved, but CKFlip3D was not running to receive "
+                + "them; start it for them to take effect.");
+        }
+
         // "Start with Windows" lives in the Task Scheduler, not in config.json.
         string? startupError = StartupService.Apply(App.Settings.StartWithWindows);
         if (startupError != null)
         {
+            DiagnosticsLog.Append(DiagnosticsLog.Code.StartupTaskFailed,
+                DiagSeverity.Warning,
+                "The startup entry could not be created",
+                "CKFlip3D will not start with Windows — " + startupError);
             var body = new TextBlock
             {
                 Text = $"Settings were saved, but the startup entry could not be updated:\n\n{startupError}",
@@ -501,6 +644,33 @@ public partial class MainWindow : Window
             new DoubleAnimation(0.94, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
         ModalScale.BeginAnimation(ScaleTransform.ScaleYProperty,
             new DoubleAnimation(0.94, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+    }
+
+    /// <summary>
+    /// Screen rectangle of the modal's button strip.
+    ///
+    /// A capture that binds a BARE left click cannot let one through to the
+    /// UI, so it needs somewhere the click is left alone — otherwise the only
+    /// way out of the modal is the keyboard. Returns an empty rect when the
+    /// modal is not up or has not been laid out yet, which the capture reads
+    /// as "no dead zone".
+    /// </summary>
+    public Rect ModalButtonsScreenRect()
+    {
+        if (ModalLayer.Visibility != Visibility.Visible
+            || ModalButtons.ActualWidth <= 0 || ModalButtons.ActualHeight <= 0)
+            return Rect.Empty;
+        try
+        {
+            Point tl = ModalButtons.PointToScreen(new Point(0, 0));
+            Point br = ModalButtons.PointToScreen(
+                new Point(ModalButtons.ActualWidth, ModalButtons.ActualHeight));
+            return new Rect(tl, br);
+        }
+        catch (InvalidOperationException)
+        {
+            return Rect.Empty;   // no presentation source yet
+        }
     }
 
     public void CloseModal()

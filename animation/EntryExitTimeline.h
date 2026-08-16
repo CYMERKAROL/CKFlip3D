@@ -10,8 +10,9 @@
 ///   depthBlend   — moderate lag, drives z and alpha
 ///   scaleBlend   — tracks depth, drives scaleX/scaleY
 ///   tiltBlend    — slightly delayed, drives scene-wide tilt
-///   rotBlend     — most delayed, drives per-tile rotY
-///                  (CKFlip's TileSlot has no rotY; sampled but inactive)
+///   rotBlend     — most delayed, drives per-tile rotY (flat 0 → slot
+///                  rotY; a no-op in the cascade preset where every slot
+///                  rotY is 0, active for Cover Flow side tiles)
 ///   dimBlend     — fastest of all, drives background dim multiplier
 namespace EntryExitTimeline {
 
