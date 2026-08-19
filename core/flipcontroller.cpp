@@ -1,3 +1,14 @@
+// ---------------------------------------------------------------------------
+// The whole session in one place: scanning windows, starting captures, running
+// the entry morph, answering input, drawing every frame, and putting the
+// desktop back exactly as it was on the way out.
+//
+// It is the largest file in the project on purpose.  The pieces here are the
+// ones that have to stay in step with each other frame by frame, and splitting
+// them apart would only move the coupling somewhere harder to see.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "flipcontroller.h"
 #include "DebugLog.h"
 #include "Diagnostics.h"
@@ -13,6 +24,11 @@
 #include <cwchar>
 #include <cwctype>
 #include <limits>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <unordered_map>
 #include <DirectXMath.h>
 
 #define WIN32_LEAN_AND_MEAN
@@ -21,8 +37,17 @@
 #include <shldisp.h>
 #include <objbase.h>
 
+// Session hooks for the off-thread window-icon resolver.  Declared here
+// because Activate primes it and the teardown paths stop it, while the
+// resolver itself lives beside GetLabelIcon — its only reader — further down.
+namespace {
+HICON ClassIcon(HWND hwnd);
+void StartIconResolver(const std::vector<HWND>& prime);
+void StopIconResolver();
+} // namespace
+
 // ---------------------------------------------------------------------------
-// v8.7 Bug TB / HC13 — shared content-band UV crop.
+// Shared content-band UV crop.
 //
 // One implementation used by every taskbar draw/dump site so they all compute
 // the SAME uvMinY/uvMaxY.  On Win10 22H2 / Win11 24H2 the WGC capture of
@@ -32,10 +57,10 @@
 // [0,1].  When `contentResolved` is false (Win11 25H2 — capture already
 // bar-sized) the full texture is returned unchanged, so 25H2 is a no-op.
 //
-// Previously Activate() used the content-band crop but RenderFrame() Layer 2
-// reverted to a bottom crop `(texH - tbH)/texH`, which sampled the dark
-// #282832 fill on the failing OSes — the taskbar "worked for one frame then
-// vanished".  Routing all sites through this helper closes that gap.
+// It has to be one helper, because a site that computes its own crop drifts:
+// a bottom crop of `(texH - tbH)/texH` looks reasonable and samples the dark
+// #282832 fill on the OSes where the capture is tall, which shows up as a
+// taskbar that works for one frame and then vanishes.
 static void ComputeTaskbarContentBandUV(int texH, float tbH,
                                         bool contentResolved,
                                         float contentCenterY,
@@ -72,9 +97,9 @@ static bool ValidRect(const RECT& r)
 // ---------------------------------------------------------------------------
 // A shell flyout in front of the cascade (Start, search, quick settings)
 //
-// Tapping the Windows key and then reaching for Win+Tab a moment later opens
-// the cascade with the Start menu still up, and two things then go wrong that
-// look unrelated but are the same cause:
+// Tapping the Windows key and then reaching for Win+Tab opens the cascade with
+// the Start menu still up, and two things go wrong that look unrelated but
+// share one cause:
 //
 //   * Windows refuses SetForegroundWindow to every other process while the
 //     Start screen owns the foreground — one of the documented conditions, and
@@ -500,9 +525,9 @@ static const RECT& ResolveMorphScreenRect(const EntryExitAnimator& animator,
 
 #ifdef CKFLIP_DEBUG_TASKBAR
 // ---------------------------------------------------------------------------
-// Bug 11' v8.4 Patch D/E — runtime taskbar debug modes + pre/post-hide dumps.
-// Selected via the CKFLIP_TASKBAR_MODE environment variable.  Debug builds
-// only; release builds compile none of this.
+// Runtime taskbar debug modes plus the pre/post-hide dumps.  Selected via the
+// CKFLIP_TASKBAR_MODE environment variable.  Debug builds only; release builds
+// compile none of this.
 // ---------------------------------------------------------------------------
 enum class TaskbarDebugMode {
     Normal,
@@ -529,13 +554,13 @@ static TaskbarDebugMode ReadTaskbarDebugMode()
 // Cached per Activate so we don't hit the env API per frame.
 static TaskbarDebugMode g_taskbarDebugMode = TaskbarDebugMode::Normal;
 
-// Pre-hide taskbar SRV for `freeze` mode — strong COM reference (v8.4.1 §4.3)
-// so it survives WGCCapture swapping its cached SRV.
+// Pre-hide taskbar SRV for `freeze` mode.  A strong COM reference, so it
+// survives WGCCapture swapping its cached SRV.
 static winrt::com_ptr<ID3D11ShaderResourceView> g_taskbarFreezeSRV;
 
 // One-shot UV-aware taskbar dump written next to the executable.
-// v8.7.1 §1 — takes the content-band state so the dump reports the EXACT crop
-// the renderer uses, not the legacy bottom crop (HC13).
+// Takes the content-band state so the dump reports the EXACT crop the renderer
+// uses, rather than a bottom crop of its own.
 static void DumpTaskbarDebug(WGCCapture* cap, const RECT& tbRect,
                              bool contentResolved, float contentCenterY,
                              const wchar_t* suffix)
@@ -638,7 +663,6 @@ static void DrawTaskbarLayer(ID3D11DeviceContext* ctx,
 #endif
 }
 
-// ---------------------------------------------------------------------------
 bool FlipController::Init(HINSTANCE hInstance)
 {
     m_hInstance = hInstance;
@@ -677,11 +701,11 @@ void FlipController::Shutdown()
 
     m_captureCache.clear();
     m_wallpaperCapture.reset();
+    StopIconResolver();   // no-op unless the session ended some other way
     ResetSelectedLabel();
     m_renderer.Shutdown();
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::Activate()
 {
     if (m_active) {
@@ -844,6 +868,20 @@ void FlipController::Activate()
                           L"under General → Cascade");
         m_active = false;
         return;
+    }
+
+    // 4a. Start asking, off-thread, for the icons that cannot be read from
+    //     window class data — primed with the whole stack so the answers are
+    //     in long before the label first appears.  See the resolver's note:
+    //     this is what keeps a busy window's WM_GETICON off the render
+    //     thread.  Costs the session one thread that spends its life asleep.
+    {
+        std::vector<HWND> primeIcons;
+        primeIcons.reserve(m_windows.size());
+        for (const auto& w : m_windows)
+            if (w.hwnd && w.hwnd != m_desktopHwnd)
+                primeIcons.push_back(w.hwnd);
+        StartIconResolver(primeIcons);
     }
 
     // 5. Get viewport dimensions for resolution-independent layout.
@@ -1091,7 +1129,7 @@ void FlipController::Activate()
         }
     }
 
-    // v8.5 — resolve the taskbar content band so the draw can UV-crop to the
+    // Resolve the taskbar content band so the draw can UV-crop to the
     // real taskbar.  On Win10 / Win11 24H2 the WGC Shell_TrayWnd capture is
     // far taller than the bar with the content in only a thin band; this
     // measures where that band is instead of guessing.  Falls back to the
@@ -1124,14 +1162,12 @@ void FlipController::Activate()
     // live stream (a hidden Shell_TrayWnd stops delivering WGC frames,
     // which is exactly the frozen-clock symptom).
     //
-    // v1.1: the old "tall 24H2-style capture → keep the frozen snapshot"
-    // rule is gone.  It predated the HC13 shared content-band crop; today
-    // every draw site UV-crops live frames through the SAME
-    // ComputeTaskbarContentBandUV path as the frozen snapshot, so a tall
-    // capture renders identically live and frozen — while the rule itself
-    // made the option permanently dead on Win11 24H2 (and the previous
-    // !contentResolved form killed it on 25H2 as well, since icon/clock
-    // rows count as a "content band" on a bar-sized capture too).
+    // There is deliberately no "the capture looks tall, so fall back to the
+    // frozen snapshot" rule here.  Every draw site UV-crops live frames
+    // through the same ComputeTaskbarContentBandUV path as the frozen
+    // snapshot, so a tall capture renders identically either way, and any
+    // such rule would only make the option permanently dead on the very
+    // Windows builds that produce tall captures.
     m_taskbarLiveActive = m_config && m_config->taskbarLivePreview
         && m_taskbarCapture != nullptr;
     // Asked for a live taskbar and got no capture to make one from: the
@@ -1171,8 +1207,8 @@ void FlipController::Activate()
     }
 
 #ifdef CKFLIP_DEBUG_TASKBAR
-    // Bug 11' v8.4 Patch D/E — read the taskbar debug mode and snapshot the
-    // pre-hide state BEFORE HideRealTaskbar() runs, so `nohide`/`freeze`
+    // Read the taskbar debug mode and snapshot the pre-hide state BEFORE
+    // HideRealTaskbar() runs, so `nohide`/`freeze`
     // work and the pre-hide dump captures the live source.  Controller
     // thread; once per activation; never from the WGC FrameArrived callback.
     g_taskbarDebugMode = ReadTaskbarDebugMode();
@@ -1201,6 +1237,7 @@ void FlipController::Activate()
     //     This eliminates the black flash — the first visible frame has content.
     {
         m_renderer.BeginFrame();
+        m_quad.ResetStateCache();
         m_quad.SetAntialiasing(EffectiveAntialiasing());
         auto* ctx = m_renderer.GetContext();
         float cascadeAspect = m_cascadeAspect;
@@ -1208,7 +1245,7 @@ void FlipController::Activate()
             DirectX::XMLoadFloat4x4(&m_monRemapNDC);
         uint32_t count = m_scene.SlotCount();
 
-        m_quad.DrawDim(ctx, 1.0f);
+        // The opaque backdrop is BeginFrame's clear — see Renderer::BeginFrame.
 
         // Wallpaper background.  Source = Progman/WorkerW WGC capture —
         // the desktop tile's capture, or the dedicated wallpaper capture
@@ -1302,9 +1339,9 @@ void FlipController::Activate()
                         * DirectX::XMMatrixTranslation(cx, cy, 0.0f));
                     tbDraw.alpha      = 1.0f;
                     tbDraw.blurAmount = 0.0f;
-                    // v8.7 Bug TB — taskbar UV crop to the MEASURED content
-                    // band via the shared helper (same crop as RenderFrame
-                    // Layer 2 and the debug dump — HC13).
+                    // Taskbar UV crop to the MEASURED content band via the
+                    // shared helper (same crop as RenderFrame Layer 2 and
+                    // the debug dump).
                     ComputeTaskbarContentBandUV(texH, tbH,
                         m_taskbarContentResolved, m_taskbarContentCenterY,
                         tbDraw.uvMinY, tbDraw.uvMaxY);
@@ -1369,12 +1406,8 @@ void FlipController::Activate()
                     XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
                     XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                     XMMatrixTranslation(slot.x, slot.y, slot.z);
-                XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
-                XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
-                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-                XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-                XMMATRIX proj   = XMMatrixPerspectiveFovLH(
-                    XMConvertToRadians(m_scene.GetFovDeg()), cascadeAspect, 0.1f, 200.0f);
+                XMMATRIX view, proj;
+                m_scene.CameraMatrices(cascadeAspect, view, proj);
 
                 QuadDrawCall draw;
                 XMStoreFloat4x4(&draw.mvp, world * view * proj * monRemap);
@@ -1438,13 +1471,14 @@ void FlipController::Activate()
     // 12. NOW show the overlay — first visible frame already has content.
     m_renderer.Show();
 
-    // 13. Hide desktop icons and real taskbar.
+    // 13. Hide the real taskbar.  The desktop ICONS are deliberately left
+    // alone — see the note further down for what hiding them cost and never
+    // bought.
     DwmFlush();
-    HideDesktopIcons();
     HideRealTaskbar();
 
 #ifdef CKFLIP_DEBUG_TASKBAR
-    // Patch E — post-hide dump.  Give DWM a frame to refresh the capture
+    // Post-hide dump.  Give DWM a frame to refresh the capture
     // so the dump reflects the source state after HideRealTaskbar().
     if (m_taskbarCapture) {
         DwmFlush();
@@ -1799,7 +1833,6 @@ void FlipController::Scrub(float windows)
     ScrubAdvance(windows);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::ScrubAdvance(float windows)
 {
     float remaining = windows;
@@ -2111,7 +2144,7 @@ void FlipController::Dismiss()
     float dW = primaryW > 0 ? static_cast<float>(primaryW) : vpW;
     float dH = primaryH > 0 ? static_cast<float>(primaryH) : vpH;
 
-    // Endpoint Z ranks for v8.2 Bug 8''.
+    // Endpoint Z ranks for the flat endpoint.
     //   - Sized to visibleN (matches m_flatSlots.size() in BeginExit, NOT
     //     m_windows.size()).
     //   - Selected window (index 0) goes to rank 0 (top of flat endpoint).
@@ -2175,7 +2208,8 @@ void FlipController::Dismiss()
     // Per-tile fade-out: tiles whose corresponding window won't be visible
     // after the overlay hides decay to α=0 across the reverse morph.  This
     // prevents the "non-selected app's last frame leaks behind the picked
-    // window" artefact and replaces the old desktop-selected special case.
+    // window" artefact, and covers the desktop-selected case with the same
+    // rule rather than a special one.
     std::vector<bool> fadeOutFlags(orderedWins.size(), false);
     for (size_t i = 0; i < orderedWins.size(); ++i) {
         if (i == 0) continue;                          // selected stays visible
@@ -2450,8 +2484,8 @@ void FlipController::Escape()
     float dW = primaryW > 0 ? static_cast<float>(primaryW) : vpW;
     float dH = primaryH > 0 ? static_cast<float>(primaryH) : vpH;
 
-    // Bug 8'' §8.7 Option A — Escape passes an empty zRanks vector so the
-    // endpoint-Z override is skipped, preserving legacy escape behaviour.
+    // Escape passes an empty zRanks vector so the endpoint-Z override is
+    // skipped: a cancel puts every window back where it was, untouched.
     std::vector<uint32_t> escZRanks;  // empty → override skipped
 
     // Escape is a pure cancel — every tile reverses cleanly to its entry
@@ -2473,15 +2507,16 @@ void FlipController::Escape()
 }
 
 // ---------------------------------------------------------------------------
-// FinishDismiss — original Dismiss() body, now called by the render loop
-// after the exit morph completes.  Brings the selected window forward (or
-// triggers the Show-Desktop toggle).
+// FinishDismiss — the actual switching, run by the render loop once the exit
+// morph completes.  Brings the selected window forward, or triggers the
+// Show-Desktop toggle.
 // ---------------------------------------------------------------------------
 void FlipController::FinishDismiss()
 {
     m_active = false;
     m_cycleQueue.clear();
     m_reverseDelayPending = false;
+    StopIconResolver();
 
     // Cancel any cycle-anim state that may have been left in-flight when
     // Dismiss() fired (Dismiss intentionally does NOT stop the cycle so the
@@ -2525,6 +2560,7 @@ void FlipController::FinishDismiss()
                                       L"shell surface such as the Start menu");
         }
     }
+
     DwmFlush();
 
     StopCaptures();
@@ -2550,7 +2586,8 @@ void FlipController::FinishDismiss()
     m_sessionFrozen = false;
 
     m_renderer.Hide();
-    RestoreDesktopIcons();
+    // The taskbar comes back on THIS side of the hide: it is topmost, so
+    // showing it while the overlay is still up would pop it over the cascade.
     ShowRealTaskbar();
     m_secondaryTrays.clear();
 
@@ -2560,7 +2597,7 @@ void FlipController::FinishDismiss()
     m_taskbarDrawOnTop = false;
     m_taskbarLocator.Shutdown();
     m_entryExitAnimator.ClearEntryFlatCache();
-    m_originalZOrder.clear();   // Bug 8'' — session-end cleanup
+    m_originalZOrder.clear();   // session-end cleanup
     // Pointer / search state, released with everything else the session owned
     // (ClearSearchState stops the hidden windows' captures too).
     m_hover.Reset();
@@ -2585,16 +2622,15 @@ void FlipController::FinishDismiss()
     // hook's flag belongs to the NEXT session and clearing it would strand
     // that one instead.  ResolveReactivation owns it from here.
     //
-    // ...and m_reactivatePending only catches the re-activations that were
-    // DELIVERED before this teardown began.  Everything above — DwmFlush,
-    // StopCaptures, UncloakAll, ShowRealTaskbar — runs without pumping
-    // messages, so a hotkey pressed during it raises the hook's flag for a
-    // session whose activation is still sitting in the queue, and the
-    // unconditional clear this replaced would switch that session off before it
-    // ever ran: cascade on screen, hook disarmed, every key falling through to
-    // whatever is behind the overlay.  Handing back the identity taken at
-    // Activate makes the clear a no-op in exactly that case and unchanged in
-    // every other.
+    // ...and m_reactivatePending only catches re-activations DELIVERED before
+    // this teardown began.  Everything above (DwmFlush, StopCaptures,
+    // UncloakAll, ShowRealTaskbar) runs without pumping messages, so a hotkey
+    // pressed during it raises the hook's flag for a session whose activation
+    // is still sitting in the queue.  Clearing unconditionally would switch
+    // that session off before it ever ran: cascade on screen, hook disarmed,
+    // every key falling through to whatever is behind the overlay.  Handing
+    // back the identity taken at Activate makes the clear a no-op in exactly
+    // that case and unchanged in every other.
     if (!m_reactivatePending)
         KeyboardHook::EndSessionIfEpoch(m_sessionEpoch);
     // Back to waiting for a hotkey — see the note at the end of Activate.
@@ -2605,14 +2641,15 @@ void FlipController::FinishDismiss()
 }
 
 // ---------------------------------------------------------------------------
-// FinishEscape — original Escape() body, called after the exit morph
-// completes.  No foreground/show-desktop — Escape is a pure cancel.
+// FinishEscape — teardown after the exit morph completes.  No foreground call
+// and no show-desktop: Escape is a pure cancel.
 // ---------------------------------------------------------------------------
 void FlipController::FinishEscape()
 {
     m_active = false;
     m_cycleQueue.clear();
     m_reverseDelayPending = false;
+    StopIconResolver();
     // Cancel any in-flight cycle (see FinishDismiss for rationale).
     m_cycleAnim.Cancel();
     m_closeAnim.Cancel();
@@ -2643,7 +2680,7 @@ void FlipController::FinishEscape()
     m_sessionFrozen = false;
     m_renderer.Hide();
 
-    RestoreDesktopIcons();
+    // The taskbar is topmost and has to wait for the overlay to be gone.
     ShowRealTaskbar();
     m_secondaryTrays.clear();
 
@@ -2653,7 +2690,7 @@ void FlipController::FinishEscape()
     m_taskbarDrawOnTop = false;
     m_taskbarLocator.Shutdown();
     m_entryExitAnimator.ClearEntryFlatCache();
-    m_originalZOrder.clear();   // Bug 8'' — session-end cleanup
+    m_originalZOrder.clear();   // session-end cleanup
     // Pointer / search state, released with everything else the session owned
     // (ClearSearchState stops the hidden windows' captures too).
     m_hover.Reset();
@@ -2667,27 +2704,10 @@ void FlipController::FinishEscape()
     g_taskbarFreezeSRV = nullptr;
     g_taskbarDebugMode = TaskbarDebugMode::Normal;
 #endif
-    // INVARIANT, enforced last: an idle controller and a hook that still
-    // believes a session is running is the limbo state — it swallows every
-    // keystroke, Windows key included, until the process dies.  Two separate
-    // paths have already produced it (a re-activation during the exit, a
-    // pointer commit), so rather than keep patching call sites, the teardown
-    // itself now guarantees the two agree.
-    //
-    // The one exception is a re-activation waiting to be honoured: there the
-    // hook's flag belongs to the NEXT session and clearing it would strand
-    // that one instead.  ResolveReactivation owns it from here.
-    //
-    // ...and m_reactivatePending only catches the re-activations that were
-    // DELIVERED before this teardown began.  Everything above — DwmFlush,
-    // StopCaptures, UncloakAll, ShowRealTaskbar — runs without pumping
-    // messages, so a hotkey pressed during it raises the hook's flag for a
-    // session whose activation is still sitting in the queue, and the
-    // unconditional clear this replaced would switch that session off before it
-    // ever ran: cascade on screen, hook disarmed, every key falling through to
-    // whatever is behind the overlay.  Handing back the identity taken at
-    // Activate makes the clear a no-op in exactly that case and unchanged in
-    // every other.
+    // See FinishDismiss — the same invariant, enforced last for the same
+    // reasons: an idle controller must never leave the hook believing a
+    // session is still running, and the epoch is what makes the clear a no-op
+    // for a re-activation already on its way.
     if (!m_reactivatePending)
         KeyboardHook::EndSessionIfEpoch(m_sessionEpoch);
     // Back to waiting for a hotkey — see the note at the end of Activate.
@@ -2709,7 +2729,6 @@ void FlipController::FinishEscape()
 // otherwise the hook goes on swallowing input for a cascade that never
 // opened, which is the same limbo from the other direction.
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // Tell the hook the session is over — and, when the request did not come from
 // the keyboard, arm the Win/Alt release defusal it could not arm itself.
 //
@@ -2718,9 +2737,9 @@ void FlipController::FinishEscape()
 // click on a tile or a touchpad tap, because the hook cannot see a decision
 // in a click.  So "the hook still thinks a session is running" IS the test
 // for a non-keyboard commit, and it is one the code cannot get out of step
-// with.  The previous attempt carried a boolean from the click down to here
-// and lost it on the way — CancelSelectJump cleared it one line before the
-// commit — which is exactly the failure this shape rules out.
+// with.  Carrying a boolean from the click down to here instead is what this
+// shape rules out: such a flag gets lost on the way, and did, cleared by
+// CancelSelectJump one line before the commit that needed it.
 //
 // Getting it wrong the other way matters too: re-deciding "is a modifier
 // still held" milliseconds after the hook already decided it races the
@@ -2736,7 +2755,6 @@ void FlipController::EndSessionForHook()
         KeyboardHook::SetSessionActive(false);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::ResolveReactivation()
 {
     if (!m_reactivatePending)
@@ -2751,7 +2769,6 @@ void FlipController::ResolveReactivation()
         KeyboardHook::AbortSessionIfIdle(m_sessionEpoch);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::StartCaptures()
 {
     m_captures.clear();
@@ -2830,7 +2847,6 @@ void FlipController::StopCaptures()
     m_captures.clear();
 }
 
-// ---------------------------------------------------------------------------
 WGCCapture* FlipController::WallpaperCaptureSource()
 {
     if (m_desktopTileDisabled) {
@@ -2864,7 +2880,6 @@ WGCCapture* FlipController::WallpaperCaptureSource()
     return nullptr;
 }
 
-// ---------------------------------------------------------------------------
 ID3D11ShaderResourceView* FlipController::BackdropSRV()
 {
     WGCCapture* wallCap = WallpaperCaptureSource();
@@ -2926,7 +2941,6 @@ ID3D11ShaderResourceView* FlipController::BackdropSRV()
     return m_staticBackdropSRV.get();
 }
 
-// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Slot ↔ window mapping (see flipcontroller.h).  The cascade preset — and
 // Cover Flow whenever every window fits a slot — pairs slot i with
@@ -3004,7 +3018,6 @@ std::vector<WindowInfo> FlipController::SlotOrderedWindows() const
     return out;
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::RebuildSceneAspects()
 {
     // Desktop-relative sizing is intentionally based on the primary monitor,
@@ -3041,7 +3054,6 @@ void FlipController::RebuildSceneAspects()
     m_scene.RelayoutCoverFlowX();
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::InjectDesktopWindow()
 {
     // Find the desktop background window (Progman or WorkerW with SHELLDLL_DefView)
@@ -3068,7 +3080,6 @@ void FlipController::InjectDesktopWindow()
     m_windows.push_back(desktop);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::UpdateDesktopCaptureGeometry()
 {
     m_desktopBackdropRect = m_monLayout.virtualScreen;
@@ -3119,7 +3130,6 @@ void FlipController::UpdateDesktopCaptureGeometry()
     CKLog::Log(buf);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::DeduplicateWindows()
 {
     // Remove our overlay HWND and any desktop background windows that the
@@ -3223,16 +3233,15 @@ void FlipController::FilterExcludedWindows()
 // GetWindow(GW_HWNDPREV) walking from the topmost window so the order is
 // stable even if the scanner did extra filtering / reordering elsewhere.
 //
-// Why pure Z-order: the previous PID-grouping + pixel-area sort caused
-// "tile leak" artefacts on dismiss — when the visual back-to-front order
-// of cascade tiles disagreed with the OS Z-order, the freshly-foregrounded
-// pick momentarily showed back tiles "leaking through" until DWM caught
-// up.  Honouring the OS Z-order makes our cascade match what the user
-// will see immediately after the overlay hides.
+// Why PURE Z-order, and not a nicer-looking sort by program or by size: any
+// order that disagrees with the OS Z-order leaks tiles on dismiss.  The
+// freshly-foregrounded pick shows back tiles through it until DWM catches up.
+// Honouring the OS order makes the cascade match what the user will see the
+// moment the overlay hides.
 // ---------------------------------------------------------------------------
 void FlipController::SortWindowsByProgram()
 {
-    // Bug 8'' (v8.2.1 §3) — m_originalZOrder is a session-start snapshot.
+    // m_originalZOrder is a session-start snapshot.
     // Clear it first so an early return leaves it empty, never stale from
     // a previous session.
     m_originalZOrder.clear();
@@ -3397,7 +3406,7 @@ void FlipController::SortWindowsByProgram()
         }
     }
 
-    // Bug 8'' — promote the raw OS Z-rank map to a session-start member
+    // Promote the raw OS Z-rank map to a session-start member
     // snapshot for the Dismiss endpoint-Z computation.  Populated only
     // here; never refreshed after Activate.
     m_originalZOrder.reserve(zRank.size());
@@ -3427,7 +3436,7 @@ void FlipController::RenderFrame()
     // Lazy EnsureFrame: only when NOT animating to avoid cursor lag.
     // PrintWindow is synchronous and heavy — never run it during animation.
     //
-    // v8.5 — m_sessionFrozen only tracks the CYCLE animation; it is NOT set
+    // m_sessionFrozen only tracks the CYCLE animation; it is NOT set
     // during the entry/exit morph.  Without the IsActive() check the heavy
     // synchronous PrintWindow ran on entry/exit frames, stalling them by
     // tens of ms each — and because the morph is wall-clock driven, that
@@ -3492,6 +3501,7 @@ void FlipController::RenderFrame()
     }
 
     m_renderer.BeginFrame();
+    m_quad.ResetStateCache();
     m_quad.SetAntialiasing(EffectiveAntialiasing());
 
     RECT rc;
@@ -3509,8 +3519,8 @@ void FlipController::RenderFrame()
     auto* ctx = m_renderer.GetContext();
     uint32_t count = m_scene.SlotCount();
 
-    // Draw fully opaque black backdrop — blocks everything behind the overlay.
-    m_quad.DrawDim(ctx, 1.0f);
+    // The fully opaque black backdrop that blocks everything behind the
+    // overlay is BeginFrame's clear — see Renderer::BeginFrame.
 
     // --- Composed background: wallpaper + taskbar as separate layers ---
     // During animation, use frozen SRVs to prevent any live capture mutation.
@@ -3610,15 +3620,15 @@ void FlipController::RenderFrame()
                     * DirectX::XMMatrixTranslation(cx, cy, 0.0f));
                 tbDraw.alpha      = 1.0f;
                 tbDraw.blurAmount = 0.0f;
-                // v8.7 Bug TB — content-band UV crop must be applied in
-                // RenderFrame too, not only Activate's first-content frame.
-                // Before this fix the second rendered frame onwards reverted
-                // to the bottom crop, which on Win10 22H2 / Win11 24H2 sampled
-                // the dark #282832 fill below the real taskbar band — the
-                // taskbar "worked for one frame then vanished".  Shared helper
-                // keeps Activate, RenderFrame and the debug dump identical.
-                // On Win11 25H2 m_taskbarContentResolved stays false, so this
-                // is a no-op and 25H2 behaviour is preserved.
+                // The content-band UV crop belongs here as much as in
+                // Activate's first-content frame.  Leave it out and every
+                // frame after the first reverts to a bottom crop, which on
+                // Win10 22H2 / Win11 24H2 samples the dark #282832 fill below
+                // the real taskbar band: a taskbar that works for one frame
+                // and then vanishes.  The shared helper keeps Activate,
+                // RenderFrame and the debug dump identical.  Where no content
+                // band was resolved m_taskbarContentResolved stays false and
+                // this is a no-op.
                 ComputeTaskbarContentBandUV(texH, tbH,
                     m_taskbarContentResolved, m_taskbarContentCenterY,
                     tbDraw.uvMinY, tbDraw.uvMaxY);
@@ -3733,7 +3743,7 @@ void FlipController::RenderFrame()
         }
     }
 
-    // Bug 7' — same-frame finalized flat present.  When the exit morph
+    // Same-frame finalized flat present.  When the exit morph
     // finishes, do NOT tear down immediately; defer FinishDismiss/
     // FinishEscape until after this frame's tile draw list + Present so
     // the finalized flat poses (already written to FlipScene by
@@ -3749,7 +3759,7 @@ void FlipController::RenderFrame()
         // draw the finalized flat scene first.
     }
 
-    // Bug 7' (v8.2 — A) — wider frozen-SRV cleanup guard.  This block runs
+    // Frozen-SRV cleanup guard.  This block runs
     // before the tile draw list, so it must NOT clear frozen SRVs during
     // any active entry/exit morph, during exit frames awaiting
     // finalization (m_exitPending), or on the final-flat frame
@@ -4024,12 +4034,8 @@ void FlipController::RenderFrame()
                     XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
                     XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                     XMMatrixTranslation(slot.x, slot.y, slot.z);
-                XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
-                XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
-                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-                XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-                XMMATRIX proj   = XMMatrixPerspectiveFovLH(
-                    XMConvertToRadians(m_scene.GetFovDeg()), cascadeAspect, 0.1f, 200.0f);
+                XMMATRIX view, proj;
+                m_scene.CameraMatrices(cascadeAspect, view, proj);
 
                 QuadDrawCall refl;
                 XMStoreFloat4x4(&refl.mvp,
@@ -4089,12 +4095,8 @@ void FlipController::RenderFrame()
                 XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
                 XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                 XMMatrixTranslation(slot.x, slot.y, slot.z);
-            XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
-            XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
-            XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-            XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-            XMMATRIX proj   = XMMatrixPerspectiveFovLH(
-                XMConvertToRadians(m_scene.GetFovDeg()), cascadeAspect, 0.1f, 200.0f);
+            XMMATRIX view, proj;
+            m_scene.CameraMatrices(cascadeAspect, view, proj);
 
             QuadDrawCall draw;
             XMStoreFloat4x4(&draw.mvp, world * view * proj * monRemap);
@@ -4122,12 +4124,8 @@ void FlipController::RenderFrame()
                 XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
                 XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + slot.rotY)) *
                 XMMatrixTranslation(slot.x, slot.y, slot.z);
-            XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
-            XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
-            XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-            XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-            XMMATRIX proj   = XMMatrixPerspectiveFovLH(
-                XMConvertToRadians(m_scene.GetFovDeg()), cascadeAspect, 0.1f, 200.0f);
+            XMMATRIX view, proj;
+            m_scene.CameraMatrices(cascadeAspect, view, proj);
 
             QuadDrawCall draw;
             XMStoreFloat4x4(&draw.mvp, world * view * proj * monRemap);
@@ -4192,18 +4190,15 @@ void FlipController::RenderFrame()
         //     post-rotate SRV (still W1, since post-rotation slot n-1 = W1).
         //   Backward wrap (idx == 0): the tile journey is "back →
         //     backSpawn → N0 → front".  It's the NEW front (post-rotation
-        //     slot 0) wrapping around.  At N == cascade slot count the
-        //     pre-rotation slot n-1 happens to be the same window
-        //     (m_frozenStartSRVs[n-1] == m_frozenTargetSRVs[0]) and the
-        //     old code worked.  At N > cascade count there's overflow:
-        //     pre-rotation slot n-1 is some window ABOUT to be pushed
-        //     OUT of the cascade, while post-rotation slot 0 is a
-        //     DIFFERENT window (the previously-overflow window) that's
-        //     wrapping IN.  Using m_frozenStartSRVs[n-1] for phase 1
-        //     therefore showed the wrong texture during the first 40%
-        //     of the cycle and snapped to the right one at phase 2.
-        //     Always use the post-rotation new-front SRV — same window
-        //     throughout the wrap.
+        //     slot 0) wrapping around.  Always take the POST-rotation
+        //     new-front SRV, so it is the same window throughout the wrap.
+        //     Reaching for m_frozenStartSRVs[n-1] instead is only correct
+        //     at N == cascade slot count, where the two happen to be the
+        //     same window.  With overflow they are not: pre-rotation slot
+        //     n-1 is a window about to be pushed OUT, while post-rotation
+        //     slot 0 is the previously-overflow window wrapping IN, so the
+        //     first 40% of the cycle draws the wrong texture and then snaps
+        //     to the right one at phase 2.
         ID3D11ShaderResourceView* srv = ResolveSlotSRV(idx);
 
         draw.alpha = alpha;
@@ -4260,7 +4255,7 @@ void FlipController::RenderFrame()
     else
         m_renderer.EndFrame();
 
-    // Bug 7' — finalized flat scene has now been presented; run the
+    // The finalized flat scene has now been presented; run the
     // deferred teardown after Present + DwmFlush.
     if (finishAfterPresent) {
         DwmFlush();
@@ -4300,24 +4295,22 @@ void FlipController::RenderFrame()
                 // Auto performance tune (profile Auto only) — two-way
                 // ladder with hysteresis.
                 //
-                // Degradation compares against a 60 Hz-floored budget: on
+                // Degradation compares against a 60 Hz-FLOORED budget.  On
                 // 120/144/165 Hz displays the raw per-refresh budget is so
-                // small (6-8 ms) that mid-range GPUs failed it every
-                // window and silently rode the ladder to tier 3 (live
-                // preview off) within ~4 s of the first session — the
-                // "live previews freeze on weaker hardware" bug.  The
-                // cascade does not need native-refresh frame rates to look
-                // right; only dropping below ~44 fps (60 Hz budget ×1.35)
-                // is treated as "this device can't cope".
+                // small (6-8 ms) that mid-range GPUs fail it every window
+                // and ride the ladder down to tier 3, live preview off,
+                // within seconds of the first session.  The cascade does
+                // not need native-refresh frame rates to look right; only
+                // dropping below ~44 fps is treated as "this device cannot
+                // cope".
                 //
-                // Recovery: kPerfRecoveryWindows consecutive comfortable
-                // windows (avg < 0.85× budget) step one tier back up.  The
-                // wide 0.85/1.35 hysteresis gap plus the multi-second
-                // dwell prevents oscillation.  Tiles already frozen by
-                // tier 3 stay frozen for the rest of the session (their
-                // WGC sessions were stopped) — recovery re-enables live
-                // preview from the NEXT activation, so there is no
-                // mid-session flicker.
+                // Recovery takes kPerfRecoveryWindows comfortable windows
+                // in a row to step one tier back up.  The wide 0.85/1.35
+                // hysteresis gap plus the multi-second dwell is what stops
+                // it oscillating.  Tiles already frozen by tier 3 stay
+                // frozen for the rest of the session, since their capture
+                // sessions were stopped; recovery re-enables live preview
+                // from the NEXT activation, so nothing flickers mid-session.
                 if (m_config && m_config->autoPerfTune
                     && m_config->perfProfile == -1) {
                     const double tuneBudgetMs =
@@ -4462,7 +4455,6 @@ uint32_t FlipController::EffectiveStartDelayMs() const
     return v;
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::RemoveClosedWindows()
 {
     // Windows the search filter took out of the stack have no tile on screen,
@@ -4660,7 +4652,7 @@ void FlipController::RemoveClosedWindows()
     RebuildSceneAspects();
 
     // BuildSlots above re-derived the camera for the smaller count, so
-    // the entry-time flat slots cached per HWND (Round-6 Fix 19) are now
+    // the entry-time flat slots cached per HWND are now
     // expressed in a stale camera frame.  If BeginExit later substituted
     // them as exit targets, every tile would fly toward a horizontally
     // displaced position and only "snap back" when the overlay hides
@@ -4713,7 +4705,6 @@ void FlipController::RemoveClosedWindows()
     }
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::ClearClosingCaptures()
 {
     for (auto& cap : m_closingCaptures) {
@@ -4724,7 +4715,6 @@ void FlipController::ClearClosingCaptures()
     m_closingSRVs.clear();
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::CloakNewWindows()
 {
     // Periodically sweep for new top-level windows that appeared after
@@ -4859,7 +4849,6 @@ void FlipController::StartTaskbarCapture()
     }
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::HideRealTaskbar()
 {
     m_taskbarWasVisible = false;
@@ -5053,53 +5042,13 @@ void FlipController::ShowRealTaskbar()
 }
 
 // ---------------------------------------------------------------------------
-// Desktop icon toggle — hides the SysListView32 inside SHELLDLL_DefView
-// so the background shows clean wallpaper + taskbar without icon clutter.
-// ---------------------------------------------------------------------------
-void FlipController::HideDesktopIcons()
-{
-    m_iconListView   = nullptr;
-    m_iconsWereVisible = false;
-
-    // SHELLDLL_DefView can be a child of Progman or a WorkerW.
-    HWND defView = nullptr;
-    HWND progman = FindWindowW(L"Progman", nullptr);
-    if (progman)
-        defView = FindWindowExW(progman, nullptr, L"SHELLDLL_DefView", nullptr);
-
-    if (!defView) {
-        HWND workerW = nullptr;
-        while ((workerW = FindWindowExW(nullptr, workerW, L"WorkerW", nullptr)) != nullptr) {
-            defView = FindWindowExW(workerW, nullptr, L"SHELLDLL_DefView", nullptr);
-            if (defView) break;
-        }
-    }
-
-    if (!defView)
-        return;
-
-    HWND listView = FindWindowExW(defView, nullptr, L"SysListView32", nullptr);
-    if (!listView)
-        return;
-
-    if (IsWindowVisible(listView)) {
-        m_iconListView     = listView;
-        m_iconsWereVisible = true;
-        ShowWindow(listView, SW_HIDE);
-        CKLog::Log(L"CKFlip: Desktop icons hidden\n");
-    }
-}
-
-void FlipController::RestoreDesktopIcons()
-{
-    if (m_iconsWereVisible && m_iconListView && IsWindow(m_iconListView)) {
-        ShowWindow(m_iconListView, SW_SHOW);
-        CKLog::Log(L"CKFlip: Desktop icons restored\n");
-    }
-    m_iconListView     = nullptr;
-    m_iconsWereVisible = false;
-}
-
+// Nothing here hides the desktop icons, and nothing should.  Hiding them was
+// tried and removed: it changed nothing visible, because every surface the
+// cascade draws is captured at or before the moment the hide would happen, and
+// it cost a blink on every dismiss.  SW_SHOW is a request to Explorer, the
+// repaint lands on Explorer's message loop long after the call returns, so the
+// overlay lifted onto bare wallpaper and the icons arrived a moment later.
+// Waiting for Explorer only trades that blink for dead time on every commit.
 // ===========================================================================
 // Pointer in the cascade (Controls → Mouse & keyboard)
 //
@@ -5111,7 +5060,6 @@ void FlipController::RestoreDesktopIcons()
 // what keeps a click from being a second way for something to go wrong.
 // ===========================================================================
 
-// ---------------------------------------------------------------------------
 bool FlipController::PointerInteractionReady() const
 {
     return !m_cycleAnim.IsActive()
@@ -5126,7 +5074,6 @@ bool FlipController::PointerInteractionReady() const
         && !m_reverseDelayPending;
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::DropHoverLift()
 {
     if (!m_hover.AnyLift())
@@ -5135,7 +5082,6 @@ void FlipController::DropHoverLift()
     m_hover.BeginDrop(AnimHoverEnabled());
 }
 
-// ---------------------------------------------------------------------------
 int FlipController::HitTestScreen(int screenX, int screenY) const
 {
     if (!m_active || m_scene.SlotCount() == 0)
@@ -5185,7 +5131,6 @@ int FlipController::HitTestScreen(int screenX, int screenY) const
                                  m_cascadeAspect, vpW, vpH, px, py, offsets);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::PointerMove(int screenX, int screenY)
 {
     if (!m_active || !PointerEnabled())
@@ -5197,7 +5142,6 @@ void FlipController::PointerMove(int screenX, int screenY)
     // under a still pointer far more often than the pointer moves.
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::PointerSelect(int screenX, int screenY)
 {
     if (!m_active || !PointerEnabled() || !m_config->mouseSelect)
@@ -5213,7 +5157,6 @@ void FlipController::PointerSelect(int screenX, int screenY)
     CommitSlot(static_cast<uint32_t>(slot));
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::PointerClose(int screenX, int screenY)
 {
     if (!m_active || !PointerEnabled() || !m_config->closeFromCascade)
@@ -5223,21 +5166,21 @@ void FlipController::PointerClose(int screenX, int screenY)
     CloseWindowAtSlot(HitTestScreen(screenX, screenY));
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::CloseSelectedWindow()
 {
-    // The close KEY's own switch — not PointerEnabled(), and not the close
-    // click's.  It falls back to the selection when no tile is hovered, which
-    // is the keyboard-only case, so the pointer master must not gate it.  The
-    // close CLICK (PointerClose) keeps the pointer gate, because it is one.
-    if (!m_active || !m_config || !m_config->closeKeyEnabled)
+    // No switch to consult: the message only arrives when a key on `closeKeys`
+    // was pressed, and an empty list is how that binding is switched off.
+    // Deliberately not behind PointerEnabled() or the close click's toggle
+    // either — it falls back to the selection when no tile is hovered, which is
+    // the keyboard-only case.  The close CLICK (PointerClose) keeps the pointer
+    // gate, because it is one.
+    if (!m_active || !m_config)
         return;
     // Delete follows the pointer when there is one over the stack, and the
     // selection otherwise — both are "the window I am looking at".
     CloseWindowAtSlot(m_hoverSlot >= 0 ? m_hoverSlot : 0);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::CloseWindowAtSlot(int slot)
 {
     if (slot < 0)
@@ -5260,7 +5203,6 @@ void FlipController::CloseWindowAtSlot(int slot)
     CKLog::Log(L"CKFlip: close requested from the cascade (WM_CLOSE)\n");
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::CommitSlot(uint32_t slot)
 {
     const uint32_t widx = SlotWindowIndex(slot);
@@ -5297,7 +5239,6 @@ void FlipController::CommitSlot(uint32_t slot)
     AdvanceSelectJump();
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::AdvanceSelectJump()
 {
     if (!m_jumpTargetHwnd)
@@ -5361,7 +5302,6 @@ void FlipController::AdvanceSelectJump()
     m_cycleAnim.Tick(m_scene);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::CancelSelectJump()
 {
     m_jumpTargetHwnd = nullptr;
@@ -5369,7 +5309,6 @@ void FlipController::CancelSelectJump()
     m_jumpStepMs     = 0.0f;
 }
 
-// ---------------------------------------------------------------------------
 std::vector<int> FlipController::BuildSlotSourceMap(
     const std::vector<HWND>& oldSlotHwnd) const
 {
@@ -5409,7 +5348,6 @@ std::vector<int> FlipController::BuildSlotSourceMap(
 // because the very next keystroke may bring them back.
 // ===========================================================================
 
-// ---------------------------------------------------------------------------
 void FlipController::SearchAppend(wchar_t c)
 {
     // Once the exit is committed and only waiting for the windows to return,
@@ -5439,7 +5377,6 @@ bool FlipController::SearchClear()
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool FlipController::SearchHoldsEmptyStack() const
 {
     // Only while there is something to come BACK to.  An empty stack with an
@@ -5584,7 +5521,6 @@ bool FlipController::RestoreSearchWindowsForExit()
     return AnimCloseEnabled();
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::ClearSearchState()
 {
     // Hidden windows' captures go back to the warm cache exactly like the
@@ -5661,7 +5597,6 @@ void FlipController::BuildWindowMetadata()
     }
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::ApplySearchFilter()
 {
     if (!m_active || !m_config || !m_config->searchEnabled) {
@@ -5919,7 +5854,6 @@ void FlipController::ApplySearchFilter()
     m_hover.SetTarget(-1);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::UpdateSearchBox()
 {
     if (!m_config || !m_config->searchEnabled) {
@@ -5933,7 +5867,6 @@ void FlipController::UpdateSearchBox()
                        m_cascadeH);
 }
 
-// ---------------------------------------------------------------------------
 void FlipController::DrawSearchBox(ID3D11DeviceContext* ctx, float vpW,
                                    float vpH)
 {
@@ -5979,52 +5912,255 @@ void FlipController::DrawSearchBox(ID3D11DeviceContext* ctx, float vpW,
 }
 
 // ---------------------------------------------------------------------------
-// Selected-window label (v1.1) — title + program icon of the front-slot
+// Selected-window label: title + program icon of the front-slot
 // window, GDI-rendered once per selection change into a premultiplied BGRA
 // pill texture and drawn as a screen-space quad above the front tile.
 // ---------------------------------------------------------------------------
 
-// Best-available program icon for a window.  Returned icon is either shared
-// (window/class icon — must NOT be destroyed) or owned (stock desktop icon —
-// must be destroyed); outOwned tells the caller which.
-static HICON GetLabelIcon(HWND hwnd, HWND desktopHwnd, bool& outOwned)
+// ---------------------------------------------------------------------------
+// Window icons, resolved off the render thread.
+//
+// Most windows hand their icon over for nothing: GetClassLongPtrW reads class
+// data with no cross-process message at all.  The ones that do not, meaning UWP
+// frames, Electron shells and anything that answers WM_GETICON instead of
+// registering a class icon, must never be asked from the render thread.
+// SMTO_ABORTIFHUNG only returns early for a window the system has marked HUNG,
+// so a merely BUSY message loop pays the full timeout twice over, and the
+// cascade freezes for up to 120 ms on the frame after any cycle step that lands
+// on such a window.  An eight-second profile of ordinary cycling caught a
+// single 83 ms frame, all of it inside this call.
+//
+// So the question goes to a worker thread and the answer is kept for the
+// session.  Activate primes the queue with every window in the stack, so the
+// answers are in by the time the entry morph ends and the label appears; an
+// unprimed label simply draws without an icon for a frame or two, then rebuilds
+// once it lands.
+//
+// The cached HICONs are NOT owned, since a class icon belongs to the class and
+// a WM_GETICON result to the window that answered, so the map needs clearing
+// rather than a destruction pass.  Session-scoped all the same: HWNDs are
+// recycled, and an icon handle outliving the window that vouched for it is
+// exactly the stale answer this must not hand back.
+// ---------------------------------------------------------------------------
+namespace {
+
+/// The icon a window publishes through its window class, or nullptr.
+///
+/// Free: class data is read from the kernel with no message to the owning
+/// process, which is what makes it safe on the render thread and worth
+/// asking before anything else.  It is also what decides whether a window
+/// needs the worker at all — see StartIconResolver.
+HICON ClassIcon(HWND hwnd)
 {
-    outOwned = false;
-    if (hwnd && hwnd == desktopHwnd) {
-        SHSTOCKICONINFO sii{};
-        sii.cbSize = sizeof(sii);
-        if (SUCCEEDED(SHGetStockIconInfo(SIID_DESKTOPPC,
-                                         SHGSI_ICON | SHGSI_LARGEICON, &sii))
-            && sii.hIcon) {
-            outOwned = true;   // stock icons are caller-owned
-            return sii.hIcon;
-        }
+    if (!hwnd || !IsWindow(hwnd))
         return nullptr;
+    if (HICON big = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICON)))
+        return big;
+    return reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICONSM));
+}
+
+struct IconResolver {
+    std::mutex                      mtx;
+    std::condition_variable         cv;
+    std::unordered_map<HWND, HICON> answered;   // nullptr = asked, has none
+    std::vector<HWND>               pending;
+    std::atomic<unsigned>           generation{ 0 };
+    std::atomic<bool>               stop{ false };
+};
+
+// Render thread only — the worker holds its own shared_ptr, so the object
+// outlives this pointer being reset.
+std::shared_ptr<IconResolver> g_iconResolver;
+
+// The Desktop tile's icon comes from the shell, and the FIRST
+// SHGetStockIconInfo in a process is dear: 82 ms, measured on the render
+// thread during ordinary cycling — by a wide margin the longest single stall
+// in the profile, and it landed the first time the Desktop tile reached the
+// front slot.  Every later call still cost about 0.2 ms, paid again on each
+// rebuild, because the answer was thrown away each time.
+//
+// Asked once, on the worker, and kept for the life of the process: a stock
+// icon does not change, and one handle held forever is a fair price for
+// never asking again.  Held NON-owned by its readers for the same reason —
+// the cache owns it, so nothing destroys it after a draw.
+std::mutex         g_stockIconMutex;
+std::atomic<HICON> g_desktopStockIcon{ nullptr };
+std::atomic<bool>  g_desktopStockResolved{ false };
+
+void ResolveDesktopStockIcon()
+{
+    std::lock_guard<std::mutex> lock(g_stockIconMutex);
+    if (g_desktopStockResolved.load(std::memory_order_relaxed))
+        return;
+    SHSTOCKICONINFO sii{};
+    sii.cbSize = sizeof(sii);
+    HICON icon = nullptr;
+    if (SUCCEEDED(SHGetStockIconInfo(SIID_DESKTOPPC,
+                                     SHGSI_ICON | SHGSI_LARGEICON, &sii)))
+        icon = sii.hIcon;
+    g_desktopStockIcon.store(icon, std::memory_order_release);
+    g_desktopStockResolved.store(true, std::memory_order_release);
+}
+
+void IconResolverWorker(std::shared_ptr<IconResolver> r)
+{
+    // First job of the session: the one shell call that used to freeze a
+    // frame outright.  Done before the queue so it is ready long before the
+    // entry morph ends and the label first draws.
+    ResolveDesktopStockIcon();
+    r->generation.fetch_add(1, std::memory_order_release);
+
+    for (;;) {
+        HWND hwnd = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(r->mtx);
+            r->cv.wait(lock, [&r] {
+                return r->stop.load(std::memory_order_acquire)
+                    || !r->pending.empty();
+            });
+            if (r->stop.load(std::memory_order_acquire))
+                return;
+            hwnd = r->pending.back();
+            r->pending.pop_back();
+        }
+
+        HICON icon = nullptr;
+        if (hwnd && IsWindow(hwnd)) {
+            DWORD_PTR result = 0;
+            if (SendMessageTimeoutW(hwnd, WM_GETICON, ICON_BIG, 0,
+                                    SMTO_ABORTIFHUNG | SMTO_BLOCK, 60, &result)
+                && result)
+                icon = reinterpret_cast<HICON>(result);
+            else if (SendMessageTimeoutW(hwnd, WM_GETICON, ICON_SMALL2, 0,
+                                         SMTO_ABORTIFHUNG | SMTO_BLOCK, 60,
+                                         &result)
+                     && result)
+                icon = reinterpret_cast<HICON>(result);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(r->mtx);
+            r->answered[hwnd] = icon;
+        }
+        r->generation.fetch_add(1, std::memory_order_release);
+    }
+}
+
+void StopIconResolver()
+{
+    if (!g_iconResolver)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(g_iconResolver->mtx);
+        g_iconResolver->stop.store(true, std::memory_order_release);
+    }
+    g_iconResolver->cv.notify_all();
+    // The worker may be a few tens of milliseconds into a SendMessageTimeout;
+    // it owns a reference, finishes, sees the flag and leaves.  Nothing here
+    // waits for it — a join would put the timeout it is serving back on the
+    // teardown path, which is the stall this exists to remove.
+    g_iconResolver.reset();
+}
+
+void StartIconResolver(const std::vector<HWND>& prime)
+{
+    StopIconResolver();
+    auto resolver = std::make_shared<IconResolver>();
+
+    // Only the windows that will actually be ASKED about.  GetLabelIcon
+    // consults this resolver solely when a window publishes no class icon, so
+    // priming the rest queued a cross-process WM_GETICON — up to two 60 ms
+    // timeouts — for an answer nothing would ever read.  Wasted messages on
+    // their own, but worse at the other end of the session: a worker still
+    // grinding through them is a worker that cannot notice the stop flag and
+    // leave.  Filtering is free, being the same class lookup the render
+    // thread does first anyway.
+    resolver->pending.reserve(prime.size());   // not shared yet — no lock needed
+    for (HWND hwnd : prime)
+        if (hwnd && !ClassIcon(hwnd))
+            resolver->pending.push_back(hwnd);
+
+    // A thread this cannot start must not throw its way into Activate.
+    // Without a resolver every window still shows its class icon, which is
+    // nearly all of them, and the few that answer WM_GETICON instead show
+    // none — a cosmetic loss against losing the whole session.  Nothing is
+    // recorded: a machine that cannot spawn one sleeping thread is already
+    // reporting worse news through every other subsystem, and a diagnostic
+    // entry about a missing label icon would only bury it.
+    try {
+        std::thread(IconResolverWorker, resolver).detach();
+    } catch (...) {
+        return;
+    }
+
+    g_iconResolver = std::move(resolver);
+    g_iconResolver->cv.notify_all();
+}
+
+/// Answer for `hwnd`, or nullptr while the worker has yet to reach it.  A
+/// window nobody has asked about is queued on the way past.
+HICON ResolvedIcon(HWND hwnd)
+{
+    if (!g_iconResolver)
+        return nullptr;
+    std::lock_guard<std::mutex> lock(g_iconResolver->mtx);
+    auto it = g_iconResolver->answered.find(hwnd);
+    if (it != g_iconResolver->answered.end())
+        return it->second;
+    if (std::find(g_iconResolver->pending.begin(),
+                  g_iconResolver->pending.end(), hwnd)
+        == g_iconResolver->pending.end()) {
+        g_iconResolver->pending.push_back(hwnd);
+        g_iconResolver->cv.notify_one();
+    }
+    return nullptr;
+}
+
+/// True while `hwnd` has no answer yet — the label built without its icon
+/// has to be rebuilt when one arrives, and this is what tells it apart from
+/// a window that genuinely has no icon to show.
+bool IconStillPending(HWND hwnd, HWND desktopHwnd)
+{
+    if (hwnd && hwnd == desktopHwnd)
+        return !g_desktopStockResolved.load(std::memory_order_acquire);
+    if (!g_iconResolver)
+        return false;
+    std::lock_guard<std::mutex> lock(g_iconResolver->mtx);
+    return g_iconResolver->answered.find(hwnd)
+        == g_iconResolver->answered.end();
+}
+
+unsigned IconGeneration()
+{
+    return g_iconResolver
+        ? g_iconResolver->generation.load(std::memory_order_acquire) : 0u;
+}
+
+} // namespace
+
+/// Best-available program icon for a window, or nullptr.  Never blocks and
+/// never transfers ownership: a class icon belongs to its class, a WM_GETICON
+/// answer to the window that gave it, and the desktop's stock icon to the
+/// process-lifetime cache above.  The caller destroys nothing.
+static HICON GetLabelIcon(HWND hwnd, HWND desktopHwnd)
+{
+    if (hwnd && hwnd == desktopHwnd) {
+        // Owned by the process-lifetime cache, never by this caller — see
+        // the note there.  nullptr only in the first frames of the very
+        // first session, while the worker is still fetching it.
+        return g_desktopStockIcon.load(std::memory_order_acquire);
     }
     if (!hwnd || !IsWindow(hwnd))
         return nullptr;
 
-    // Class icon first — GetClassLongPtrW reads class data without any
-    // cross-process message, so the common path never waits on another
-    // process from the render thread.
-    if (HICON cls = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICON)))
-        return cls;
-    if (HICON cls = reinterpret_cast<HICON>(GetClassLongPtrW(hwnd, GCLP_HICONSM)))
+    // Class icon first — free, and the answer for nearly every window.
+    if (HICON cls = ClassIcon(hwnd))
         return cls;
 
-    // Rare fallback: WM_GETICON with a short timeout — SMTO_ABORTIFHUNG
-    // returns immediately for hung windows, so the render thread can never
-    // stall behind one.
-    DWORD_PTR result = 0;
-    if (SendMessageTimeoutW(hwnd, WM_GETICON, ICON_BIG, 0,
-                            SMTO_ABORTIFHUNG | SMTO_BLOCK, 60, &result)
-        && result)
-        return reinterpret_cast<HICON>(result);
-    if (SendMessageTimeoutW(hwnd, WM_GETICON, ICON_SMALL2, 0,
-                            SMTO_ABORTIFHUNG | SMTO_BLOCK, 60, &result)
-        && result)
-        return reinterpret_cast<HICON>(result);
-    return nullptr;
+    // No class icon: the answer is whatever the worker has learned by asking
+    // the window itself.  Never asked from here — see the note above the
+    // resolver.
+    return ResolvedIcon(hwnd);
 }
 
 void FlipController::ResetSelectedLabel()
@@ -6035,6 +6171,8 @@ void FlipController::ResetSelectedLabel()
     m_labelTitle.clear();
     m_labelTexW = 0;
     m_labelTexH = 0;
+    m_labelIconPending = false;
+    m_labelIconGen     = 0;
     m_labelAnim.Reset();
 }
 
@@ -6058,9 +6196,16 @@ void FlipController::UpdateSelectedLabel()
         (selected == m_desktopHwnd) ? L"Desktop" : m_windows[0].title;
 
     const int theme = m_config ? std::clamp(m_config->appTheme, 0, 4) : 0;
+    // An icon the resolver had not answered for yet leaves the texture
+    // provisional: the generation counter moving means SOME answer landed,
+    // which is the cheapest possible cue to look again.  A window that
+    // genuinely has no icon clears the pending flag, so this settles.
+    const bool iconAnswerArrived =
+        m_labelIconPending && IconGeneration() != m_labelIconGen;
     if (m_labelSRV && selected == m_labelHwnd && title == m_labelTitle
         && showTitle == m_labelShowTitle && showIcon == m_labelShowIcon
-        && showBox == m_labelShowBox && theme == m_labelTheme)
+        && showBox == m_labelShowBox && theme == m_labelTheme
+        && !iconAnswerArrived)
         return;   // up to date
 
     if (!BuildSelectedLabelTexture(selected, title, showTitle, showIcon,
@@ -6100,15 +6245,16 @@ bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
     const int fontH    = static_cast<int>(17.0f * uiScale);
     const int maxTextW = static_cast<int>(m_cascadeW * 0.45f);
 
-    bool iconOwned = false;
-    HICON icon = showIcon ? GetLabelIcon(hwnd, m_desktopHwnd, iconOwned)
-                          : nullptr;
+    HICON icon = showIcon ? GetLabelIcon(hwnd, m_desktopHwnd) : nullptr;
+    // Record whether this texture is standing in for an icon still being
+    // resolved — UpdateSelectedLabel rebuilds once the answer arrives.
+    m_labelIconGen     = IconGeneration();
+    m_labelIconPending = showIcon && !icon
+                      && IconStillPending(hwnd, m_desktopHwnd);
     const bool haveIcon = icon != nullptr;
     const bool haveText = showTitle && !title.empty();
-    if (!haveIcon && !haveText) {
-        if (icon && iconOwned) DestroyIcon(icon);
+    if (!haveIcon && !haveText)
         return false;
-    }
 
     HDC screenDC = GetDC(nullptr);
     HDC memDC    = CreateCompatibleDC(screenDC);
@@ -6244,7 +6390,7 @@ bool FlipController::BuildSelectedLabelTexture(HWND hwnd,
     DeleteObject(font);
     DeleteDC(memDC);
     ReleaseDC(nullptr, screenDC);
-    if (icon && iconOwned) DestroyIcon(icon);
+    // No DestroyIcon: GetLabelIcon never hands over ownership (see its note).
 
     if (!ok)
         return false;
@@ -6337,13 +6483,8 @@ void FlipController::DrawSelectedLabel(ID3D11DeviceContext* ctx, float vpW,
                     XMMatrixRotationX(XMConvertToRadians(m_scene.GetSceneTiltX())) *
                     XMMatrixRotationY(XMConvertToRadians(m_scene.GetSceneTiltY() + t->rotY)) *
                     XMMatrixTranslation(t->x, t->y, t->z);
-                XMVECTOR eye    = XMVectorSet(m_scene.GetCamEyeX(),    m_scene.GetCamEyeY(),    m_scene.GetCamEyeZ(),    1.0f);
-                XMVECTOR target = XMVectorSet(m_scene.GetCamTargetX(), m_scene.GetCamTargetY(), m_scene.GetCamTargetZ(), 1.0f);
-                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-                XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-                XMMATRIX proj   = XMMatrixPerspectiveFovLH(
-                    XMConvertToRadians(m_scene.GetFovDeg()), m_cascadeAspect,
-                    0.1f, 200.0f);
+                XMMATRIX view, proj;
+                m_scene.CameraMatrices(m_cascadeAspect, view, proj);
                 mvp = world * view * proj * monRemap;
                 haveMvp = true;
             }

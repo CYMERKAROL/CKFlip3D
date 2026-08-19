@@ -1,19 +1,18 @@
+// ---------------------------------------------------------------------------
+// A managed port of the core's stack geometry, scene/FlipScene.cpp for the
+// cascade and scene/CoverFlowLayout.cpp for the carousel, used ONLY by the
+// Appearance preview.  A port, not a re-imagining: same constants, same
+// dynamic-density spacing, same adaptive camera and per-window tile sizing, so
+// the miniature is laid out exactly like the real thing at the viewer's own
+// screen aspect.  Nothing here is compiled into the core and the core reads
+// nothing from here, so the two have to be kept in step by hand.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows.Media.Media3D;
 
 namespace CKFlip3D.Settings.Views;
 
-/// <summary>
-/// A managed port of the core's stack geometry — scene/FlipScene.cpp
-/// (cascade) and scene/CoverFlowLayout.cpp (carousel) — used ONLY by the
-/// Appearance preview.
-///
-/// It is a port, not a re-imagining: the constants, the dynamic-density
-/// spacing, the adaptive camera and the per-window tile sizing are the same
-/// formulas, so the miniature is laid out exactly like the real thing at the
-/// viewer's own screen aspect. Nothing here is compiled into the core, and
-/// the core does not read anything from here — keep the two in step by hand
-/// if the layout ever changes.
-/// </summary>
 internal sealed class PreviewScene
 {
     // ---- SceneConfig (scene/FlipScene.hpp) ---------------------------------

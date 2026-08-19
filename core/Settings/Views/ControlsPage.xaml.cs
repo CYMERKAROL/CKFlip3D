@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The Controls page.  Mostly a hub: it summarises what is bound where and
+// hands off to the sub-pages that actually edit it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using CKFlip3D.Settings.Services;
@@ -21,8 +27,8 @@ public partial class ControlsPage : UserControl
                                or null)
                 SyncBindings();
             if (e.PropertyName is nameof(Models.SettingsModel.TouchpadNav)
-                               or nameof(Models.SettingsModel.TouchpadActivateGesture)
-                               or nameof(Models.SettingsModel.TouchpadCycleFingers)
+                               or nameof(Models.SettingsModel.TouchpadActivateGestures)
+                               or nameof(Models.SettingsModel.TouchpadCycleGestures)
                                or null)
                 SyncTouchpad();
         };
@@ -74,24 +80,43 @@ public partial class ControlsPage : UserControl
             !present ? "No precision touchpad was found on this device."
             : !App.Settings.TouchpadNav
                 ? "Turn Touchpad navigation on (Navigation, below) to customise the gestures."
-                : $"{DescribeActivation()}, {Count(App.Settings.TouchpadCycleFingers)} fingers "
-                  + "left and right move through the stack. Sensitivity, direction, "
+                : $"{DescribeActivation()}, {DescribeCycle()}. Sensitivity, direction, "
                   + "tap-to-commit and a live activity preview live in here.";
     }
 
-    private static string Count(int n) => n switch
+    /// <summary>
+    /// The opening strokes that are actually live, named as the touchpad page
+    /// names them — a parked gesture is exactly what a summary must not claim.
+    /// </summary>
+    private static string DescribeActivation()
     {
-        2 => "two", 4 => "four", _ => n.ToString(),
-    };
+        var live = Models.TouchpadGestures.Live(Models.TouchpadGestures.Activate,
+                                                App.Settings.TouchpadActivateGestureList);
+        return live.Count == 0
+            ? "No gesture opens the cascade"
+            : string.Join(" or ", live.Select(g => Diagonal(g.Token))) + " opens the cascade";
 
-    private static string DescribeActivation() => App.Settings.TouchpadActivateGesture switch
+        static string Diagonal(string token) => token.ToLowerInvariant() switch
+        {
+            "twodownright"  => "A two-finger ↘ diagonal",
+            "twodownleft"   => "A two-finger ↙ diagonal",
+            "fourdownright" => "A four-finger ↘ diagonal",
+            "fourdownleft"  => "A four-finger ↙ diagonal",
+            _ => token,
+        };
+    }
+
+    private static string DescribeCycle()
     {
-        1 => "A two-finger ↘ diagonal opens the cascade",
-        2 => "A two-finger ↙ diagonal opens the cascade",
-        3 => "A four-finger ↘ diagonal opens the cascade",
-        4 => "A four-finger ↙ diagonal opens the cascade",
-        _ => "No opening gesture",
-    };
+        var live = Models.TouchpadGestures.Live(Models.TouchpadGestures.Cycle,
+                                                App.Settings.TouchpadCycleGestureList);
+        return live.Count == 0
+            ? "no swipe steps the stack"
+            : string.Join(" and ", live.Select(g => Count(g.Fingers)))
+              + " fingers left and right move through the stack";
+
+        static string Count(int n) => n switch { 2 => "two", 4 => "four", _ => n.ToString() };
+    }
 
     private void ManageTouchpad_Click(object sender, RoutedEventArgs e)
     {
@@ -115,17 +140,26 @@ public partial class ControlsPage : UserControl
             main.PushSubPage(new IgnoredAppsPage(), "Ignored applications");
     }
 
+    /// <summary>
+    /// Everything this page owns, including what its two sub-pages own — the
+    /// button says "the default Controls settings", so it has to mean the whole
+    /// category and not the handful of rows that happen to be on this screen.
+    /// In page order: the hotkey and its toggle, the five key lists, the
+    /// activation filters, the pointer bindings, and every touchpad gesture
+    /// setting.  A new setting anywhere under Controls belongs in this list;
+    /// one left out is a "restore defaults" that quietly does not.
+    /// </summary>
     private void RestoreDefaults_Click(object sender, RoutedEventArgs e)
     {
         App.Settings.ActivationHotkey = "Win+Tab";
         App.Settings.HotkeyToggleMode = false;
-        App.Settings.CommitHotkey = "Enter";
-        App.Settings.CancelHotkey = "Escape";
-        App.Settings.CloseHotkey = "Delete";
-        App.Settings.CloseKeyEnabled = true;
         App.Settings.IgnoreFullscreen = false;
         App.Settings.MouseWheelCycle = true;
-        App.Settings.KeyboardNav = true;
+        App.Settings.NavForwardKeys = Models.SettingsModel.DefaultNavForwardKeys;
+        App.Settings.NavBackKeys = Models.SettingsModel.DefaultNavBackKeys;
+        App.Settings.CommitKeys = Models.SettingsModel.DefaultCommitKeys;
+        App.Settings.CancelKeys = Models.SettingsModel.DefaultCancelKeys;
+        App.Settings.CloseKeys = Models.SettingsModel.DefaultCloseKeys;
         App.Settings.IgnoredApps = "";
         // Opt-in by default — see MouseKeyboardPage.RestoreDefaults_Click.
         App.Settings.PointerInCascade = false;
@@ -136,13 +170,14 @@ public partial class ControlsPage : UserControl
         App.Settings.MouseDragEnabled = true;
         App.Settings.MouseDragButton = 2;
         App.Settings.TouchpadNav = true;
-        App.Settings.TouchpadActivateGesture = 1;
+        App.Settings.TouchpadActivateGestures = Models.SettingsModel.DefaultTouchpadActivateGestures;
         App.Settings.TouchpadCancelSwipe = true;
-        App.Settings.TouchpadCycleFingers = 2;
+        App.Settings.TouchpadCycleGestures = Models.SettingsModel.DefaultTouchpadCycleGestures;
+        App.Settings.TouchpadCommitGestures = Models.SettingsModel.DefaultTouchpadCommitGestures;
         App.Settings.TouchpadReverse = false;
         App.Settings.TouchpadSensitivity = 50;
         App.Settings.TouchpadSmoothing = 35;
-        App.Settings.TouchpadCommitGesture = 1;
+        App.Settings.TouchpadContinuous = false;
         App.Settings.WindowSnap = true;
     }
 }

@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The last page, for both outcomes.  Reports what happened and, on a
+// successful install, offers to start CKFlip3D or open its settings.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using System.Windows;

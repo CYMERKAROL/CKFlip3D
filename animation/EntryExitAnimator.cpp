@@ -1,3 +1,15 @@
+// ---------------------------------------------------------------------------
+// Pure animation, and nothing else.  This file knows nothing about window
+// switching, foregrounding, capture lifecycle, or which tile is "selected".
+// It only:
+//   - snapshots the cascade endpoint
+//   - computes the flat endpoint from window rects + camera (FlatStackBuilder)
+//   - interpolates between the two by sampling the 16-row authored timeline
+//     (EntryExitTimeline), with no runtime easing and no sub-phases
+//   - writes the interpolated TileSlots and scene tilt back to FlipScene
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include <Windows.h>
 #include "EntryExitAnimator.h"
@@ -7,17 +19,6 @@
 #include <algorithm>
 #include <cmath>
 
-// ---------------------------------------------------------------------------
-// EntryExitAnimator — pure animation.  Knows nothing about window switching,
-// foregrounding, capture lifecycle, or which tile is "selected".  It only:
-//   - snapshots the cascade endpoint
-//   - computes the flat endpoint from window rects + camera (FlatStackBuilder)
-//   - interpolates between the two by sampling the 16-row authored timeline
-//     (EntryExitTimeline) — no runtime easing, no sub-phases
-//   - writes the interpolated TileSlots and scene tilt back to FlipScene
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 static inline float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
 static inline float SmoothStep(float edge0, float edge1, float x)
@@ -28,9 +29,9 @@ static inline float SmoothStep(float edge0, float edge1, float x)
 }
 
 namespace {
-constexpr float kFlatGateStart = 0.00f;   // Patch A2 spatial gate lower edge
-constexpr float kFlatGateEnd   = 0.22f;   // Patch A2 spatial gate upper edge
-constexpr float kMaxRawTStep   = 0.12f;   // v8.5 anti-stall per-Tick rawT cap
+constexpr float kFlatGateStart = 0.00f;   // spatial gate lower edge
+constexpr float kFlatGateEnd   = 0.22f;   // spatial gate upper edge
+constexpr float kMaxRawTStep   = 0.12f;   // anti-stall per-Tick rawT cap
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -47,14 +48,12 @@ constexpr float kMaxRawTStep   = 0.12f;   // v8.5 anti-stall per-Tick rawT cap
 //     animate FROM, they live in the taskbar button).
 //   - Desktop pseudo-window: never animated (the wallpaper backdrop
 //     layer already covers it).
-//   - Everything else: animated.  The previous strict region-subtraction
-//     check excluded fully-occluded overflow windows, but in the user's
-//     test (VS Code fullscreen behind ten maximised Explorers, all
-//     genuinely fullscreen → vscode fully covered) the user still
-//     expected vscode's tile to morph through the cascade.  Improving
-//     the OVERFLOW animation curve (scaleBlend-driven α decay, same
-//     planar/depth/scale blends as visible tiles) handles the mash
-//     concern without dropping windows the user wants to see.
+//   - Everything else: animated, occluded or not.  A strict
+//     region-subtraction test that drops fully-covered windows was tried
+//     and rejected: with an editor fullscreen behind ten maximised
+//     Explorers it is still the tile the user is reaching for, and
+//     dropping it is more surprising than the mash it avoids.  The
+//     overflow curve handles that concern instead.
 static bool ShouldAnimateOverflow(HWND hwnd, HWND desktopHwnd)
 {
     if (!hwnd || !IsWindow(hwnd))
@@ -66,7 +65,6 @@ static bool ShouldAnimateOverflow(HWND hwnd, HWND desktopHwnd)
     return true;
 }
 
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::ApplyState(FlipScene& scene,
                                     const std::vector<TileSlot>& slots,
                                     float tiltY, float tiltX) const
@@ -101,7 +99,6 @@ void EntryExitAnimator::ApplyWarmupEndpoint(FlipScene& scene)
     }
 }
 
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::ClearOverflow()
 {
     m_overflowFlat.clear();
@@ -130,7 +127,6 @@ void EntryExitAnimator::ClearOverflow()
 // overflow motion reads as part of the entry/exit morph instead of a
 // one-frame teleport to the back of the stack.  Exit naturally mirrors
 // entry because every input is a function of timelineT.
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::BuildOverflowChoreography(
     const FlipScene& scene,
     const std::vector<WindowInfo>& windows,
@@ -248,7 +244,6 @@ void EntryExitAnimator::BuildOverflowChoreography(
     }
 }
 
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::BeginEntry(FlipScene& scene,
                                     const std::vector<WindowInfo>& windows,
                                     float vpW, float vpH,
@@ -321,7 +316,7 @@ void EntryExitAnimator::BeginEntry(FlipScene& scene,
         stackRects, scene, vpW, vpH, cascadeAspect,
         originX, originY, remapNDC, -1.0f, &depthRanks);
 
-    // 2d. Desktop tile entry mode (Bug 6).  Locate the desktop tile's
+    // 2d. Desktop tile entry mode.  Locate the desktop tile's
     //     visible slot.  For the fade modes, force its flat α to 0 so the
     //     per-frame smoothstep multiplier in Tick fully owns its
     //     appearance (late fade for HiddenUntilCascade, early fade for
@@ -354,7 +349,7 @@ void EntryExitAnimator::BeginEntry(FlipScene& scene,
         }
     }
 
-    // 3. Cache by HWND for round-trip stability across cycles (Round-6 Fix 19).
+    // 3. Cache by HWND for round-trip stability across cycles.
     //    Also remember whether the entry-time flat rect was a taskbar override
     //    so BeginExit can skip the cache restoration for those HWNDs (the
     //    picked window must morph to its real restore rect on exit, not
@@ -402,7 +397,6 @@ void EntryExitAnimator::BeginEntry(FlipScene& scene,
     m_keyPressQPC = keyPressQPC;
 }
 
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::BeginExit(FlipScene& scene,
                                    const std::vector<WindowInfo>& windows,
                                    const std::vector<uint32_t>& zRanks,
@@ -463,8 +457,8 @@ void EntryExitAnimator::BeginExit(FlipScene& scene,
         stackRects, scene, vpW, vpH, cascadeAspect,
         originX, originY, remapNDC, -1.0f, &depthRanks);
 
-    // 3. Round-6 Fix 19 — prefer cached entry flat slots for matching HWNDs
-    //    so the exit lerp's flat aspect matches what the entry started from.
+    // 3. Prefer cached entry flat slots for matching HWNDs so the exit lerp's
+    //    flat aspect matches what the entry started from.
     //
     //    Cache-skip rule: only the SELECTED tile (slot 0) skips the cache
     //    when its entry-flat was a taskbar-button override.  That makes the
@@ -498,7 +492,7 @@ void EntryExitAnimator::BeginExit(FlipScene& scene,
     for (auto& f : m_flatSlots)
         f.alpha = 1.0f;
 
-    // Bug 8'' — endpoint flat Z override.  Override only m_flatSlots[i].z;
+    // Endpoint flat Z override.  Override only m_flatSlots[i].z;
     // cascade snapshot, frozen SRVs, m_windows/m_captures order, and
     // texture identity are NOT touched.  The cascade-to-flat lerp draws
     // each tile from its original cascade Z to the rewritten flat Z.
@@ -530,7 +524,6 @@ void EntryExitAnimator::BeginExit(FlipScene& scene,
     m_morphBlend   = 1.0f;
 }
 
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::Tick(FlipScene& scene)
 {
     if (!m_active)
@@ -574,7 +567,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
     float newRawT = static_cast<float>(elapsedMs / m_durationMs);
     newRawT = std::min(std::max(newRawT, 0.0f), 1.0f);
 
-    // v8.5 anti-stall clamp.  The morph is wall-clock driven, so a single
+    // Anti-stall clamp.  The morph is wall-clock driven, so a single
     // slow rendered frame (PrintWindow capture, GPU hitch, compositor
     // stall) would otherwise let rawT teleport deep into the morph between
     // two visible frames — the perceived "snap into 3D".  Cap how far rawT
@@ -593,14 +586,14 @@ void EntryExitAnimator::Tick(FlipScene& scene)
     float timelineT = m_reverse ? (1.0f - m_rawT) : m_rawT;
     EntryExitTimeline::Sample s = EntryExitTimeline::SampleAt(timelineT);
 
-    // v8.5 Patch A2 — flat-endpoint spatial gate.
+    // Flat-endpoint spatial gate.
     //
-    // Patch A caps tilt, but planar/depth/scale still enter at full
-    // authored strength on the first visible animated frame — so the
-    // scene snaps into a strong 3D/perspective pose by frame ~2 (the eye
-    // reads the abrupt scale-shrink + depth-separation as a perspective
-    // snap even when tilt itself is tiny).  Win7 reference frames keep
-    // the first frames near-flat, then ease into 3D.
+    // Capping tilt alone is not enough: planar/depth/scale would still enter
+    // at full authored strength on the first visible animated frame, so the
+    // scene snaps into a strong 3D pose by frame ~2.  The eye reads the abrupt
+    // scale-shrink plus depth-separation as a perspective snap even when tilt
+    // itself is tiny.  Win7 reference frames keep the first frames near-flat,
+    // then ease into 3D.
     //
     // Gate the spatial channels near the flat endpoint, for BOTH
     // directions (entry start AND exit end — timelineT is small at the
@@ -632,11 +625,11 @@ void EntryExitAnimator::Tick(FlipScene& scene)
     // particularly affected (the planar offset to slot 0's cascade x
     // shows as a right-shift).
     //
-    // Bug 1A (v8.2) — smoothing window rawT 0.65 → 1.00 with CUBIC
-    // decay and a sub-threshold clamp.  The cubic gives a gentler, longer
-    // deceleration into the flat endpoint than the old quadratic; the
-    // clamp snaps near-zero residuals fully to zero so Finalize has
-    // nothing left to snap.  Entry path (`!m_reverse`) untouched.
+    // Smoothing window rawT 0.65 → 1.00, with cubic decay and a
+    // sub-threshold clamp.  The cubic gives a gentle, long deceleration into
+    // the flat endpoint, and the clamp snaps near-zero residuals fully to
+    // zero so Finalize has nothing left to snap.  Entry path (`!m_reverse`)
+    // is not affected.
     if (m_reverse) {
         constexpr float kFadeStart = 0.65f;
         constexpr float kFadeEnd   = 1.00f;
@@ -652,7 +645,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
         }
     }
 
-    // Per spec §5.3 — every tile uses the same blend factors.
+    // Every tile uses the same blend factors.
     std::vector<TileSlot> work(n);
     for (uint32_t i = 0; i < n; ++i) {
         const TileSlot& F = m_flatSlots[i];
@@ -687,7 +680,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
         m_exitPaintZ.clear();
     }
 
-    // Bug 6 — desktop pseudo-tile entry fade.  In the fade modes the
+    // Desktop pseudo-tile entry fade.  In the fade modes the
     // desktop tile starts at flat α=0; a per-frame smoothstep multiplier
     // controls when it becomes visible (late for HiddenUntilCascade,
     // early for FadeFromFlat).  Entry-only; exit desktop fade is handled
@@ -710,7 +703,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
     // same 2D spot are stacked by their unique Z layer, matching Win7
     // Flip3D exit behaviour.
 
-    // Bug 5 — consume m_exitFadeOut.  Tiles flagged by the controller
+    // Consume m_exitFadeOut.  Tiles flagged by the controller
     // (non-selected minimized windows, desktop tile when not picked, etc.)
     // decay to α=0 across the reverse morph via an inverted OutQuad.
     // BeginExit populates m_exitFadeOut; Escape's empty vector skips this.
@@ -749,7 +742,7 @@ void EntryExitAnimator::Tick(FlipScene& scene)
             o.scaleY = Lerp(F.scaleY, C.scaleY, s.scaleBlend);
             o.rotY   = Lerp(F.rotY,   C.rotY,   s.rotBlend);
 
-            // Bug 9'' — per-tile staggered fade window in timelineT.
+            // Per-tile staggered fade window in timelineT.
             float fadeStart = (k < m_overflowFadeStart.size()) ? m_overflowFadeStart[k] : 0.0f;
             float fadeEnd   = (k < m_overflowFadeEnd.size())   ? m_overflowFadeEnd[k]   : 1.0f;
             float windowLen = std::max(0.001f, fadeEnd - fadeStart);
@@ -763,7 +756,6 @@ void EntryExitAnimator::Tick(FlipScene& scene)
         Finalize(scene);
 }
 
-// ---------------------------------------------------------------------------
 void EntryExitAnimator::Finalize(FlipScene& scene)
 {
     if (m_reverse) {
@@ -798,7 +790,6 @@ void EntryExitAnimator::Finalize(FlipScene& scene)
     m_rawT      = m_reverse ? 0.0f : 1.0f;
 }
 
-// ---------------------------------------------------------------------------
 bool EntryExitAnimator::ReverseInPlace()
 {
     if (!m_active || m_reverse)
@@ -825,7 +816,6 @@ bool EntryExitAnimator::ReverseInPlace()
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool EntryExitAnimator::JustFinishedExit()
 {
     if (m_justDoneExit) {
@@ -835,7 +825,6 @@ bool EntryExitAnimator::JustFinishedExit()
     return false;
 }
 
-// ---------------------------------------------------------------------------
 float EntryExitAnimator::DimFactor() const
 {
     // Inactive between sessions: full target dim.  Exception: right after

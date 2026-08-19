@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// One live texture per window, sourced from Windows.Graphics.Capture.  This is
+// where the tiles get their content, and where a minimized window falls back
+// to a GDI PrintWindow so it still has something to show.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -57,7 +64,7 @@ public:
     /// so every tile shows content instead of a placeholder.
     void EnsureFrame();
 
-    /// v8.5 — locate the vertical centre (as a UV.y in [0,1]) of the
+    /// Locate the vertical centre (as a UV.y in [0,1]) of the
     /// captured texture's real content band.  On Win10 / Win11 24H2 the
     /// Shell_TrayWnd WGC capture is far taller than the visible bar, with
     /// the real taskbar in only a thin band and opaque dark fill elsewhere;
@@ -77,7 +84,7 @@ public:
     bool DetectContentCenterV(float& outCenterUvY, int expectedBandPx = 0);
 
 #ifdef CKFLIP_DEBUG_TASKBAR
-    /// Debug-only (Bug 11' v8.2 §12 Test B + v8.4 §6).  Copies
+    /// Debug-only taskbar capture dump.  Copies
     /// m_cachedTexture to a staging texture and writes, using `basePath`
     /// as a prefix (no extension):
     ///   <basePath>.bmp        — full 32-bit capture

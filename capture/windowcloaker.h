@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// Getting the real windows out of the way while the cascade is on screen, and
+// putting every one of them back afterwards.  Cloaking is invisible to the
+// windows themselves, which is the point: nothing is minimized, moved or
+// resized, so no application ever learns the switcher happened.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Finding CKFlip3D.exe.  The Settings app has to work from an install folder
+// and from a development build tree alike, so the answer is looked up rather
+// than assumed, with a running core as the last resort.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -56,6 +63,29 @@ public static class CoreLocator
         return null;
     }
 
+    /// <summary>
+    /// CKFlip3D.Launch.exe — the launch shortcut's target, which ships beside
+    /// the core and the settings app. Same search as <see cref="FindCoreExe"/>
+    /// minus the running-process fallback: this one is never running by the
+    /// time anybody looks for it (it exits in milliseconds). Returns null when
+    /// it is not there — a build from before 1.6, or a partial install.
+    /// </summary>
+    public static string? FindLauncherExe()
+    {
+        const string name = "CKFlip3D.Launch.exe";
+
+        string sideBySide = Path.Combine(AppContext.BaseDirectory, name);
+        if (File.Exists(sideBySide)) return sideBySide;
+
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 6 && dir != null; i++, dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, name);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindowW(string? className, string? windowName);
 
@@ -63,29 +93,24 @@ public static class CoreLocator
     private const string CoreWindowClass = "CKFlip3D_MessageWindow";
 
     /// <summary>
-    /// Is the switcher alive?
-    ///
-    /// This used to be asked once, as the settings window opened. It is now
-    /// also asked on a timer for as long as that window lives, so what it
-    /// costs stopped being irrelevant.
+    /// Is the switcher alive?  Asked on a timer for as long as the settings
+    /// window lives, so the cost of asking matters.
     ///
     /// The fast path is a single FindWindow for the core's window class: no
     /// allocation, no handles, and a bounded lookup rather than a snapshot of
-    /// every process on the machine. UIPI does not interfere — it filters
-    /// MESSAGES to a higher-integrity window, not the ability to find one — and
-    /// it is the same window Apply has to reach, so a "yes" here is a yes to
-    /// the question the callers actually care about.
+    /// every process on the machine. UIPI does not interfere, since it filters
+    /// MESSAGES to a higher-integrity window rather than the ability to find
+    /// one, and it is the same window Apply has to reach, so a "yes" here
+    /// answers the question the callers actually have.
     ///
-    /// Process enumeration stays as the fallback, for the gap between the
-    /// process starting and its window existing. Its results are now DISPOSED:
-    /// every Process object holds a native handle until finalisation, so the
-    /// old version leaked one per running core per call — harmless at once per
-    /// window, not harmless several times a minute.
+    /// Process enumeration is the fallback, for the gap between the process
+    /// starting and its window existing. Its results MUST be disposed: every
+    /// Process object holds a native handle until finalisation, and this runs
+    /// several times a minute.
     ///
     /// Inherently a snapshot: the core can exit immediately after this returns
-    /// true. That is fine for every caller here — the only consequence is a log
-    /// entry, and the watch that drives it is edge-triggered, so the next tick
-    /// corrects it.
+    /// true. Harmless for every caller here, and the watch that drives it is
+    /// edge-triggered, so the next tick corrects it.
     /// </summary>
     public static bool IsCoreRunning()
     {

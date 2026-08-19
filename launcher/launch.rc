@@ -1,0 +1,37 @@
+// CKFlip3D.Launch.exe resources — compiled by rc.exe in build.bat.
+// Resource paths are resolved from the repo root (build.bat cd's there and
+// passes /I .), the same way app.rc's are.
+#include <winver.h>
+
+// Icon id 1: the lowest-numbered icon is the one Explorer shows for the exe,
+// so the launch shortcut carries the cascade icon like everything else.
+1 ICON "assets/icons/CKFlip3D.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION     1,6,0,0
+ PRODUCTVERSION  1,6,0,0
+ FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+ FILEFLAGS       0x0L
+ FILEOS          VOS_NT_WINDOWS32
+ FILETYPE        VFT_APP
+ FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "CYMERKAROL"
+            VALUE "FileDescription",  "CKFlip3D cascade launcher"
+            VALUE "FileVersion",      "1.6.0"
+            VALUE "InternalName",     "CKFlip3D.Launch"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 CYMERKAROL"
+            VALUE "OriginalFilename", "CKFlip3D.Launch.exe"
+            VALUE "ProductName",      "CKFlip3D"
+            VALUE "ProductVersion",   "1.6.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -1,10 +1,17 @@
+// ---------------------------------------------------------------------------
+// One step of the cascade, from the wrap tile's swing through the plain slides
+// of everything else.  The same interpolation serves both the timed cycle and
+// the free scrub, so the stack looks identical whether a clock or a finger is
+// driving it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include <Windows.h>
 #include "CycleAnimator.h"
 #include <algorithm>
 #include <cmath>
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::FinishImmediate(FlipScene& scene)
 {
     uint32_t n = scene.SlotCount();
@@ -18,7 +25,6 @@ void CycleAnimator::FinishImmediate(FlipScene& scene)
     m_settling = false;
 }
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::ComputeN0()
 {
     // Virtual Slot 0: extrapolate from slot 0 AWAY from the cascade.
@@ -41,7 +47,6 @@ void CycleAnimator::ComputeN0()
     m_n0Slot.alpha  = 0.0f;
 }
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::ComputeBackSpawn()
 {
     // Spawn point for backward wrapping: slightly past the last visible slot
@@ -64,7 +69,6 @@ void CycleAnimator::ComputeBackSpawn()
     m_backSpawn.alpha  = 0.0f;
 }
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::SwitchToDecel()
 {
     if (!m_active || !m_chained)
@@ -75,8 +79,6 @@ void CycleAnimator::SwitchToDecel()
     m_chainCount = 0;
 }
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 uint32_t CycleAnimator::SourceSlot(uint32_t i) const
 {
     const uint32_t n = static_cast<uint32_t>(m_startSlots.size());
@@ -84,7 +86,6 @@ uint32_t CycleAnimator::SourceSlot(uint32_t i) const
     return m_forward ? (i + 1) % n : (i == 0 ? n - 1 : i - 1);
 }
 
-// ---------------------------------------------------------------------------
 bool CycleAnimator::IsSideSwapSlot(uint32_t i) const
 {
     if (!m_active || !m_carousel)
@@ -95,7 +96,6 @@ bool CycleAnimator::IsSideSwapSlot(uint32_t i) const
     return m_startSlots[SourceSlot(i)].rotY * m_targetSlots[i].rotY < -0.001f;
 }
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::Begin(FlipScene& scene, bool forward, bool chained,
                           float durationMsOverride)
 {
@@ -134,7 +134,6 @@ void CycleAnimator::Begin(FlipScene& scene, bool forward, bool chained,
     m_startQPC = now.QuadPart;
 }
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::SetTarget(const FlipScene& scene)
 {
     uint32_t n = scene.SlotCount();
@@ -146,14 +145,12 @@ void CycleAnimator::SetTarget(const FlipScene& scene)
     ComputeBackSpawn();
 }
 
-// ---------------------------------------------------------------------------
 bool CycleAnimator::JustFinished()
 {
     if (m_justDone) { m_justDone = false; return true; }
     return false;
 }
 
-// ---------------------------------------------------------------------------
 float CycleAnimator::GetMotionIntensity() const
 {
     if (!m_active) return 0.0f;
@@ -228,7 +225,6 @@ bool CycleAnimator::JustSettledToStart()
     return false;
 }
 
-// ---------------------------------------------------------------------------
 void CycleAnimator::Tick(FlipScene& scene)
 {
     if (!m_active)

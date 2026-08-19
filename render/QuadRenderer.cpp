@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The quad's HLSL, kept inline so there is no separate shader build step, plus
+// the buffers, sampler and submission path that put it on screen.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "QuadRenderer.hpp"
 #include "../core/DebugLog.h"
 #include "../core/Diagnostics.h"
@@ -183,11 +189,6 @@ float4 PSReflection(PSInput input) : SV_Target
     return col;
 }
 
-float4 PSDim(PSInput input) : SV_Target
-{
-    return float4(0.0f, 0.0f, 0.0f, alpha);
-}
-
 // Placeholder for tiles without capture content — frosted glass tint.
 float4 PSPlaceholder(PSInput input) : SV_Target
 {
@@ -196,9 +197,9 @@ float4 PSPlaceholder(PSInput input) : SV_Target
     return float4(0.12f * a, 0.14f * a, 0.18f * a, 0.65f * a);
 }
 
-// Diagnostic PS (Bug 11') — assumes the input texture is STRAIGHT alpha
-// (not premultiplied) and converts to premultiplied output.  Used only for
-// the taskbar layer as a hypothesis test for the #282832 leak.  Do NOT use
+// Diagnostic PS: assumes the input texture is STRAIGHT alpha (not
+// premultiplied) and converts to premultiplied output.  Used only for the
+// taskbar layer as a hypothesis test for the #282832 leak.  Do NOT use
 // globally without dump classification proving WGC textures are
 // straight-alpha for that specific source.
 float4 PSMainAssumeStraightAlpha(PSInput input) : SV_Target
@@ -214,7 +215,7 @@ float4 PSMainAssumeStraightAlpha(PSInput input) : SV_Target
     return float4(outRGB, outA);
 }
 
-// Debug-only solid-red quad (Bug 11' v8.4 Patch D `red` geometry test).
+// Debug-only solid-red quad (the `red` taskbar geometry test).
 // Premultiplied red — verifies the taskbar quad's transform / m_taskbarRect
 // without depending on any capture texture.
 float4 PSDebugRed(PSInput input) : SV_Target
@@ -246,7 +247,6 @@ static constexpr UINT16 kQuadIndices[] = {
     0, 2, 3
 };
 
-// ---------------------------------------------------------------------------
 static winrt::com_ptr<ID3DBlob> CompileShader(const char* src, UINT srcLen,
                                                const char* entry,
                                                const char* target)
@@ -277,7 +277,6 @@ static winrt::com_ptr<ID3DBlob> CompileShader(const char* src, UINT srcLen,
     return blob;
 }
 
-// ---------------------------------------------------------------------------
 bool QuadRenderer::Init(ID3D11Device* device)
 {
     // --- Compile shaders ---------------------------------------------------
@@ -297,15 +296,6 @@ bool QuadRenderer::Init(ID3D11Device* device)
     hr = device->CreatePixelShader(
         psBlob->GetBufferPointer(), psBlob->GetBufferSize(),
         nullptr, m_ps.put());
-    if (FAILED(hr)) return false;
-
-    auto psDimBlob = CompileShader(kQuadHLSL, sizeof(kQuadHLSL) - 1,
-                                    "PSDim", "ps_5_0");
-    if (!psDimBlob) return false;
-
-    hr = device->CreatePixelShader(
-        psDimBlob->GetBufferPointer(), psDimBlob->GetBufferSize(),
-        nullptr, m_psDim.put());
     if (FAILED(hr)) return false;
 
     auto psPlaceholderBlob = CompileShader(kQuadHLSL, sizeof(kQuadHLSL) - 1,
@@ -334,7 +324,7 @@ bool QuadRenderer::Init(ID3D11Device* device)
     if (FAILED(hr)) return false;
 
 #ifdef CKFLIP_DEBUG_TASKBAR
-    // Bug 11' diagnostic shader (debug builds only).
+    // Straight-alpha diagnostic shader (debug builds only).
     auto psAsabBlob = CompileShader(kQuadHLSL, sizeof(kQuadHLSL) - 1,
                                     "PSMainAssumeStraightAlpha", "ps_5_0");
     if (!psAsabBlob) return false;
@@ -343,7 +333,7 @@ bool QuadRenderer::Init(ID3D11Device* device)
         nullptr, m_psAssumeStraightAlpha.put());
     if (FAILED(hr)) return false;
 
-    // Patch D `red` geometry-test shader (debug builds only).
+    // `red` geometry-test shader (debug builds only).
     auto psRedBlob = CompileShader(kQuadHLSL, sizeof(kQuadHLSL) - 1,
                                    "PSDebugRed", "ps_5_0");
     if (!psRedBlob) return false;
@@ -417,25 +407,18 @@ bool QuadRenderer::Init(ID3D11Device* device)
     return SUCCEEDED(hr);
 }
 
-// ---------------------------------------------------------------------------
-void QuadRenderer::DrawWallpaper(ID3D11DeviceContext* ctx,
-                                  ID3D11ShaderResourceView* srv,
-                                  const QuadDrawCall& draw)
+void QuadRenderer::ResetStateCache()
 {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
-    auto* cb    = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp     = draw.mvp;
-    cb->alpha   = draw.alpha;
-    cb->blurAmount = draw.blurAmount;
-    cb->uvMinX  = draw.uvMinX;
-    cb->uvMinY  = draw.uvMinY;
-    cb->uvMaxX  = draw.uvMaxX;
-    cb->uvMaxY  = draw.uvMaxY;
-    cb->_pad[0] = 0.0f;
-    cb->_pad[1] = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
+    m_sharedBound  = false;
+    m_boundPS      = nullptr;
+    m_boundSRV     = nullptr;
+    m_boundSampler = nullptr;
+}
+
+void QuadRenderer::BindShared(ID3D11DeviceContext* ctx)
+{
+    if (m_sharedBound)
+        return;
 
     ctx->IASetInputLayout(m_inputLayout.get());
     UINT stride = sizeof(Vertex);
@@ -448,57 +431,76 @@ void QuadRenderer::DrawWallpaper(ID3D11DeviceContext* ctx,
     ctx->VSSetShader(m_vs.get(), nullptr, 0);
     ID3D11Buffer* cbs[] = { m_cb.get() };
     ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_psWallpaper.get(), nullptr, 0);
     ctx->PSSetConstantBuffers(0, 1, cbs);
-    ctx->PSSetShaderResources(0, 1, &srv);
-    ID3D11SamplerState* samplers[] = { ActiveSampler() };
-    ctx->PSSetSamplers(0, 1, samplers);
+
+    // Make the empty texture slot TRUE rather than merely assumed.  The cache
+    // starts each frame believing nothing is bound, and for the pixel shader
+    // and sampler that belief costs nothing to honour — every draw names one,
+    // so the frame's first draw sends them either way.  The texture is the
+    // exception: an untextured quad (a placeholder, the debug fill) names
+    // nullptr, and if that is the frame's first draw the cache would agree
+    // with itself while last frame's texture was still bound.  Harmless for
+    // those shaders, which never sample — but a cache that can be wrong about
+    // what is bound is the wrong thing to leave lying around.
+    ID3D11ShaderResourceView* noSrv = nullptr;
+    ctx->PSSetShaderResources(0, 1, &noSrv);
+
+    m_sharedBound = true;
+}
+
+void QuadRenderer::Submit(ID3D11DeviceContext* ctx,
+                          ID3D11PixelShader* ps,
+                          ID3D11ShaderResourceView* srv,
+                          const QuadDrawCall& draw,
+                          float blurAmount,
+                          bool fullUV)
+{
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (FAILED(ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        return;
+    auto* cb       = static_cast<CBPerDraw*>(mapped.pData);
+    cb->mvp        = draw.mvp;
+    cb->alpha      = draw.alpha;
+    cb->blurAmount = blurAmount;
+    cb->uvMinX     = fullUV ? 0.0f : draw.uvMinX;
+    cb->uvMinY     = fullUV ? 0.0f : draw.uvMinY;
+    cb->uvMaxX     = fullUV ? 1.0f : draw.uvMaxX;
+    cb->uvMaxY     = fullUV ? 1.0f : draw.uvMaxY;
+    cb->_pad[0]    = 0.0f;
+    cb->_pad[1]    = 0.0f;
+    ctx->Unmap(m_cb.get(), 0);
+
+    BindShared(ctx);
+
+    if (ps != m_boundPS) {
+        ctx->PSSetShader(ps, nullptr, 0);
+        m_boundPS = ps;
+    }
+    if (srv != m_boundSRV) {
+        ctx->PSSetShaderResources(0, 1, &srv);
+        m_boundSRV = srv;
+    }
+    ID3D11SamplerState* sampler = ActiveSampler();
+    if (sampler != m_boundSampler) {
+        ctx->PSSetSamplers(0, 1, &sampler);
+        m_boundSampler = sampler;
+    }
 
     ctx->DrawIndexed(6, 0, 0);
 }
 
-// ---------------------------------------------------------------------------
+void QuadRenderer::DrawWallpaper(ID3D11DeviceContext* ctx,
+                                  ID3D11ShaderResourceView* srv,
+                                  const QuadDrawCall& draw)
+{
+    Submit(ctx, m_psWallpaper.get(), srv, draw, draw.blurAmount, false);
+}
+
 void QuadRenderer::Draw(ID3D11DeviceContext* ctx,
                          ID3D11ShaderResourceView* srv,
                          const QuadDrawCall& draw)
 {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
-
-    auto* cb    = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp     = draw.mvp;
-    cb->alpha   = draw.alpha;
-    cb->blurAmount = draw.blurAmount;
-    cb->uvMinX  = draw.uvMinX;
-    cb->uvMinY  = draw.uvMinY;
-    cb->uvMaxX  = draw.uvMaxX;
-    cb->uvMaxY  = draw.uvMaxY;
-    cb->_pad[0] = 0.0f;
-    cb->_pad[1] = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
-
-    // Bind pipeline state.
-    ctx->IASetInputLayout(m_inputLayout.get());
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-    ID3D11Buffer* vb = m_vb.get();
-    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
-    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    ctx->VSSetShader(m_vs.get(), nullptr, 0);
-    ID3D11Buffer* cbs[] = { m_cb.get() };
-    ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_ps.get(), nullptr, 0);
-    ctx->PSSetConstantBuffers(0, 1, cbs);
-    ctx->PSSetShaderResources(0, 1, &srv);
-    ID3D11SamplerState* samplers[] = { ActiveSampler() };
-    ctx->PSSetSamplers(0, 1, samplers);
-
-    ctx->DrawIndexed(6, 0, 0);
+    Submit(ctx, m_ps.get(), srv, draw, draw.blurAmount, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -510,215 +512,33 @@ void QuadRenderer::DrawReflection(ID3D11DeviceContext* ctx,
                                    ID3D11ShaderResourceView* srv,
                                    const QuadDrawCall& draw)
 {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
-
-    auto* cb    = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp     = draw.mvp;
-    cb->alpha   = draw.alpha;
-    cb->blurAmount = 0.0f;
-    cb->uvMinX  = draw.uvMinX;
-    cb->uvMinY  = draw.uvMinY;
-    cb->uvMaxX  = draw.uvMaxX;
-    cb->uvMaxY  = draw.uvMaxY;
-    cb->_pad[0] = 0.0f;
-    cb->_pad[1] = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
-
-    ctx->IASetInputLayout(m_inputLayout.get());
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-    ID3D11Buffer* vb = m_vb.get();
-    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
-    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    ctx->VSSetShader(m_vs.get(), nullptr, 0);
-    ID3D11Buffer* cbs[] = { m_cb.get() };
-    ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_psReflection.get(), nullptr, 0);
-    ctx->PSSetConstantBuffers(0, 1, cbs);
-    ctx->PSSetShaderResources(0, 1, &srv);
-    ID3D11SamplerState* samplers[] = { ActiveSampler() };
-    ctx->PSSetSamplers(0, 1, samplers);
-
-    ctx->DrawIndexed(6, 0, 0);
+    Submit(ctx, m_psReflection.get(), srv, draw, /*blurAmount=*/0.0f, false);
 }
 
 #ifdef CKFLIP_DEBUG_TASKBAR
 // ---------------------------------------------------------------------------
-// Bug 11' diagnostic — clone of Draw() that binds the straight-alpha PS.
+// Diagnostic clone of Draw() that binds the straight-alpha PS.
 void QuadRenderer::DrawAssumeStraightAlpha(ID3D11DeviceContext* ctx,
                                             ID3D11ShaderResourceView* srv,
                                             const QuadDrawCall& draw)
 {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
-
-    auto* cb    = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp     = draw.mvp;
-    cb->alpha   = draw.alpha;
-    cb->blurAmount = draw.blurAmount;
-    cb->uvMinX  = draw.uvMinX;
-    cb->uvMinY  = draw.uvMinY;
-    cb->uvMaxX  = draw.uvMaxX;
-    cb->uvMaxY  = draw.uvMaxY;
-    cb->_pad[0] = 0.0f;
-    cb->_pad[1] = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
-
-    ctx->IASetInputLayout(m_inputLayout.get());
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-    ID3D11Buffer* vb = m_vb.get();
-    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
-    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    ctx->VSSetShader(m_vs.get(), nullptr, 0);
-    ID3D11Buffer* cbs[] = { m_cb.get() };
-    ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_psAssumeStraightAlpha.get(), nullptr, 0);
-    ctx->PSSetConstantBuffers(0, 1, cbs);
-    ctx->PSSetShaderResources(0, 1, &srv);
-    ID3D11SamplerState* samplers[] = { ActiveSampler() };
-    ctx->PSSetSamplers(0, 1, samplers);
-
-    ctx->DrawIndexed(6, 0, 0);
+    Submit(ctx, m_psAssumeStraightAlpha.get(), srv, draw, draw.blurAmount,
+           false);
 }
 
 // ---------------------------------------------------------------------------
-// Patch D `red` geometry test — solid-red quad, no texture.
+// The `red` geometry test: solid-red quad, no texture.
 void QuadRenderer::DrawDebugRed(ID3D11DeviceContext* ctx,
                                  const QuadDrawCall& draw)
 {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
-
-    auto* cb        = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp         = draw.mvp;
-    cb->alpha       = draw.alpha;
-    cb->blurAmount  = 0.0f;
-    cb->uvMinX      = 0.0f;
-    cb->uvMinY      = 0.0f;
-    cb->uvMaxX      = 1.0f;
-    cb->uvMaxY      = 1.0f;
-    cb->_pad[0]     = 0.0f;
-    cb->_pad[1]     = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
-
-    ctx->IASetInputLayout(m_inputLayout.get());
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-    ID3D11Buffer* vb = m_vb.get();
-    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
-    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    ctx->VSSetShader(m_vs.get(), nullptr, 0);
-    ID3D11Buffer* cbs[] = { m_cb.get() };
-    ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_psDebugRed.get(), nullptr, 0);
-    ctx->PSSetConstantBuffers(0, 1, cbs);
-
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    ctx->PSSetShaderResources(0, 1, &nullSrv);
-
-    ctx->DrawIndexed(6, 0, 0);
+    Submit(ctx, m_psDebugRed.get(), nullptr, draw, /*blurAmount=*/0.0f,
+           /*fullUV=*/true);
 }
 #endif
 
-// ---------------------------------------------------------------------------
-void QuadRenderer::DrawDim(ID3D11DeviceContext* ctx, float dimAlpha)
-{
-    // Scale unit quad [-0.5,+0.5] to NDC [-1,+1].
-    QuadDrawCall draw;
-    DirectX::XMStoreFloat4x4(&draw.mvp,
-        DirectX::XMMatrixScaling(2.0f, 2.0f, 1.0f));
-    draw.alpha = dimAlpha;
-
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (FAILED(ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
-        return;
-    auto* cb        = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp         = draw.mvp;
-    cb->alpha       = draw.alpha;
-    cb->blurAmount  = 0.0f;
-    cb->uvMinX      = 0.0f;
-    cb->uvMinY      = 0.0f;
-    cb->uvMaxX      = 1.0f;
-    cb->uvMaxY      = 1.0f;
-    cb->_pad[0]     = 0.0f;
-    cb->_pad[1]     = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
-
-    ctx->IASetInputLayout(m_inputLayout.get());
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-    ID3D11Buffer* vb = m_vb.get();
-    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
-    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    ctx->VSSetShader(m_vs.get(), nullptr, 0);
-    ID3D11Buffer* cbs[] = { m_cb.get() };
-    ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_psDim.get(), nullptr, 0);
-    ctx->PSSetConstantBuffers(0, 1, cbs);
-
-    // Clear any bound SRV from previous draw.
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    ctx->PSSetShaderResources(0, 1, &nullSrv);
-
-    ctx->DrawIndexed(6, 0, 0);
-}
-
-// ---------------------------------------------------------------------------
 void QuadRenderer::DrawPlaceholder(ID3D11DeviceContext* ctx,
                                     const QuadDrawCall& draw)
 {
-    // Update constant buffer.
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    HRESULT hr = ctx->Map(m_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
-
-    auto* cb        = static_cast<CBPerDraw*>(mapped.pData);
-    cb->mvp         = draw.mvp;
-    cb->alpha       = draw.alpha;
-    cb->blurAmount  = 0.0f;
-    cb->uvMinX      = 0.0f;
-    cb->uvMinY      = 0.0f;
-    cb->uvMaxX      = 1.0f;
-    cb->uvMaxY      = 1.0f;
-    cb->_pad[0]     = 0.0f;
-    cb->_pad[1]     = 0.0f;
-    ctx->Unmap(m_cb.get(), 0);
-
-    ctx->IASetInputLayout(m_inputLayout.get());
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
-    ID3D11Buffer* vb = m_vb.get();
-    ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-    ctx->IASetIndexBuffer(m_ib.get(), DXGI_FORMAT_R16_UINT, 0);
-    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    ctx->VSSetShader(m_vs.get(), nullptr, 0);
-    ID3D11Buffer* cbs[] = { m_cb.get() };
-    ctx->VSSetConstantBuffers(0, 1, cbs);
-
-    ctx->PSSetShader(m_psPlaceholder.get(), nullptr, 0);
-    ctx->PSSetConstantBuffers(0, 1, cbs);
-
-    // Clear any bound SRV.
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    ctx->PSSetShaderResources(0, 1, &nullSrv);
-
-    ctx->DrawIndexed(6, 0, 0);
+    Submit(ctx, m_psPlaceholder.get(), nullptr, draw, /*blurAmount=*/0.0f,
+           /*fullUV=*/true);
 }

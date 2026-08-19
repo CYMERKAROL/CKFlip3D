@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Reading and writing config.json, and telling a running core to pick the file
+// back up.  The layout is written flat and one key per line, because the C++
+// side scans for keys rather than parsing a document.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -70,21 +77,77 @@ public static class ConfigService
                 m.StartDelayMs      = GetInt(root, "startDelayMs", m.StartDelayMs);
                 m.IgnoreFullscreen  = GetBool(root, "ignoreFullscreen", m.IgnoreFullscreen);
                 m.MouseWheelCycle   = GetBool(root, "mouseWheelCycle", m.MouseWheelCycle);
-                m.KeyboardNav       = GetBool(root, "keyboardNav", m.KeyboardNav);
                 m.IgnoredApps       = GetString(root, "ignoredApps", m.IgnoredApps);
                 m.ExcludedApps      = GetString(root, "excludedApps", m.ExcludedApps);
                 m.ActivationHotkey  = GetString(root, "activationHotkey", m.ActivationHotkey);
-                m.CommitHotkey      = GetString(root, "commitHotkey", m.CommitHotkey);
-                m.CancelHotkey      = GetString(root, "cancelHotkey", m.CancelHotkey);
-                m.CloseHotkey       = GetString(root, "closeHotkey", m.CloseHotkey);
                 m.HotkeyToggleMode  = GetBool(root, "hotkeyToggleMode", m.HotkeyToggleMode);
+
+                // ---- Commit / cancel / close: one key each, until Build 3 ---
+                // Mirrors core/Config.cpp: read the list, and when the file has
+                // none, seed it from the single key that file DOES carry.
+                bool hadCommit = root.TryGetProperty("commitKeys", out _);
+                m.CommitKeys = GetString(root, "commitKeys", m.CommitKeys);
+                if (!hadCommit)
+                    m.CommitKeys = GetString(root, "commitHotkey", m.CommitKeys);
+
+                bool hadCancel = root.TryGetProperty("cancelKeys", out _);
+                m.CancelKeys = GetString(root, "cancelKeys", m.CancelKeys);
+                if (!hadCancel)
+                    m.CancelKeys = GetString(root, "cancelHotkey", m.CancelKeys);
+
+                // The close key's old master switch said exactly what an empty
+                // (or wholly parked) list says, so it is gone the way
+                // keyboardNav went. A file that still carries it OFF meant "no
+                // close key" and has to keep meaning that — parked, not
+                // deleted, so the page shows it ready to come back.
+                bool hadClose = root.TryGetProperty("closeKeys", out _);
+                m.CloseKeys = GetString(root, "closeKeys", m.CloseKeys);
+                if (!hadClose)
+                {
+                    m.CloseKeys = GetString(root, "closeHotkey", m.CloseKeys);
+                    if (!GetBool(root, "closeKeyEnabled", true))
+                        m.CloseKeys = ParkAll(m.CloseKeys);
+                }
+
+                // ---- Navigation keys, and the 1.5 file that has none -------
+                // Read after activationHotkey, and mirroring core/Config.cpp
+                // exactly — the core reads this same file, often before this
+                // app is ever opened, and the two must not disagree about what
+                // an older config means.
+                //
+                // A pre-1.6 file has no lists at all, and back then the
+                // ACTIVATION key stepped the stack as a side effect of opening
+                // it. Seed from that file's own hotkey so an update changes
+                // nothing the user can feel, and only when the key is ABSENT:
+                // once 1.6 has written the lists they are the truth, hotkey
+                // changes included.
+                bool hadNavKeys = root.TryGetProperty("navForwardKeys", out _);
+                m.NavForwardKeys = GetString(root, "navForwardKeys", m.NavForwardKeys);
+                m.NavBackKeys    = GetString(root, "navBackKeys", m.NavBackKeys);
+                if (!hadNavKeys)
+                {
+                    string main = NavTokenOfBinding(m.ActivationHotkey);
+                    m.NavForwardKeys = main.Length == 0 ? "Down;Right" : $"{main};Down;Right";
+                    m.NavBackKeys    = main.Length == 0 ? "Up;Left" : $"Shift+{main};Up;Left";
+                }
+
+                // Legacy `keyboardNav` (1.5 and earlier): one switch over the
+                // four hard-wired arrows, replaced in 1.6 by the two lists. A
+                // file that still carries it OFF meant "no navigation keys", so
+                // park every entry rather than handing back arrows somebody
+                // switched off — parked and not deleted, so the Navigation keys
+                // page shows them ready to come back.
+                if (!GetBool(root, "keyboardNav", true))
+                {
+                    m.NavForwardKeys = ParkAll(m.NavForwardKeys);
+                    m.NavBackKeys = ParkAll(m.NavBackKeys);
+                }
                 m.PointerInCascade   = GetBool(root, "pointerInCascade", m.PointerInCascade);
                 m.MouseSelect        = GetBool(root, "mouseSelect", m.MouseSelect);
                 m.MouseSelectButton  = GetInt(root, "mouseSelectButton", m.MouseSelectButton);
                 m.MouseDragEnabled   = GetBool(root, "mouseDragEnabled", m.MouseDragEnabled);
                 m.MouseDragButton    = GetInt(root, "mouseDragButton", m.MouseDragButton);
                 m.CloseFromCascade   = GetBool(root, "closeFromCascade", m.CloseFromCascade);
-                m.CloseKeyEnabled    = GetBool(root, "closeKeyEnabled", m.CloseKeyEnabled);
                 m.MouseCloseButton   = GetInt(root, "mouseCloseButton", m.MouseCloseButton);
                 m.SearchEnabled      = GetBool(root, "searchEnabled", m.SearchEnabled);
                 m.SearchBox          = GetBool(root, "searchBox", m.SearchBox);
@@ -93,14 +156,45 @@ public static class ConfigService
                 m.SearchPosY         = GetInt(root, "searchPosY", m.SearchPosY);
                 m.SearchScale        = GetInt(root, "searchScale", m.SearchScale);
                 m.TouchpadNav             = GetBool(root, "touchpadNav", m.TouchpadNav);
-                m.TouchpadCycleFingers    = GetInt(root, "touchpadCycleFingers", m.TouchpadCycleFingers);
                 m.TouchpadReverse         = GetBool(root, "touchpadReverse", m.TouchpadReverse);
                 m.TouchpadSensitivity     = GetInt(root, "touchpadSensitivity", m.TouchpadSensitivity);
-                m.TouchpadActivateGesture = GetInt(root, "touchpadActivateGesture", m.TouchpadActivateGesture);
-                m.TouchpadCommitGesture   = GetInt(root, "touchpadCommitGesture", m.TouchpadCommitGesture);
                 m.TouchpadSmoothing       = GetInt(root, "touchpadSmoothing", m.TouchpadSmoothing);
                 m.TouchpadCancelSwipe     = GetBool(root, "touchpadCancelSwipe", m.TouchpadCancelSwipe);
+                m.TouchpadContinuous      = GetBool(root, "touchpadContinuous", m.TouchpadContinuous);
                 m.WindowSnap              = GetBool(root, "windowSnap", m.WindowSnap);
+
+                // ---- Touchpad gestures: one apiece, until Build 3 -----------
+                // Each list replaces a single integer whose 0 meant "off" —
+                // which is what an empty list says now. Seeded from the integer
+                // only when the list is absent (core/Config.cpp does the same).
+                if (root.TryGetProperty("touchpadActivateGestures", out _))
+                    m.TouchpadActivateGestures = GetString(root, "touchpadActivateGestures", m.TouchpadActivateGestures);
+                else
+                    m.TouchpadActivateGestures = GetInt(root, "touchpadActivateGesture", 1) switch
+                    {
+                        0 => "",
+                        2 => "TwoDownLeft",
+                        3 => "FourDownRight",
+                        4 => "FourDownLeft",
+                        _ => "TwoDownRight",
+                    };
+
+                if (root.TryGetProperty("touchpadCycleGestures", out _))
+                    m.TouchpadCycleGestures = GetString(root, "touchpadCycleGestures", m.TouchpadCycleGestures);
+                else
+                    m.TouchpadCycleGestures =
+                        GetInt(root, "touchpadCycleFingers", 2) >= 4 ? "FourSwipe" : "TwoSwipe";
+
+                if (root.TryGetProperty("touchpadCommitGestures", out _))
+                    m.TouchpadCommitGestures = GetString(root, "touchpadCommitGestures", m.TouchpadCommitGestures);
+                else
+                    m.TouchpadCommitGestures = GetInt(root, "touchpadCommitGesture", 1) switch
+                    {
+                        0 => "",
+                        2 => "TwoTap",
+                        3 => "TwoDown",
+                        _ => "OneTap",
+                    };
                 m.ShowDebugInfo     = GetBool(root, "showDebugInfo", m.ShowDebugInfo);
 
                 // Forward-compatible keys (not consumed by the core yet)
@@ -114,7 +208,9 @@ public static class ConfigService
             // Corrupt config: fall back to defaults rather than crash the settings UI.
         }
 
-        // Startup state lives in the registry, not in config.json.
+        // Startup state lives in the Task Scheduler, not in config.json — read
+        // from where it actually is, so a change made outside this app shows up
+        // here rather than being overwritten.
         m.StartWithWindows = StartupService.IsEnabled();
 
         m.TakeSnapshot();
@@ -155,13 +251,14 @@ public static class ConfigService
         AppendInt(sb, "startDelayMs", m.StartDelayMs);
         AppendBool(sb, "ignoreFullscreen", m.IgnoreFullscreen);
         AppendBool(sb, "mouseWheelCycle", m.MouseWheelCycle);
-        AppendBool(sb, "keyboardNav", m.KeyboardNav);
+        AppendString(sb, "navForwardKeys", m.NavForwardKeys);
+        AppendString(sb, "navBackKeys", m.NavBackKeys);
         AppendString(sb, "ignoredApps", m.IgnoredApps);
         AppendString(sb, "excludedApps", m.ExcludedApps);
         AppendString(sb, "activationHotkey", m.ActivationHotkey);
-        AppendString(sb, "commitHotkey", m.CommitHotkey);
-        AppendString(sb, "cancelHotkey", m.CancelHotkey);
-        AppendString(sb, "closeHotkey", m.CloseHotkey);
+        AppendString(sb, "commitKeys", m.CommitKeys);
+        AppendString(sb, "cancelKeys", m.CancelKeys);
+        AppendString(sb, "closeKeys", m.CloseKeys);
         AppendBool(sb, "hotkeyToggleMode", m.HotkeyToggleMode);
         AppendBool(sb, "pointerInCascade", m.PointerInCascade);
         AppendBool(sb, "mouseSelect", m.MouseSelect);
@@ -169,7 +266,6 @@ public static class ConfigService
         AppendBool(sb, "mouseDragEnabled", m.MouseDragEnabled);
         AppendInt(sb, "mouseDragButton", m.MouseDragButton);
         AppendBool(sb, "closeFromCascade", m.CloseFromCascade);
-        AppendBool(sb, "closeKeyEnabled", m.CloseKeyEnabled);
         AppendInt(sb, "mouseCloseButton", m.MouseCloseButton);
         AppendBool(sb, "searchEnabled", m.SearchEnabled);
         AppendBool(sb, "searchBox", m.SearchBox);
@@ -178,13 +274,14 @@ public static class ConfigService
         AppendInt(sb, "searchPosY", m.SearchPosY);
         AppendInt(sb, "searchScale", m.SearchScale);
         AppendBool(sb, "touchpadNav", m.TouchpadNav);
-        AppendInt(sb, "touchpadCycleFingers", m.TouchpadCycleFingers);
+        AppendString(sb, "touchpadActivateGestures", m.TouchpadActivateGestures);
+        AppendString(sb, "touchpadCycleGestures", m.TouchpadCycleGestures);
+        AppendString(sb, "touchpadCommitGestures", m.TouchpadCommitGestures);
         AppendBool(sb, "touchpadReverse", m.TouchpadReverse);
         AppendInt(sb, "touchpadSensitivity", m.TouchpadSensitivity);
-        AppendInt(sb, "touchpadActivateGesture", m.TouchpadActivateGesture);
-        AppendInt(sb, "touchpadCommitGesture", m.TouchpadCommitGesture);
         AppendInt(sb, "touchpadSmoothing", m.TouchpadSmoothing);
         AppendBool(sb, "touchpadCancelSwipe", m.TouchpadCancelSwipe);
+        AppendBool(sb, "touchpadContinuous", m.TouchpadContinuous);
         AppendBool(sb, "windowSnap", m.WindowSnap);
         AppendBool(sb, "showDebugInfo", m.ShowDebugInfo);
 
@@ -208,9 +305,9 @@ public static class ConfigService
         }
         catch (Exception ex)
         {
-            // Apply used to swallow this whole: the button lit up, the bar slid
-            // away, and nothing had been written. Say so instead — and do NOT
-            // take a snapshot, so the app still knows the settings are unsaved.
+            // A failed write must be said out loud, or Apply lights up, the bar
+            // slides away, and nothing has been written. Deliberately no
+            // snapshot either, so the app still knows the settings are unsaved.
             DiagnosticsLog.Append("CK0603", DiagSeverity.Critical,
                 "Settings could not be saved",
                 $"config.json could not be written — {ex.Message}. The settings in "
@@ -286,6 +383,28 @@ public static class ConfigService
         r.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out int i)
             ? i : def;
 
+    /// <summary>
+    /// The main key of a binding, or "" when that key cannot be a navigation
+    /// entry (a bare modifier or a mouse button — those keep their own
+    /// re-press cycling in the hook). Mirrors NavTokenOfBinding in
+    /// core/Config.cpp.
+    /// </summary>
+    private static string NavTokenOfBinding(string combo)
+    {
+        string token = (combo ?? "").Split('+', StringSplitOptions.TrimEntries)[^1];
+        return HotkeyService.TokenToVk(token) == 0 ? "" : token;
+    }
+
+    /// <summary>Switch every entry of a binding list off, keeping the entries.</summary>
+    private static string ParkAll(string list) =>
+        SettingsModel.FormatBindings(
+            SettingsModel.ParseBindings(list).Select(k => k with { Enabled = false }));
+
+    /// <summary>
+    /// The default stands in for a MISSING key only. An empty string in the
+    /// file is a value in its own right and is returned as one — which is what
+    /// lets "no navigation keys at all" survive a reopen.
+    /// </summary>
     private static string GetString(JsonElement r, string key, string def) =>
         r.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
             ? v.GetString() ?? def : def;

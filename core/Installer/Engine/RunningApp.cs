@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Asking a running CKFlip3D to leave before its files are replaced.  The core
+// has no visible window to close, so the usual Process helpers do not apply
+// and the shutdown has to be requested the way the core actually listens for.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -8,22 +15,19 @@ namespace CKFlip3D.Installer.Engine;
 /// <summary>
 /// Stopping a running CKFlip3D before its files are replaced.
 ///
-/// <para><b>Why this exists.</b> The obvious code — <c>CloseMainWindow()</c>, wait,
-/// <c>Kill()</c> — could never work for the switcher, and failed in a way that
-/// looked like it did. <see cref="Process.MainWindowHandle"/> only ever finds a
-/// <em>visible</em> owner-less window, and the core's window is created hidden on
-/// purpose (it exists to receive the tray callback and the settings broadcasts,
-/// not to be looked at). So <c>MainWindowHandle</c> is zero, <c>CloseMainWindow()</c>
-/// posts nothing, returns false, and every install and uninstall waited out the
-/// full three-second timeout and then hard-killed the process.</para>
+/// <para>Do NOT reach for <c>CloseMainWindow()</c> here.
+/// <see cref="Process.MainWindowHandle"/> only ever finds a <em>visible</em>
+/// owner-less window, and the core's window is deliberately hidden: it exists
+/// to receive the tray callback and the settings broadcasts, not to be looked
+/// at. So the handle is zero, the close posts nothing, and every install waits
+/// out the full timeout before hard-killing the process.</para>
 ///
-/// <para>Two consequences, and the log entry is the smaller one. A killed core
-/// never reaches its teardown: windows it cloaked stay cloaked (running, in the
-/// taskbar, invisible) and a hidden taskbar stays hidden until something else
-/// repaints the shell — during an <em>update</em>, which is when a user is least
-/// able to explain it. And the session marker survives, so the freshly installed
-/// version reports CK0001 "the previous session ended without shutting down" on
-/// its first start: a crash that never happened, blamed on the new build.</para>
+/// <para>A killed core never reaches its teardown. Windows it cloaked stay
+/// cloaked (running, in the taskbar, invisible) and a hidden taskbar stays
+/// hidden until something else repaints the shell, during an update, which is
+/// when a user is least able to explain it. Its session marker also survives,
+/// so the freshly installed version opens with CK0001 for a crash that never
+/// happened.</para>
 ///
 /// <para>So: ask the window that actually exists, wait for the process to leave
 /// on its own terms, and if it will not, clear the marker for the stop that was

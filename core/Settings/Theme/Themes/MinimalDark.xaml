@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Minimalism Dark: true black, flat surfaces, the glass effects muted so the
+     acrylic backdrop does the work.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 

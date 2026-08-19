@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The attached mice, keyboards and touchpads, listed from raw input.  That is
+// the same source the core's hooks work from, so a device missing here is a
+// device CKFlip3D genuinely cannot use.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32;
@@ -12,11 +19,6 @@ public sealed record InputDeviceEntry(
 
 /// <summary>
 /// Enumerates pointing devices and keyboards for the Diagnostics page.
-///
-/// Raw input is the right source here: it is the same list the core's
-/// keyboard hook and touchpad worker see, so a device missing from this page
-/// is a device CKFlip3D genuinely cannot use — which is exactly the question
-/// someone reading diagnostics is trying to answer.
 /// </summary>
 public static class InputDeviceService
 {

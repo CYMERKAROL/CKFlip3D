@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The reader for diagnostics.jsonl.  Entries are folded by code before anyone
+// sees them, because a failure that repeats on every activation is one problem
+// the user should read once, not forty lines to scroll past.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -427,6 +434,7 @@ public static class DiagnosticsLog
         public const string ConfigSaveFailed = "CK0603";
         public const string StartupTaskFailed = "CK0604";
         public const string CoreUnreachable = "CK0605";
+        public const string LaunchShortcutFailed = "CK0606";
         public const string ConfigUnreadable = "CK0101";
     }
 

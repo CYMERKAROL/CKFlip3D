@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The overlay window and the D3D11 device behind it.  Everything the cascade
+// draws goes through this one swap chain, so device creation, resizing and
+// present all live here rather than being spread across the scene code.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -6,8 +13,6 @@
 #include <dxgi1_5.h>
 #include <winrt/base.h>
 
-/// Owns the D3D11 device, swap chain, and render state for the overlay window.
-/// The swap chain is bound to an existing HWND (the overlay).
 class Renderer {
 public:
     Renderer() = default;

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The capture pipeline: starting a WGC session per window, receiving frames on
+// the pool's own thread, and handing the render loop a shader resource view it
+// can sample without ever blocking on the compositor.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "WGCCapture.hpp"
 #include "../core/DebugLog.h"
 #include "../core/Diagnostics.h"
@@ -98,7 +105,6 @@ HWND GetOrCreateDwmHelper()
 
 } // anonymous namespace
 
-// ---------------------------------------------------------------------------
 WGCCapture::~WGCCapture()
 {
     Stop();
@@ -139,7 +145,6 @@ WGCCapture& WGCCapture::operator=(WGCCapture&& other) noexcept
     return *this;
 }
 
-// ---------------------------------------------------------------------------
 bool WGCCapture::StartForWindow(HWND hwnd, ID3D11Device* device)
 {
     m_hwnd = hwnd;  // Store for potential PrintWindow fallback later
@@ -178,7 +183,6 @@ bool WGCCapture::StartForWindow(HWND hwnd, ID3D11Device* device)
     }
 }
 
-// ---------------------------------------------------------------------------
 bool WGCCapture::StartInternal(
     winrt::Windows::Graphics::Capture::GraphicsCaptureItem item,
     ID3D11Device* device)
@@ -262,7 +266,6 @@ void WGCCapture::Stop()
     m_started     = false;
 }
 
-// ---------------------------------------------------------------------------
 void WGCCapture::GetCapturedSize(int& outWidth, int& outHeight) const
 {
     if (m_cachedTexture) {
@@ -276,7 +279,6 @@ void WGCCapture::GetCapturedSize(int& outWidth, int& outHeight) const
     }
 }
 
-// ---------------------------------------------------------------------------
 ID3D11ShaderResourceView* WGCCapture::GetCurrentFrame()
 {
     // No new frame and capture not running — return cached owned SRV.
@@ -374,7 +376,6 @@ ID3D11ShaderResourceView* WGCCapture::GetCurrentFrame()
     return m_cachedSRV.get();
 }
 
-// ---------------------------------------------------------------------------
 void WGCCapture::EnsureFrame()
 {
     if (m_hasEverCaptured)
@@ -737,7 +738,8 @@ bool WGCCapture::CaptureWithPrintWindow(HWND hwnd, ID3D11Device* device)
 }
 
 // ---------------------------------------------------------------------------
-// v8.5 — find the vertical centre of the captured texture's content band.
+// Find the vertical centre of the captured texture's content band.
+// ---------------------------------------------------------------------------
 bool WGCCapture::DetectContentCenterV(float& outCenterUvY, int expectedBandPx)
 {
     if (!m_cachedTexture || !m_d3dDevice || !m_d3dContext)
@@ -810,8 +812,8 @@ bool WGCCapture::DetectContentCenterV(float& outCenterUvY, int expectedBandPx)
 
 #ifdef CKFLIP_DEBUG_TASKBAR
 // ---------------------------------------------------------------------------
-// Bug 11' v8.2 §12 Test B — debug-only taskbar texture dump.  Compiled only
-// under CKFLIP_DEBUG_TASKBAR; release builds have zero footprint.
+// Debug-only taskbar texture dump.  Compiled only under
+// CKFLIP_DEBUG_TASKBAR; release builds have zero footprint.
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -908,7 +910,8 @@ bool WGCCapture::DebugDumpCachedTexture(const wchar_t* basePath,
 
     m_d3dContext->Unmap(staging.get(), 0);
 
-    // Full-texture analysis (Test B does NOT restrict to bottom rows).
+    // Whole-texture analysis: every row, not just the taskbar band.  The
+    // sampled crop is reported separately in the [uv crop] section below.
     const uint64_t total = static_cast<uint64_t>(W) * H;
     if (total == 0)
         return false;
@@ -943,7 +946,7 @@ bool WGCCapture::DebugDumpCachedTexture(const wchar_t* basePath,
         hp[0] = hp[1] = hp[2] = a; hp[3] = 255;
     }
 
-    // v8.4 §6 — UV crop-region analysis (the exact region CKFlip samples).
+    // UV crop-region analysis (the exact region CKFlip samples).
     // UVs clamped to [0,1] and ordered defensively; empty crop handled.
     auto clamp01 = [](float v) -> float {
         return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
@@ -1004,16 +1007,16 @@ bool WGCCapture::DebugDumpCachedTexture(const wchar_t* basePath,
 
     FILE* rep = nullptr;
     if (_wfopen_s(&rep, (base + L".txt").c_str(), L"w") == 0 && rep) {
-        fwprintf(rep, L"CKFlip3D taskbar capture dump  (Bug 11' v8.2 Test B)\n");
-        fwprintf(rep, L"================================================\n\n");
+        fwprintf(rep, L"CKFlip3D taskbar capture dump\n");
+        fwprintf(rep, L"=============================\n\n");
         fwprintf(rep, L"[geometry]\n");
         fwprintf(rep, L"  dimensions    : %u x %u  (%llu px)\n",
                  W, H, (unsigned long long)total);
         fwprintf(rep, L"  DXGI format   : %d\n", static_cast<int>(desc.Format));
         fwprintf(rep, L"  staging pitch : %u bytes/row\n\n", mapped.RowPitch);
 
-        // [environment] — OS / window context (v8.5.1 §6.2).  RtlGetVersion
-        // is used because the GetVersionEx helpers are manifest-gated.
+        // [environment] — OS / window context.  RtlGetVersion is used
+        // because the GetVersionEx helpers are manifest-gated.
         wchar_t osStr[80] = L"unknown";
         {
             OSVERSIONINFOW osv = {};

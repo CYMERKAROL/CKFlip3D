@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The search field the user types into, drawn as a texture rather than as a
+// real control.  There is no window here and no input focus to steal: the
+// cascade owns the keyboard, and this only paints what has been typed.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The names, paths and registry keys the install and uninstall paths both have
+// to agree on, plus whatever the user picked on the Options page.  One place,
+// so an installer and an uninstaller can never disagree about what was written.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.IO;
 
 namespace CKFlip3D.Installer.Engine;
@@ -6,7 +13,7 @@ namespace CKFlip3D.Installer.Engine;
 public sealed class InstallContext
 {
     public const string AppName = "CKFlip3D";
-    public const string AppVersion = "1.5.0";
+    public const string AppVersion = "1.6.0";
     public const string Publisher = "CYMERKAROL";
 
     /// <summary>Apps & Features registry key (HKLM).</summary>
@@ -34,6 +41,17 @@ public sealed class InstallContext
 
     public static string CommonDesktopShortcut => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), AppName + ".lnk");
+
+    /// <summary>
+    /// The optional "Create launch shortcut" shortcut (General → Startup),
+    /// written by the Settings app onto the CURRENT USER's desktop rather than
+    /// the all-users one — it is a per-user preference and creating it needs no
+    /// elevation.  Named here so uninstall can sweep it up; setup never creates
+    /// it.  Keep in step with Services/LaunchShortcutService.cs.
+    /// </summary>
+    public static string UserLaunchShortcut => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+        AppName + " Cascade.lnk");
 
     public static string AppDataDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppName);

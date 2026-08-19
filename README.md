@@ -6,9 +6,9 @@
 
 **The classic 3D window-switching experience, reborn for Windows 11.**
 
-A native D3D11 window switcher in the spirit of the classic Flip 3D — a full 3D cascade, live window previews, and buttery entry/exit animations, running as a lightweight tray app on modern Windows.
+A lightweight, GPU-accelerated 3D window switcher for Windows 11. Features live window previews, smooth animations, and customizable 3D layouts.
 
-`v1.5` · Windows 11 · C++20 / Direct3D 11 · WPF Settings & Installer (.NET 10) · PolyForm Noncommercial 1.0.0
+`v1.6` · Windows 11 · C++20 / Direct3D 11 · WPF Settings & Installer (.NET 10) · PolyForm Noncommercial 1.0.0
 
 </div>
 
@@ -60,17 +60,13 @@ A native D3D11 window switcher in the spirit of the classic Flip 3D — a full 3
 
 ## What is CKFlip3D?
 
-**A 3D window switcher for Windows 11 — written from scratch, in C++ and Direct3D 11.**
+Built from scratch in C++ and Direct3D 11, CKFlip3D revives the classic Windows 7 Flip 3D switcher for Windows 11. It combines nostalgic aesthetics with modern performance, adding features like Cover Flow, touchpad gestures, and real-time filtering.
 
-It began as a revival. Windows 7 shipped **Flip 3D** (Win+Tab), a 3D cascade of your open windows; Microsoft removed it in Windows 8 and nothing replaced it. Rebuilding that cascade properly meant writing a real-time renderer, a capture pipeline and an input layer from nothing — and once those existed, the cascade turned out to be one thing they could draw rather than the whole point of them.
-
-So CKFlip3D is no longer a Flip 3D clone with extras bolted on. It is a switcher with its own engine, in which the Windows 7 cascade is **one of two layouts** — faithful, still the default, and now sitting beside a **Cover Flow** carousel that the original never had. You reach either one with the keyboard, the mouse or a touchpad gesture, and you can type to filter it.
-
-- **Two layouts, one engine.** Cascade and Cover Flow are different geometry over a shared scene, so every animation, every capture and every input path works identically in both — nothing is a special case.
-- **The geometry is original work.** Tile tilt, camera framing, depth curve, per-count density, the carousel's spacing solver — every constant is CKFlip3D's own, hand-tuned by eye until the motion feels right.
-- **Rendering is a DirectComposition overlay** (`WS_EX_NOREDIRECTIONBITMAP`) with a premultiplied-alpha D3D11 swap chain — no GDI, no flicker, no redirection-surface overhead.
-- **Window contents come from Windows Graphics Capture**, per window, with DWM-thumbnail and `PrintWindow` fallbacks so even minimized windows get real content.
-- **It costs nothing when you are not using it.** One native exe in the tray; the render loop does not exist until you press the hotkey.
+- **Unified Engine** — Cascade and Cover Flow share the exact same rendering pipeline, input handlers, and animations.
+- **Custom 3D Geometry** — Hand-tuned tile spacing, depth curves, and camera angles designed for precise 3D motion.
+- **DirectComposition Overlay** — `WS_EX_NOREDIRECTIONBITMAP` with a premultiplied-alpha D3D11 swap chain: no GDI, no flicker, no redirection-surface overhead.
+- **Windows Graphics Capture** — per-window capture with DWM-thumbnail and `PrintWindow` fallbacks, so even minimized windows show real content.
+- **Zero Idle Overhead** — Lightweight tray app using 0% CPU while inactive. The render loop only spins up when triggered.
 
 ## What's new in 1.5
 
@@ -137,7 +133,7 @@ A centered carousel: the selected window flat in the middle, the rest fanning ou
 ### The stack
 
 - **Reflections** — an optional glass floor: each tile mirrors softly below its bottom edge with a quadratic falloff. Works in both layouts, and costs exactly zero extra draw calls when off.
-- **Live previews** — every tile streams its window's actual content. Videos keep playing, terminals keep scrolling. Can be switched to static snapshots to save GPU.
+- **Live Previews** — Real-time GPU captures keep active windows, playing videos, and terminal streams updating inside the 3D view. Option to toggle static snapshots for lower GPU usage.
 - **V-Sync live preview mode** — paces rendering to your monitor's refresh so every refresh shows a fresh preview frame.
 - **Desktop tile & wallpaper backdrop** — the desktop is part of the stack (like the original), and the dimmed wallpaper backdrop is captured live, so **dynamic wallpapers (Wallpaper Engine, Lively) keep animating** behind it.
 - **Background blur** — optional frosted-glass blur on the wallpaper behind the stack, with zero GPU cost at 0%.
@@ -194,7 +190,7 @@ A centered carousel: the selected window flat in the middle, the rest fanning ou
 
 ### Diagnostics
 
-CKFlip3D spends its life behind an overlay, inside a keyboard hook, on a GPU it does not own. When something fails there it used to leave no trace. Now it keeps a log about itself:
+**Built-in diagnostics** — self-contained error logging captures rendering, capture, or configuration issues directly in Settings:
 
 - **Every failure is an entry** with a stable code, a severity, a plain-language line for you and a technical one for a bug report — a capture that never delivered a frame, a window that stayed cloaked, a device that was lost, a config that would not parse.
 - **Clearing is a watermark, not a deletion** — a problem that happens again is news again, so it comes back. Entries that state a fact about the machine rather than an event stay cleared for good.

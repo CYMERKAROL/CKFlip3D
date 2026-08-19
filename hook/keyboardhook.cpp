@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The low-level keyboard and mouse hooks.  Everything in here runs inside the
+// OS input path on every key the user presses anywhere, so the rule throughout
+// is: decide fast, post a message, do the real work somewhere else.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "keyboardhook.h"
 #include "../core/Diagnostics.h"
 
@@ -53,16 +60,15 @@ float g_mouseDragResidue = 0.0f;   // sub-unit remainder of the fixed-point post
 // tested and updated together, and "is this still the session I started?" is
 // a question about both halves at once.
 //
-// Why identity is needed at all: THREE threads raise and drop this flag — the
+// Why identity is needed at all: THREE threads raise and drop this flag, the
 // hook thread (hotkey), the touchpad worker (gesture) and the app thread (the
-// controller's teardown).  The controller's teardown runs long (DwmFlush,
-// StopCaptures, UncloakAll) with no message pumping, so a hotkey pressed
-// during it opens the NEXT session while the previous one is still tearing
-// down.  A bare bool teardown then cleared the flag of a session that had
-// already begun — leaving the cascade on screen with the hook disarmed, every
-// keystroke passing through to whatever is behind the overlay.  With an
-// identity, EndSessionIfEpoch can refuse to end a session that is not the one
-// it was handed.
+// controller's teardown).  That teardown runs long, with no message pumping,
+// so a hotkey pressed during it opens the NEXT session while the previous one
+// is still leaving.  A bare bool would then have the teardown clear a flag
+// belonging to a session that had already begun: cascade on screen, hook
+// disarmed, every keystroke passing through to whatever is behind the overlay.
+// With an identity, EndSessionIfEpoch can refuse to end a session that is not
+// the one it was handed.
 std::atomic<uint64_t> g_session{0};
 
 inline bool     SessionBitOf(uint64_t v)   noexcept { return (v & 1u) != 0; }
@@ -138,7 +144,6 @@ SRWLOCK            g_optLock = SRWLOCK_INIT;
 std::vector<std::wstring> g_optIgnoredApps;          // lowercase, under lock
 std::atomic<bool>  g_optIgnoreFullscreen{false};
 std::atomic<bool>  g_optWheelCycle{true};
-std::atomic<bool>  g_optKeyboardNav{true};
 std::atomic<bool>  g_optToggleMode{false};
 std::atomic<bool>  g_optTouchpadNav{true};
 std::atomic<bool>  g_optWindowSnap{true};
@@ -150,25 +155,83 @@ std::atomic<bool>  g_optDragEnabled{true};
 std::atomic<int>   g_optDragButton{kMouseRight};
 std::atomic<bool>  g_optCloseFromCascade{true};
 std::atomic<int>   g_optCloseButton{kMouseMiddle};
-std::atomic<bool>  g_optCloseKeyEnabled{true};
 std::atomic<bool>  g_optSearchEnabled{false};
-// Commit / cancel / close main keys (see TriggerOptions).  Plain VKs — the
-// parse happens once in SetOptions, never on the hook thread.
-std::atomic<unsigned> g_optCommitVk{VK_RETURN};
-std::atomic<unsigned> g_optCancelVk{VK_ESCAPE};
-std::atomic<unsigned> g_optCloseVk{VK_DELETE};
 
-// Set the moment a character reaches the search query, and cleared when a
-// session starts or ends.
+// ---------------------------------------------------------------------------
+// Every in-cascade key binding (config commitKeys / cancelKeys / closeKeys /
+// navForwardKeys / navBackKeys) — up to kMaxBindingKeys per list in ONE word:
+// seven VK bytes in bits 0-55, and each slot's "needs Shift" flag in bits
+// 56-62.
 //
-// You cannot type while holding Win+Tab: letting go of the modifier to reach
-// the keyboard IS the commit, so the cascade closed on the first character —
-// and whatever was typed after that went to Windows as Win+key shortcuts.
-// So the first typed character promotes THIS session to toggle semantics: the
-// modifier release stops committing and the cascade waits for the commit or
-// cancel key, exactly as the Toggle activation option does permanently.
-// Nothing about a session where nobody types changes.
-std::atomic<bool>  g_searchLatched{false};
+// Packed for the same reason g_hkSpec and g_session are: the hook thread reads
+// this on every keystroke of an open session while the app thread rewrites it
+// on a config reload, and an array of atomics cannot be republished TOGETHER.
+// Half of an old list beside half of a new one would, for one keystroke, be a
+// set of bindings the user never chose — most visibly a key they had just
+// removed still stepping the stack.  One store changes the whole list.
+constexpr int kBindShiftBit = 56;
+
+constexpr uint64_t PackBindKey(unsigned vk, bool needShift, int slot) noexcept
+{
+    return ((static_cast<uint64_t>(vk) & 0xFFull) << (slot * 8))
+         | (needShift ? (uint64_t{1} << (kBindShiftBit + slot)) : 0);
+}
+
+// Seeded with the same defaults TriggerOptions carries, so a hook that somehow
+// fires before the first SetOptions still behaves like the shipped build.
+std::atomic<uint64_t> g_optCommitKeys{ PackBindKey(VK_RETURN, false, 0) };
+std::atomic<uint64_t> g_optCancelKeys{ PackBindKey(VK_ESCAPE, false, 0) };
+std::atomic<uint64_t> g_optCloseKeys { PackBindKey(VK_DELETE, false, 0) };
+std::atomic<uint64_t> g_optNavForward{
+    PackBindKey(VK_TAB, false, 0) | PackBindKey(VK_DOWN, false, 1)
+        | PackBindKey(VK_RIGHT, false, 2) };
+std::atomic<uint64_t> g_optNavBack{
+    PackBindKey(VK_TAB, true, 0) | PackBindKey(VK_UP, false, 1)
+        | PackBindKey(VK_LEFT, false, 2) };
+
+// Membership test for a packed list.  Zero never matches: it is the empty
+// slot, and an unbound key must not answer for one.
+inline bool BindKeysContain(uint64_t packed, DWORD vk, bool needShift) noexcept
+{
+    if (vk == 0 || vk > 0xFF) return false;
+    for (int i = 0; i < kMaxBindingKeys; ++i) {
+        if (((packed >> (i * 8)) & 0xFFull) != vk) continue;
+        const bool slotShift = ((packed >> (kBindShiftBit + i)) & 1) != 0;
+        if (slotShift == needShift) return true;
+    }
+    return false;
+}
+
+/// Does this list claim the key that was just pressed?
+///
+/// Shift-qualified entries are consulted first and only while Shift is
+/// actually FREE — a combination that contains Shift keeps it down for the
+/// whole session, so treating that as "the user is holding Shift" would turn
+/// every forward step into a backward one.  Plain entries then match whatever
+/// the Shift state is, which is what keeps Shift+Down stepping forward.
+inline bool BindingClaims(uint64_t packed, DWORD vk, bool shiftFree) noexcept
+{
+    return (shiftFree && BindKeysContain(packed, vk, true))
+        || BindKeysContain(packed, vk, false);
+}
+
+// THIS session holds itself open, whatever the permanent setting says.
+// Cleared when a session starts or ends, so it never outlives the one that
+// raised it.  Two things raise it:
+//
+//   - the first character typed into the search query.  You cannot type while
+//     holding Win+Tab: letting go of the modifier to reach the keyboard IS the
+//     commit, so the cascade closed on the first character and whatever came
+//     after it went to Windows as Win+key shortcuts.
+//   - the launch shortcut (LatchToggleSession).  Nothing is being held there
+//     at all — the cascade was opened by a click on a shortcut — so the next
+//     Win or Alt the user happens to release must not commit a selection they
+//     have not made yet.
+//
+// Either way the modifier release stops committing and the cascade waits for
+// the commit or cancel key, exactly as the Toggle activation option does
+// permanently.  Nothing about an ordinary hotkey session changes.
+std::atomic<bool>  g_toggleLatched{false};
 
 // Activation hold deadline (see SuspendActivation).  A tick count, so it
 // expires by itself if whoever armed it never comes back.
@@ -392,17 +455,17 @@ void ResetWheelState()
 }
 
 // Toggle semantics for THIS session: the user's permanent setting, or the
-// search latch a typed character raised (see g_searchLatched).
+// per-session latch something else raised (see g_toggleLatched).
 bool ToggleSemantics()
 {
     return g_optToggleMode.load(std::memory_order_relaxed)
-        || g_searchLatched.load(std::memory_order_relaxed);
+        || g_toggleLatched.load(std::memory_order_relaxed);
 }
 
 // A session is beginning: nothing from the last one carries over.
 void BeginSessionState()
 {
-    g_searchLatched.store(false, std::memory_order_relaxed);
+    g_toggleLatched.store(false, std::memory_order_relaxed);
     ResetWheelState();
 }
 
@@ -474,7 +537,6 @@ wchar_t TranslateToChar(const KBDLLHOOKSTRUCT* kb)
     return (c >= 0x20 && c != 0x7F) ? c : 0;
 }
 
-// ---------------------------------------------------------------------------
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode != HC_ACTION)
@@ -567,70 +629,45 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
     }
 
     // ---- Main key (non-modifier) -------------------------------------------
-    if (isMainKey) {
-        // Toggle mode: once the session is open the combo modifiers are
-        // typically released — the bare main key keeps cycling (matching
-        // single-key-binding behaviour).  Activation still requires the
-        // full combination.
-        const bool cycleWithoutMods = active && ToggleSemantics();
-        if (isDown && (ModsSatisfied(modMask) || cycleWithoutMods)) {
-            bool shiftHeld = !(modMask & kModShift)
-                          && ((GetAsyncKeyState(VK_LSHIFT) & 0x8000)
-                           || (GetAsyncKeyState(VK_RSHIFT) & 0x8000));
-            if (!active) {
-                // Session not started yet — honour the trigger filters
-                // (fullscreen apps / ignore list).  Pass the key through so
-                // the OS handles the combo normally instead of blocking it.
-                if (ShouldIgnoreActivationImpl())
-                    return CallNextHookEx(g_hook, nCode, wParam, lParam);
-                RaiseSession();
-                g_suppressNextModRelease = false;
-                BeginSessionState();
-                PostMessage(g_hwndNotify, g_msg.activate, 0, 0);
-            } else {
-                PostMessage(g_hwndNotify,
-                            shiftHeld ? g_msg.cycleBack : g_msg.cycle, 0, 0);
-            }
+    // OPENING the cascade only.  Stepping through it once it is open is not
+    // handled here any more: the main key goes to the navigation lists like
+    // every other key, which is what makes Tab and Shift+Tab removable instead
+    // of welded to the act of opening.  The shipped lists name Tab, so the
+    // default behaviour is unchanged; a user who takes it off gets a hotkey
+    // that opens the cascade and leaves the stepping to the arrows.
+    if (isMainKey && !active) {
+        if (isDown && ModsSatisfied(modMask)) {
+            // Honour the trigger filters (fullscreen apps / ignore list).
+            // Pass the key through so the OS handles the combo normally
+            // instead of blocking it.
+            if (ShouldIgnoreActivationImpl())
+                return CallNextHookEx(g_hook, nCode, wParam, lParam);
+            RaiseSession();
+            g_suppressNextModRelease = false;
+            BeginSessionState();
+            PostMessage(g_hwndNotify, g_msg.activate, 0, 0);
             return 1;
         }
-        if (isUp && active) {
-            // Main key released while session active — tell controller to
-            // stop queuing cycles so continuous scroll doesn't over-shoot.
-            PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
-            return 1;
-        }
-        // Fall through (mods not satisfied) — the session-active catch-all
-        // below still swallows strays.
+        // Fall through (mods not satisfied) — nothing else here wants it.
     }
 
     // ---- Extra navigation while session is active ------------------------
     if (active) {
-        // Arrow keys — cycle on keydown, stop on keyup.  With keyboard
-        // navigation disabled they fall through to the catch-all below,
-        // which still swallows them (no stray input to background apps).
-        const bool arrowsOn = g_optKeyboardNav.load(std::memory_order_relaxed);
-        if (arrowsOn && (kb->vkCode == VK_DOWN || kb->vkCode == VK_RIGHT)) {
-            if (isDown)
-                PostMessage(g_hwndNotify, g_msg.cycle, 0, 0);
-            else if (isUp)
-                PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
-            return 1;
-        }
-        if (arrowsOn && (kb->vkCode == VK_UP || kb->vkCode == VK_LEFT)) {
-            if (isDown)
-                PostMessage(g_hwndNotify, g_msg.cycleBack, 0, 0);
-            else if (isUp)
-                PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
-            return 1;
-        }
+        // Shift only counts when it is FREE — see BindingClaims.  Read once
+        // here rather than per list: every binding below asks the same
+        // question, and GetAsyncKeyState on the hook thread is not free.
+        const bool shiftFree = !(modMask & kModShift)
+            && ((GetAsyncKeyState(VK_LSHIFT) & 0x8000)
+             || (GetAsyncKeyState(VK_RSHIFT) & 0x8000));
 
-        // Commit the current selection (Enter by default, see commitHotkey).
+        // Commit the current selection (Enter by default, see commitKeys).
         // Required for bindings with no hold modifier (bare key / mouse
         // button); a convenience for the classic combos.  If combo modifiers
         // are still held, their release is suppressed once so the Start menu
         // doesn't pop afterwards.
         if (isDown
-            && kb->vkCode == g_optCommitVk.load(std::memory_order_relaxed)) {
+            && BindingClaims(g_optCommitKeys.load(std::memory_order_relaxed),
+                             kb->vkCode, shiftFree)) {
             DropSession();
             // Suppress the upcoming combo-modifier release only while one
             // is actually still held — in toggle mode the modifiers are
@@ -642,7 +679,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
             return 1;
         }
 
-        // Cancel (Escape by default, see cancelHotkey).  The hook ends the
+        // Cancel (Escape by default, see cancelKeys).  The hook ends the
         // session here exactly as it always has; when a search query is being
         // typed the controller re-arms it (KeyboardHook::SetSessionActive)
         // because there the first Esc only clears the query — that decision
@@ -650,7 +687,8 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // modifier-release bookkeeping on this side is what matters: it is
         // the part that stops the Start menu popping over the cascade.
         if (isDown
-            && kb->vkCode == g_optCancelVk.load(std::memory_order_relaxed)) {
+            && BindingClaims(g_optCancelKeys.load(std::memory_order_relaxed),
+                             kb->vkCode, shiftFree)) {
             DropSession();
             g_suppressNextModRelease = (modMask != 0) && AnyComboModDown(modMask);
             ResetWheelState();
@@ -659,19 +697,55 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         }
 
         // Close the hovered (or selected) window — the switcher doubling as
-        // a window manager.  Gated on the same toggle as the close click.
+        // a window manager.  Not gated on any mouse switch: it acts on the
+        // selection when no tile is hovered, so it works with every pointer
+        // feature off, and an empty closeKeys list is how it is switched off.
+        if (isDown
+            && BindingClaims(g_optCloseKeys.load(std::memory_order_relaxed),
+                             kb->vkCode, shiftFree)) {
+            if (g_msg.closeSelected != 0)
+                PostMessage(g_hwndNotify, g_msg.closeSelected, 0, 0);
+            return 1;
+        }
+
+        // ---- Navigation keys (config navForwardKeys / navBackKeys) --------
+        // Cycle on keydown, stop queuing on keyup.  A key that is not on either
+        // list — including every key when both lists are empty, which is how
+        // "no navigation keys" is said — falls through to the catch-all below,
+        // which still swallows it: no stray input to background apps.
+        //
+        // This is where the ACTIVATION hotkey's own key ends up too, which is
+        // why Tab and Shift+Tab are ordinary entries in the shipped lists
+        // rather than something welded in above.  Opening the cascade and
+        // stepping it are separate branches.
+        //
+        // Deliberately AFTER commit / cancel / close.  Any key can land here,
+        // so this order is what decides the outcome when one key is bound
+        // twice, and the bindings that END the session have to win: a
+        // navigation key typed over Escape would otherwise leave a cascade
+        // that steps but will not close.  Nothing moves for the shipped lists,
+        // since Enter, Escape and Delete are not on them.
         {
-            const unsigned closeVk =
-                g_optCloseVk.load(std::memory_order_relaxed);
-            // The key has its OWN switch — not the mouse master, and not the
-            // close CLICK's switch either.  It acts on the selection when no
-            // tile is hovered, so it works with every pointer feature off, and
-            // wanting one of the two bindings without the other is reasonable
-            // in both directions.
-            if (isDown && closeVk != 0 && kb->vkCode == closeVk
-                && g_optCloseKeyEnabled.load(std::memory_order_relaxed)) {
-                if (g_msg.closeSelected != 0)
-                    PostMessage(g_hwndNotify, g_msg.closeSelected, 0, 0);
+            const DWORD navVk = kb->vkCode;
+            const uint64_t fwd  = g_optNavForward.load(std::memory_order_relaxed);
+            const uint64_t back = g_optNavBack.load(std::memory_order_relaxed);
+
+            // Shift-qualified entries are consulted first and only while Shift
+            // is actually held; the plain ones then match whatever the Shift
+            // state is.  That is what keeps Shift+Tab going backwards without
+            // making Shift+Down — which has always stepped forward — stop.
+            int dir = 0;   // +1 forward, -1 back
+            if (shiftFree && BindKeysContain(back, navVk, true))       dir = -1;
+            else if (shiftFree && BindKeysContain(fwd, navVk, true))   dir = +1;
+            else if (BindKeysContain(fwd, navVk, false))               dir = +1;
+            else if (BindKeysContain(back, navVk, false))              dir = -1;
+
+            if (dir != 0) {
+                if (isDown)
+                    PostMessage(g_hwndNotify,
+                                dir > 0 ? g_msg.cycle : g_msg.cycleBack, 0, 0);
+                else if (isUp)
+                    PostMessage(g_hwndNotify, g_msg.cycleStop, 0, 0);
                 return 1;
             }
         }
@@ -688,10 +762,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
             const wchar_t ch = TranslateToChar(kb);
             if (ch != 0 && g_msg.searchChar != 0) {
                 // Typing means the hand has left the hotkey — from here the
-                // session holds itself open (see g_searchLatched), so
+                // session holds itself open (see g_toggleLatched), so
                 // releasing Win/Alt no longer commits and the rest of the
                 // word cannot escape into Windows as Win+key shortcuts.
-                g_searchLatched.store(true, std::memory_order_relaxed);
+                g_toggleLatched.store(true, std::memory_order_relaxed);
                 PostMessage(g_hwndNotify, g_msg.searchChar,
                             static_cast<WPARAM>(ch), 0);
                 return 1;
@@ -729,7 +803,6 @@ unsigned MouseButtonVk(WPARAM wParam, const MSLLHOOKSTRUCT* ms, bool& isDown)
     }
 }
 
-// ---------------------------------------------------------------------------
 LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     if (nCode != HC_ACTION)
@@ -1137,7 +1210,6 @@ bool ParseHotkey(const std::wstring& text, HotkeySpec& out)
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool Install(HWND hwndNotify, const Messages& msgs)
 {
     if (g_hookThread)
@@ -1230,8 +1302,8 @@ bool EndSessionIfEpoch(uint64_t epoch)
             return false;          // a NEWER session owns the flag — hands off
         if (!SessionBitOf(cur)) {
             // Ours, and already ended through one of the keyboard paths.  The
-            // per-session reset still belongs here, because that is what the
-            // unconditional store this replaced always did.
+            // per-session reset still has to run: every path that ends a
+            // session owes the next one a clean slate.
             BeginSessionState();
             return true;
         }
@@ -1248,6 +1320,13 @@ void SetSessionActive(bool active)
     if (active) RaiseSession();
     else        DropSession();
     BeginSessionState();
+}
+
+void LatchToggleSession()
+{
+    // AFTER the session is raised, never before: SetSessionActive runs
+    // BeginSessionState, which clears exactly this latch.
+    g_toggleLatched.store(true, std::memory_order_relaxed);
 }
 
 void AssertInputOwnership()
@@ -1342,11 +1421,62 @@ void AbortSessionIfIdle(uint64_t epoch)
 }
 
 // ---------------------------------------------------------------------------
+// A ';'-separated key list → the packed word the hook reads.  Used by all five
+// in-cascade bindings (commit, cancel, close, forward, back).
+//
+// Entries use the ordinary binding vocabulary ("Down", "PageUp", "Shift+Tab",
+// "0x21") — a bare key, or SHIFT plus a key, and no other modifier.  Shift is
+// the exception because it is the one modifier a hand is free to add while the
+// activation combination is still held; Ctrl, Alt and Win would each have to
+// fight the combination itself.  A leading '!' means the binding is parked —
+// remembered in config.json, skipped here — so switching one off in the
+// Settings list does not throw the key away.
+//
+// A token that does not parse is skipped rather than fatal.  These are the
+// lists a user is most likely to hand-edit, and one bad entry must not cost
+// them the others; `dropped` counts them so the caller can say so once.
+static uint64_t PackBindKeyList(const std::wstring& list, unsigned& dropped)
+{
+    uint64_t packed = 0;
+    int slot = 0;
+
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t end = list.find(L';', start);
+        if (end == std::wstring::npos) end = list.size();
+
+        std::wstring tok = list.substr(start, end - start);
+        size_t b = tok.find_first_not_of(L" \t");
+        size_t e = tok.find_last_not_of(L" \t");
+        tok = (b == std::wstring::npos) ? std::wstring() : tok.substr(b, e - b + 1);
+
+        if (!tok.empty() && tok[0] != L'!') {
+            HotkeySpec spec;
+            const bool usable = ParseHotkey(tok, spec)
+                             && (spec.modMask == 0 || spec.modMask == kModShift)
+                             && !spec.mainIsMouse
+                             && spec.mainVk != 0 && spec.mainVk <= 0xFF;
+            const bool needShift = usable && (spec.modMask == kModShift);
+            if (!usable) {
+                ++dropped;
+            } else if (slot >= kMaxBindingKeys) {
+                ++dropped;          // past what one packed word holds
+            } else if (!BindKeysContain(packed, spec.mainVk, needShift)) {
+                packed |= PackBindKey(spec.mainVk, needShift, slot++);
+            }
+            // A duplicate is not "dropped": the key still navigates.
+        }
+
+        if (end == list.size()) break;
+        start = end + 1;
+    }
+    return packed;
+}
+
 void SetOptions(const TriggerOptions& opts)
 {
     g_optIgnoreFullscreen.store(opts.ignoreFullscreen, std::memory_order_relaxed);
     g_optWheelCycle.store(opts.mouseWheelCycle, std::memory_order_relaxed);
-    g_optKeyboardNav.store(opts.keyboardNav, std::memory_order_relaxed);
     g_optToggleMode.store(opts.hotkeyToggleMode, std::memory_order_relaxed);
     g_optTouchpadNav.store(opts.touchpadNav, std::memory_order_relaxed);
     g_optWindowSnap.store(opts.windowSnap, std::memory_order_relaxed);
@@ -1360,7 +1490,6 @@ void SetOptions(const TriggerOptions& opts)
     g_optCloseFromCascade.store(opts.closeFromCascade, std::memory_order_relaxed);
     g_optCloseButton.store(std::clamp(opts.closeButton, 0, 5),
                            std::memory_order_relaxed);
-    g_optCloseKeyEnabled.store(opts.closeKeyEnabled, std::memory_order_relaxed);
     g_optSearchEnabled.store(opts.searchEnabled, std::memory_order_relaxed);
 
     HotkeySpec spec;
@@ -1373,48 +1502,39 @@ void SetOptions(const TriggerOptions& opts)
     g_hkSpec.store(PackHotkeySpec(spec.modMask, spec.mainVk, spec.mainIsMouse),
                    std::memory_order_relaxed);
 
-    // Commit / cancel: the MAIN key only.  A mouse-button commit would fight
-    // the in-cascade pointer bindings for the same click, and a modifier-
-    // qualified one would need the activation combination released first —
-    // both fail closed here, back onto the defaults that always work.
+    // The five in-cascade key lists.  Each is published as a WHOLE word, so the
+    // hook never sees half of the old list beside half of the new one.
+    //
+    // A binding that parses to nothing at all leaves an empty list rather than
+    // falling back to Enter/Escape/Delete the way the single-key form did: with
+    // a list, "no key" is something the user can legitimately ask for (it is
+    // how the close key is switched off), so quietly reinstating a default here
+    // would hand back a binding somebody deliberately cleared.  Config::Load
+    // says so when the combination leaves no way to close the cascade.
     {
-        auto fellBack = [](const wchar_t* role, const std::wstring& asked,
-                           const wchar_t* used) {
-            // _TRUNCATE, not swprintf_s: `asked` comes straight out of
-            // config.json and can be any length at all, and the secure form
-            // would treat that as a programming error and kill the process.
+        unsigned dropped = 0;
+        const uint64_t commit = PackBindKeyList(opts.commitKeys, dropped);
+        const uint64_t cancel = PackBindKeyList(opts.cancelKeys, dropped);
+        const uint64_t close  = PackBindKeyList(opts.closeKeys,  dropped);
+        const uint64_t fwd    = PackBindKeyList(opts.navForwardKeys, dropped);
+        const uint64_t back   = PackBindKeyList(opts.navBackKeys, dropped);
+        g_optCommitKeys.store(commit, std::memory_order_relaxed);
+        g_optCancelKeys.store(cancel, std::memory_order_relaxed);
+        g_optCloseKeys.store(close, std::memory_order_relaxed);
+        g_optNavForward.store(fwd,  std::memory_order_relaxed);
+        g_optNavBack.store(back, std::memory_order_relaxed);
+
+        if (dropped != 0) {
             wchar_t detail[256];
             _snwprintf_s(detail, _countof(detail), _TRUNCATE,
-                       L"\"%s\" cannot be a %s key — it must be a single "
-                       L"keyboard key with no modifiers; %s is in use instead",
-                       asked.c_str(), role, used);
+                L"%u key binding(s) in config.json are not a single keyboard "
+                L"key with no modifiers (Shift aside), or there were more than "
+                L"%d in one list; those entries do nothing and the rest still "
+                L"work (Controls → Mouse & keyboard → Keys in the cascade)",
+                dropped, kMaxBindingKeys);
             Diag::Report(Diag::Code::BindingUnparsable, Diag::Sev::Warning,
-                         L"A key binding could not be understood", detail);
-        };
-
-        HotkeySpec commit;
-        if (!ParseHotkey(opts.commitHotkey, commit) || commit.mainIsMouse
-            || commit.mainVk == 0) {
-            commit.mainVk = VK_RETURN;
-            fellBack(L"commit", opts.commitHotkey, L"Enter");
+                         L"Some key bindings could not be understood", detail);
         }
-        g_optCommitVk.store(commit.mainVk, std::memory_order_relaxed);
-
-        HotkeySpec cancel;
-        if (!ParseHotkey(opts.cancelHotkey, cancel) || cancel.mainIsMouse
-            || cancel.mainVk == 0) {
-            cancel.mainVk = VK_ESCAPE;
-            fellBack(L"cancel", opts.cancelHotkey, L"Escape");
-        }
-        g_optCancelVk.store(cancel.mainVk, std::memory_order_relaxed);
-
-        HotkeySpec close;
-        if (!ParseHotkey(opts.closeHotkey, close) || close.mainIsMouse
-            || close.mainVk == 0) {
-            close.mainVk = VK_DELETE;
-            fellBack(L"close-window", opts.closeHotkey, L"Delete");
-        }
-        g_optCloseVk.store(close.mainVk, std::memory_order_relaxed);
     }
 
     // Two pointer bindings on one button is resolved in a fixed order, so the

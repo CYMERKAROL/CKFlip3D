@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Moving the cascade one window forward or back.  Handles the timed cycle, the
+// held-key chain that accelerates it, and the free scrub where the pointer
+// owns the parameter instead of the clock.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include "../scene/FlipScene.hpp"

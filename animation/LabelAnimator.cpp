@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Exponential chase that carries the selected-window label to its target
+// anchor, plus the fade used while the user holds a navigation key.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "LabelAnimator.h"
 
 #define WIN32_LEAN_AND_MEAN

@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The confirmation shown before an uninstall, including the choice of whether
+// to take the user's settings folder with it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using CKFlip3D.Installer.Engine;

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The undo stack behind every install.  Nothing touches the machine without
+// registering how to put it back, so a cancelled or failed run leaves the
+// system where it started rather than half-installed.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.IO;
 
 namespace CKFlip3D.Installer.Engine;

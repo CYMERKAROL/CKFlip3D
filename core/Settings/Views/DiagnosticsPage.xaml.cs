@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The Diagnostics page: what the machine looks like from CKFlip3D's side, a
+// summary of the log, and a report the user can copy out in one click.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;

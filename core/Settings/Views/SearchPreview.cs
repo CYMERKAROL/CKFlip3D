@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// Placing the search field by dragging it, on a still miniature of the real
+// cascade.  The core stores the position as percentages of the display, which
+// is what keeps one setting right at 1080p and at 4K and is also exactly the
+// kind of number nobody can picture.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;

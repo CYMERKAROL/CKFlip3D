@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Appearance page layout: the live preview at the top, then the theme, the
+     visual preset and the per-animation switches beneath it.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.AppearancePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -17,7 +23,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Application theme"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The look of this settings window. Switches instantly with a smooth fade."/>
+                                       Text="Change the theme of CKFlip3D"/>
                         </StackPanel>
                         <ComboBox Grid.Column="1" x:Name="ThemeCombo" Style="{StaticResource AeroComboBox}"
                                   VerticalAlignment="Center" MinWidth="210"
@@ -38,7 +44,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Visual preset"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Alternative looks for the 3D switcher. Cascade is the classic diagonal stack; Cover Flow lines the windows up in a centered row with the side windows leaning gently outward."/>
+                                       Text="Alternative looks for the 3D switcher"/>
                         </StackPanel>
                         <ComboBox Grid.Column="1" x:Name="PresetCombo" Style="{StaticResource AeroComboBox}"
                                   VerticalAlignment="Center" MinWidth="150"
@@ -56,7 +62,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Background opacity"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="How strongly the desktop shows behind the cascade — on every monitor. 0% fades to black, 100% keeps it fully visible. 28% is the classic cascade look."/>
+                                       Text="Change the intensity of wallpaper showing behind the cascade (Applies to every monitor). 28% is the default value."/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
@@ -76,7 +82,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Background blur intensity"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Frosted-glass blur on the wallpaper behind the cascade — on every monitor."/>
+                                       Text="Change the intensity of Frosted-glass blur on the wallpaper behind the cascade (Applies to every monitor)"/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
@@ -96,7 +102,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Desktop in cascade"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Shows the desktop as the last window of the stack, like the original Flip 3D. Off removes the desktop tile — its slot goes to the next window."/>
+                                       Text="Shows the desktop as the last window of the stack. When disabled, the slot goes to the next window instead."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding ShowDesktopTile}"/>
@@ -130,7 +136,8 @@
                             <ToggleButton x:Name="LabelCustomizeToggle"
                                           Style="{StaticResource AeroComboToggle}"
                                           Width="150" Height="28"
-                                          ClickMode="Press" Focusable="False"/>
+                                          ClickMode="Press" Focusable="False"
+                                          v:CustomizeDropdown.AutoClose="True"/>
                             <TextBlock Margin="10,0,26,0" VerticalAlignment="Center"
                                        IsHitTestVisible="False"
                                        FontFamily="Segoe UI" FontSize="12.5"
@@ -244,7 +251,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Reflections"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Subtle glass reflection under the stack — each window mirrors softly below its bottom edge, like standing on a glass floor. Works with both visual presets."/>
+                                       Text="Enables Subtle glass reflection under each tile."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding Reflections}"/>
@@ -259,7 +266,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Animations"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="All cascade motion — cycling, the enter/exit morph and the window-close transition. Off snaps everything instantly. Use Customize to keep only selected animations enabled."/>
+                                       Text="Enables motion effects like cycling and transitions. Turn off for instant snapping, or use Customize for specific options."/>
                         </StackPanel>
                         <!-- Custom per-animation selection: an AeroComboToggle-faced
                              dropdown (same glass face + popup chrome as AeroComboBox)
@@ -279,7 +286,8 @@
                             <ToggleButton x:Name="AnimCustomizeToggle"
                                           Style="{StaticResource AeroComboToggle}"
                                           Width="150" Height="28"
-                                          ClickMode="Press" Focusable="False"/>
+                                          ClickMode="Press" Focusable="False"
+                                          v:CustomizeDropdown.AutoClose="True"/>
                             <TextBlock Margin="10,0,26,0" VerticalAlignment="Center"
                                        IsHitTestVisible="False"
                                        FontFamily="Segoe UI" FontSize="12.5"

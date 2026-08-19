@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Everything that keeps the program alive between sessions: the message pump,
+// the tray icon and its retry logic, config reloads, and the single-instance
+// plumbing the launcher and the Settings app talk to.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "app.h"
 #include "resource.h"
 #include "DebugLog.h"
@@ -16,14 +23,13 @@ static constexpr const wchar_t* kWindowClass = L"CKFlip3D_MessageWindow";
 // Is the tray icon there?
 //
 // NIM_ADD's answer cannot be taken as the whole truth, and this is not a
-// theoretical worry — it produced a reported CK0010 with the icon sitting in
-// the tray the entire time.  The shell can accept an icon and still answer the
-// add with a failure (a timeout under load, or during the logon race), and from
-// then on every retry fails too, BECAUSE the icon exists and one uID cannot be
-// added twice.  Measured on Windows 11 26100: a duplicate NIM_ADD returns FALSE
-// with 0x80004005.  A retry loop built on NIM_ADD alone therefore cannot ever
-// recover — it asks a question whose answer is "no" for both of the states it
-// is trying to tell apart.
+// theoretical worry: it produced a reported CK0010 with the icon sitting in the
+// tray the entire time.  The shell can accept an icon and still answer the add
+// with a failure (a timeout under load, or the logon race), and from then on
+// every retry fails too, BECAUSE the icon exists and one uID cannot be added
+// twice.  Measured on Windows 11 26100: a duplicate NIM_ADD returns FALSE with
+// 0x80004005.  A retry loop built on NIM_ADD alone can never recover, because
+// it asks a question whose answer is "no" for both states it is telling apart.
 //
 // So the state is established, not inferred, in three steps that can only ever
 // turn "absent" into "present":
@@ -61,7 +67,6 @@ static bool TrayIconAddOrConfirm(NOTIFYICONDATAW& nid, DWORD* outAddError)
     return TrayIconPresent(nid.hWnd, nid.uID);
 }
 
-// ---------------------------------------------------------------------------
 static App* GetApp(HWND hwnd)
 {
     return reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -166,6 +171,12 @@ LRESULT CALLBACK App::WndProc(HWND hwnd, UINT msg,
         return 0;
     }
 
+    // Launch shortcut: open the cascade in a process that is ALREADY running.
+    if (app && app->m_msgShowCascade != 0 && msg == app->m_msgShowCascade) {
+        app->OnShowCascadeRequest();
+        return 0;
+    }
+
     // Explorer (re)started — any previously added icon is gone.  Re-add.
     if (app && app->m_msgTaskbarCreated != 0 && msg == app->m_msgTaskbarCreated) {
         app->m_trayActive = false;
@@ -214,7 +225,6 @@ LRESULT CALLBACK App::WndProc(HWND hwnd, UINT msg,
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// ---------------------------------------------------------------------------
 bool App::CreateMessageWindow(HINSTANCE hInstance)
 {
     WNDCLASSEXW wc = {};
@@ -236,7 +246,6 @@ bool App::CreateMessageWindow(HINSTANCE hInstance)
     return m_hwnd != nullptr;
 }
 
-// ---------------------------------------------------------------------------
 void App::InitTrayIcon()
 {
     m_nid = {};
@@ -355,9 +364,9 @@ void App::ShowTrayContextMenu()
 
 // ---------------------------------------------------------------------------
 // Settings — external CKFlip3D.Settings.exe living next to CKFlip3D.exe.
-// The old in-process Win32 settings dialog was removed in favour of the
-// dedicated WPF settings app (core/Settings).  Config changes are picked up
-// at runtime via the CKFLIP3D_CONFIG_RELOAD broadcast (see ReloadConfig()).
+// A separate WPF app (core/Settings) rather than an in-process dialog, so the
+// core stays a tray program with no UI of its own.  Config changes are picked
+// up at runtime via the CKFLIP3D_CONFIG_RELOAD broadcast (see ReloadConfig()).
 // ---------------------------------------------------------------------------
 void App::ShowSettingsDialog()
 {
@@ -409,20 +418,20 @@ void App::ShowSettingsDialog()
     }
 }
 
-// ---------------------------------------------------------------------------
 void App::ApplyTriggerOptions()
 {
     KeyboardHook::TriggerOptions opts;
     opts.ignoreFullscreen = m_config.ignoreFullscreen;
     opts.mouseWheelCycle  = m_config.mouseWheelCycle;
-    opts.keyboardNav      = m_config.keyboardNav;
+    opts.navForwardKeys   = m_config.navForwardKeys;
+    opts.navBackKeys      = m_config.navBackKeys;
     opts.hotkeyToggleMode = m_config.hotkeyToggleMode;
     opts.touchpadNav      = m_config.touchpadNav;
     opts.windowSnap       = m_config.windowSnap;
     opts.activationHotkey = m_config.activationHotkey;
-    opts.commitHotkey     = m_config.commitHotkey;
-    opts.cancelHotkey     = m_config.cancelHotkey;
-    opts.closeHotkey      = m_config.closeHotkey;
+    opts.commitKeys       = m_config.commitKeys;
+    opts.cancelKeys       = m_config.cancelKeys;
+    opts.closeKeys        = m_config.closeKeys;
     opts.pointerInCascade = m_config.pointerInCascade;
     opts.mouseSelect      = m_config.mouseSelect;
     opts.selectButton     = m_config.mouseSelectButton;
@@ -430,7 +439,6 @@ void App::ApplyTriggerOptions()
     opts.dragButton       = m_config.mouseDragButton;
     opts.closeFromCascade = m_config.closeFromCascade;
     opts.closeButton      = m_config.mouseCloseButton;
-    opts.closeKeyEnabled  = m_config.closeKeyEnabled;
     opts.searchEnabled    = m_config.searchEnabled;
 
     // ignoredApps is a ';'-separated list of exe names / full paths.
@@ -451,16 +459,35 @@ void App::ApplyTriggerOptions()
     // it can do is additive: with touchpadNav off the raw-input listener is
     // never registered and no Windows setting is touched.
     TouchpadHook::Options tp;
+    unsigned droppedGestures = 0;
     tp.enabled                = m_config.touchpadNav;
-    tp.cycleFingers           = m_config.touchpadCycleFingers;
+    tp.activateMask           = TouchpadHook::ParseActivateList(
+                                    m_config.touchpadActivateGestures, &droppedGestures);
+    tp.cycleMask              = TouchpadHook::ParseCycleList(
+                                    m_config.touchpadCycleGestures, &droppedGestures);
+    tp.commitMask             = TouchpadHook::ParseCommitList(
+                                    m_config.touchpadCommitGestures, &droppedGestures);
     tp.reverse                = m_config.touchpadReverse;
     tp.sensitivity            = m_config.touchpadSensitivity;
     tp.smoothing              = m_config.touchpadSmoothing;
-    tp.activateGesture        = m_config.touchpadActivateGesture;
-    tp.commitGesture          = m_config.touchpadCommitGesture;
     tp.cancelSwipe            = m_config.touchpadCancelSwipe;
+    tp.continuous             = m_config.touchpadContinuous;
     tp.windowSnap             = m_config.windowSnap;
     m_hotkeyMgr.SetTouchpadOptions(tp);
+
+    // A gesture token nobody recognises does nothing, silently, which is the
+    // one way a hand-edited list can look configured and be inert.  Reported
+    // once per load, naming the count rather than the token: the lists are
+    // short and the Settings page shows exactly what survived.
+    if (droppedGestures != 0) {
+        wchar_t detail[224];
+        _snwprintf_s(detail, _countof(detail), _TRUNCATE,
+            L"%u touchpad gesture(s) in config.json are not names CKFlip3D "
+            L"knows; those entries do nothing and the rest still work "
+            L"(Controls → Touchpad gestures)", droppedGestures);
+        Diag::Report(Diag::Code::BindingUnparsable, Diag::Sev::Warning,
+                     L"Some touchpad gestures could not be understood", detail);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,19 +516,22 @@ void App::ApplySafeModeOverrides()
     if (m_config.startDelayMs < 100)
         m_config.startDelayMs = 100;
     m_config.activationHotkey   = L"Win+Tab";
-    m_config.commitHotkey       = L"Enter";
-    m_config.cancelHotkey       = L"Escape";
-    m_config.closeHotkey        = L"Delete";
+    m_config.commitKeys         = L"Enter";
+    m_config.cancelKeys         = L"Escape";
+    // Custom navigation keys go with the custom hotkey: safe mode is the
+    // known-good path, and a stack you cannot step through is exactly the kind
+    // of thing it exists to rule out.
+    m_config.navForwardKeys     = L"Tab;Down;Right";
+    m_config.navBackKeys        = L"Shift+Tab;Up;Left";
     // Keyboard-only input path: no raw-input listener, no pointer hit
     // testing, no type-to-filter — and the Windows touchpad gesture is left
     // exactly as the user has it.
     m_config.touchpadNav        = false;
     m_config.pointerInCascade   = false;
     m_config.searchEnabled      = false;
-    // The close key used to ride pointerInCascade, so safe mode disabled it as
-    // a side effect.  It has its own switch now — turn it off explicitly, so
-    // safe mode stays what it was: nothing but the switcher itself.
-    m_config.closeKeyEnabled    = false;
+    // The close keys are their own list, so they have to be emptied here
+    // explicitly.  Safe mode is nothing but the switcher itself.
+    m_config.closeKeys          = L"";
     m_config.showDebugInfo      = true;
 }
 
@@ -578,7 +608,6 @@ void App::ReloadConfig()
     CKLog::Log(L"CKFlip: config reloaded (CKFLIP3D_CONFIG_RELOAD)\n");
 }
 
-// ---------------------------------------------------------------------------
 void App::OnHotkeyEvent(HotkeyEvent event, float amount,
                         int x, int y, void* userData)
 {
@@ -613,6 +642,37 @@ void App::OnFlipActivate()
     if (!m_flip.IsActive())
         KeyboardHook::AbortSessionIfIdle(m_flip.SessionEpoch());
 }
+// ---------------------------------------------------------------------------
+// The launch shortcut asking for the cascade (CKFLIP3D_SHOW_CASCADE, sent by
+// CKFlip3D.Launch.exe).
+//
+// Held open regardless of "Toggle activation" — the one place where a setting
+// is deliberately overruled, and for a plain reason: everything else that opens
+// the cascade is something the user is HOLDING (a hotkey, a mouse button, a
+// finger on the pad), and the classic behaviour is that letting go commits.  A
+// shortcut is a click that is already over.  Without the latch the next Win or
+// Alt the user released — reaching for anything at all — would commit a window
+// they never chose.
+//
+// The activation FILTERS are not consulted, unlike the hotkey and the gesture.
+// They exist so an accidental keypress cannot take the screen from a fullscreen
+// game or an app on the ignore list; clicking a shortcut is not accidental, and
+// the request would have nowhere to come from while such a window covers the
+// screen anyway.
+void App::OnShowCascadeRequest()
+{
+    // Already up: a second click is nothing.  Both halves are asked because
+    // they can disagree for a few frames — the session flag is raised before
+    // the controller has built anything, and it survives a moment past the
+    // exit animation.
+    if (m_flip.IsActive() || KeyboardHook::IsSessionActive())
+        return;
+
+    KeyboardHook::SetSessionActive(true);
+    KeyboardHook::LatchToggleSession();   // AFTER: raising resets the latch
+    OnFlipActivate();                     // drops the session again if nothing is eligible
+}
+
 void App::OnFlipCycle()     { m_flip.Cycle(); }
 void App::OnFlipCycleBack() { m_flip.CycleBack(); }
 // Route through the fade-then-dispatch pre-step so the ~180 ms exit fade
@@ -621,7 +681,6 @@ void App::OnFlipDismiss()   { m_flip.Dismiss(); }
 void App::OnFlipEscape()    { m_flip.Escape(); }
 void App::OnFlipCycleStop() { m_flip.CycleStop(); }
 
-// ---------------------------------------------------------------------------
 int App::Run(HINSTANCE hInstance)
 {
     // Scoped, so every `return` below — including the failure paths that give
@@ -671,6 +730,7 @@ int App::Run(HINSTANCE hInstance)
     m_msgRestart        = RegisterWindowMessageW(L"CKFLIP3D_RESTART");
     m_msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     m_msgInputSuspend   = RegisterWindowMessageW(L"CKFLIP3D_INPUT_SUSPEND");
+    m_msgShowCascade    = RegisterWindowMessageW(L"CKFLIP3D_SHOW_CASCADE");
 
     if (!CreateMessageWindow(hInstance)) {
         Diag::ReportLastError(Diag::Code::MessageWindowFailed, Diag::Sev::Critical,
@@ -691,6 +751,9 @@ int App::Run(HINSTANCE hInstance)
     ChangeWindowMessageFilterEx(m_hwnd, m_msgRestart,        MSGFLT_ALLOW, nullptr);
     ChangeWindowMessageFilterEx(m_hwnd, m_msgTaskbarCreated, MSGFLT_ALLOW, nullptr);
     ChangeWindowMessageFilterEx(m_hwnd, m_msgInputSuspend,   MSGFLT_ALLOW, nullptr);
+    // The launch shortcut runs as the ordinary user — without this its request
+    // would be dropped by UIPI and clicking the shortcut would do nothing.
+    ChangeWindowMessageFilterEx(m_hwnd, m_msgShowCascade,    MSGFLT_ALLOW, nullptr);
     ChangeWindowMessageFilterEx(m_hwnd, WM_CLOSE,            MSGFLT_ALLOW, nullptr);
 
     if (!m_flip.Init(hInstance)) {

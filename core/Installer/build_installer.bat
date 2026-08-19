@@ -52,6 +52,13 @@ if not exist "%BUILD%\CKFlip3D.exe" (
     echo ERROR: %BUILD%\CKFlip3D.exe not found. Build the core first: build.bat
     exit /b 1
 )
+rem Built by the same build.bat run — checked separately so a tree built by an
+rem older script fails here instead of shipping a payload whose launch shortcut
+rem has nothing to point at.
+if not exist "%BUILD%\CKFlip3D.Launch.exe" (
+    echo ERROR: %BUILD%\CKFlip3D.Launch.exe not found. Build the core first: build.bat
+    exit /b 1
+)
 
 rem ---- 3. Icons (pre-built in assets\icons, see make_icons.ps1) ----------
 if not exist "%ROOT%\assets\icons\CKFlip3D.ico" (
@@ -64,12 +71,13 @@ rem ---- 4. Payload --------------------------------------------------------
 rem Sign the shipped binaries (publisher CYMERKAROL) BEFORE they are zipped
 rem into the payload, so the installed files carry the signature.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\sign_binaries.ps1" ^
-  "%BUILD%\CKFlip3D.exe" "%BUILD%\CKFlip3D.Settings.exe" "%BUILD%\CKFlip3D.Settings.dll"
+  "%BUILD%\CKFlip3D.exe" "%BUILD%\CKFlip3D.Launch.exe" "%BUILD%\CKFlip3D.Settings.exe" "%BUILD%\CKFlip3D.Settings.dll"
 
 echo === Staging payload ===
 if exist "%STAGING%" rmdir /s /q "%STAGING%"
 mkdir "%STAGING%"
 copy /y "%BUILD%\CKFlip3D.exe"                        "%STAGING%" >nul
+copy /y "%BUILD%\CKFlip3D.Launch.exe"                 "%STAGING%" >nul
 copy /y "%BUILD%\CKFlip3D.Settings.exe"               "%STAGING%" >nul
 copy /y "%BUILD%\CKFlip3D.Settings.dll"               "%STAGING%" >nul
 copy /y "%BUILD%\CKFlip3D.Settings.deps.json"         "%STAGING%" >nul

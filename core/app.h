@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The resident half of CKFlip3D: a message-only window, a tray icon, and the
+// hooks that wait for a trigger.  This is what runs for hours at a time; the
+// cascade only exists for the few seconds the user is looking at it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -37,6 +44,7 @@ private:
     void ReloadConfig();            // re-read config.json (CKFLIP3D_CONFIG_RELOAD)
     void ApplySafeModeOverrides();  // conservative --safe-mode config clamps
     void WriteSafeModeLog();        // %APPDATA%\CKFlip3D\safemode.log diagnostics
+    void OnShowCascadeRequest();    // launch shortcut asked for the cascade
 
     void OnFlipActivate();
     void OnFlipCycle();
@@ -59,6 +67,12 @@ private:
     // touchpad-activity preview holding activation off while it reads the
     // pad (wParam = 1 arm, 0 release).  See KeyboardHook::SuspendActivation.
     UINT              m_msgInputSuspend   = 0;
+    // RegisterWindowMessage(CKFLIP3D_SHOW_CASCADE) — the launch shortcut
+    // (CKFlip3D.Launch.exe) asking a RUNNING core to open the cascade.  A
+    // channel of its own, deliberately: starting this exe — from the tray
+    // menu, from the Settings app, from Explorer, at logon — must never open
+    // anything, and it still doesn't.  See OnShowCascadeRequest.
+    UINT              m_msgShowCascade    = 0;
     UINT              m_trayRetries     = 0;  // logon-race retry counter
     bool              m_restartPending  = false; // relaunch self after the loop exits
 };

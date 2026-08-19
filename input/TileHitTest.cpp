@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// The hit test itself: project each slot's unit quad into overlay pixels, then
+// walk the slots from front to back and return the first one the pointer is
+// inside.  Same matrices as the draw pass, so the answer always matches what
+// the user can actually see.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "TileHitTest.hpp"
 #include <cmath>
 
@@ -12,7 +20,6 @@ constexpr float kCornerY[4] = { -0.5f, +0.5f, +0.5f, -0.5f };
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 bool ProjectQuad(FXMMATRIX mvp, float vpW, float vpH, Quad& out)
 {
     if (vpW <= 0.0f || vpH <= 0.0f)
@@ -40,7 +47,6 @@ bool ProjectQuad(FXMMATRIX mvp, float vpW, float vpH, Quad& out)
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool PointInQuad(const Quad& q, float px, float py)
 {
     bool anyPositive = false;
@@ -58,7 +64,6 @@ bool PointInQuad(const Quad& q, float px, float py)
     return true;
 }
 
-// ---------------------------------------------------------------------------
 int PickSlot(const FlipScene& scene, FXMMATRIX monRemap,
              float cascadeAspect, float vpW, float vpH,
              float px, float py, const SlotOffsets& drawOffsets,

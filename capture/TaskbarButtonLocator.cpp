@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Asking Explorer, through MSAA, where it put a given taskbar button.  Every
+// call is timeout-guarded, because the answer comes from another process that
+// is free to be busy or hung.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include "TaskbarButtonLocator.h"
 
@@ -105,7 +112,6 @@ bool VariantToChildId(const VARIANT& v, LONG& outChildId)
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 bool TaskbarButtonLocator::Init()
 {
     if (IsReady()) return true;
@@ -130,7 +136,6 @@ bool TaskbarButtonLocator::Init()
     return true;   // ready in HWND-only mode at minimum
 }
 
-// ---------------------------------------------------------------------------
 void TaskbarButtonLocator::Shutdown()
 {
     if (m_buttonListAcc) {
@@ -143,7 +148,6 @@ void TaskbarButtonLocator::Shutdown()
     m_oleInitialized = false;
 }
 
-// ---------------------------------------------------------------------------
 bool TaskbarButtonLocator::GetButtonListRect(RECT& outRect) const
 {
     if (!m_buttonListHwnd) return false;
@@ -154,7 +158,6 @@ bool TaskbarButtonLocator::GetButtonListRect(RECT& outRect) const
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool TaskbarButtonLocator::GetButtonRect(HWND hwnd, RECT& outRect)
 {
     if (!HasIAccessible() || !hwnd) return false;

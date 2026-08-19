@@ -1,14 +1,16 @@
+// ---------------------------------------------------------------------------
+// Type-to-filter settings, and the draggable preview that places the search
+// field.  A page of its own because it changes what the stack contains rather
+// than what a key is bound to.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 
 namespace CKFlip3D.Settings.Views;
 
-/// <summary>
-/// Type-to-filter settings.  A top-level page rather than a Controls sub-page
-/// because it is a feature of the cascade, not a binding: it changes what the
-/// stack contains, and it is the one thing here Alt+Tab has no answer to.
-/// </summary>
 public partial class SearchPage : UserControl
 {
     private bool _syncing;

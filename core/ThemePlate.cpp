@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The per-theme style table and the painter that turns it into pixels: plate
+// body, sheen, border, then the text mask composited on top.  All of it in
+// premultiplied float, packed to bytes only once at the very end.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "ThemePlate.h"
 #include <algorithm>
 #include <cmath>
@@ -33,13 +40,11 @@ constexpr Style kStyles[5] = {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 const Style& Get(int appTheme)
 {
     return kStyles[std::clamp(appTheme, 0, 4)];
 }
 
-// ---------------------------------------------------------------------------
 void PaintPlate(std::vector<float>& canvas, int width, int height,
                 const Style& st, float uiScale)
 {
@@ -103,7 +108,6 @@ void PaintPlate(std::vector<float>& canvas, int width, int height,
     }
 }
 
-// ---------------------------------------------------------------------------
 void CompositeTextMask(std::vector<float>& canvas, int width, int height,
                        const uint8_t* mask, const Style& st,
                        float uiScale, bool haveBox)
@@ -145,7 +149,6 @@ void CompositeTextMask(std::vector<float>& canvas, int width, int height,
     }
 }
 
-// ---------------------------------------------------------------------------
 void Pack(const std::vector<float>& canvas, std::vector<uint8_t>& out)
 {
     out.resize(canvas.size());
@@ -154,7 +157,6 @@ void Pack(const std::vector<float>& canvas, std::vector<uint8_t>& out)
             std::clamp(canvas[i], 0.0f, 1.0f) * 255.0f + 0.5f);
 }
 
-// ---------------------------------------------------------------------------
 bool CreateTexture(ID3D11Device* device, const std::vector<uint8_t>& packed,
                    int width, int height,
                    winrt::com_ptr<ID3D11Texture2D>& outTex,

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The morph between the real desktop and the 3D cascade, played forward on
+// activation and backward on teardown.  Reads window placement and rects but
+// never writes to a real window, so nothing here can disturb the desktop.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include "../scene/FlipScene.hpp"
@@ -15,8 +22,7 @@ enum class DesktopEntryMode : uint8_t {
 /// Entry + exit animator (2D-rect ↔ 3D-cascade morph with concurrent dim).
 /// Kept separate from CycleAnimator so activation/teardown morphing and
 /// cycle wrapping don't share state.  Read-only with respect to real
-/// windows — only reads placement / rect / aspect via WindowInfo and
-/// GetWindowPlacement; never writes to windows.
+/// windows: it reads placement, rect and aspect, and never writes.
 ///
 /// Direction is encoded by `m_reverse`:
 ///   forward (entry) — flat → cascade. BeginEntry seeds m_flatSlots and
@@ -27,19 +33,18 @@ enum class DesktopEntryMode : uint8_t {
 ///                     the end target. Scene is left in cascade state and
 ///                     the morph plays backward.
 ///
-/// Timeline (total 220–320 ms, scaled to slot count) — single phase, everything
-/// starts at rawT=0.  Small stacks animate faster; large stacks get the full
-/// 320 ms.  Tick computes a unified forwardT = m_reverse ? (1-rawT) : rawT
-/// that drives every interpolation, so reverse is naturally a mirror.
-///   Motion (position/scale/alpha/rotY): InOutCubic(forwardT) — symmetric
-///          ease, zero velocity at both ends; no jump at frame 0, no snap
-///          at the end.
-///   Dim    (wallpaper + black backdrop): OutCubic(forwardT) — fast ramp
-///          so the wallpaper is visibly dimmed by the time gaps between
-///          tiles open up.
-///   Tilt   (scene-wide Y/X): rides the same morphT as motion — no
-///          delay (Round-6 Fix 18).  Per-tile rotY (fanned deck) also
-///          lerps with motion alongside the other slot fields.
+/// One phase, everything starting at rawT = 0, over a fixed kDurationMs that
+/// does NOT depend on how many windows are in the stack.  There is no runtime
+/// easing here at all: every channel comes from EntryExitTimeline::SampleAt,
+/// and Tick feeds it timelineT = m_reverse ? (1-rawT) : rawT, so the exit is
+/// the entry read backwards.  Position, scale, alpha, per-tile rotY and the
+/// scene-wide tilt all lerp between the flat and cascade endpoints on their
+/// own authored channel.
+///
+/// Dim is the exception, and only on entry: DimFactor anchors it to the
+/// keypress rather than to rawT, so the wall-clock time the cascade spent
+/// getting ready counts toward it.  See DimFactor for why that ramp is also
+/// shorter than the morph.
 class EntryExitAnimator {
 public:
     bool IsActive() const { return m_active; }
@@ -184,13 +189,13 @@ public:
     const std::vector<float>& GetExitPaintDepths() const { return m_exitPaintZ; }
 
 private:
-    // Round-7: fixed Win7 timing — 16 frames at 60 Hz = 266.67 ms,
-    // independent of window count.  Win7 reference uses 16 frames for
-    // both 4-window and 10-window cases; CKFlip's earlier per-N scaling
-    // (220–320 ms) made the morph feel inconsistent across stacks.
+    // Fixed Win7 timing: 16 frames at 60 Hz = 266.67 ms, independent of window
+    // count.  The Win7 reference uses 16 frames for both the 4-window and the
+    // 10-window case, and scaling the duration per N made the morph feel
+    // inconsistent from one stack to the next.
     static constexpr float kDurationMs = 16.0f * 1000.0f / 60.0f;
 
-    // Round-6 overflow incineration constants.  Each overflow tile begins
+    // Overflow incineration constants.  Each overflow tile begins
     // its alpha decay at rawT = k * kOverflowStaggerStep (clamped) and
     // finishes by rawT = start + kOverflowFadeSpan (clamped to 1.0).
     // Tile k=0 fades at the start of entry; later overflow tiles incinerate
@@ -257,7 +262,7 @@ private:
     float    m_tiltYFinal  = 0.0f;
     float    m_tiltXFinal  = 0.0f;
 
-    // Round-6 Fix 19: per-HWND flat geometry captured at BeginEntry.  On
+    // Per-HWND flat geometry captured at BeginEntry.  On
     // BeginExit we look up flat slots by current HWND so the exit lerp
     // is HWND-matched on both ends — cycle rotation can't desync the
     // cascade aspect from the flat target aspect.  Linear scan; ≤16

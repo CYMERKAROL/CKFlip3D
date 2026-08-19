@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Welcome page layout: what CKFlip3D is, in a few lines, and the button that
+     moves on to the options.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Installer.Views.WelcomePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -16,7 +22,7 @@
             <TextBlock Text="The 3D window switcher for Windows 11" FontSize="13.5"
                        Margin="0,6,0,0" HorizontalAlignment="Center"
                        Foreground="{DynamicResource TextSecondaryBrush}"/>
-            <TextBlock Text="Version 1.5.0" FontSize="11.5" Margin="0,18,0,0"
+            <TextBlock Text="Version 1.6.0" FontSize="11.5" Margin="0,18,0,0"
                        HorizontalAlignment="Center" Foreground="{DynamicResource TextFaintBrush}"/>
         </StackPanel>
 

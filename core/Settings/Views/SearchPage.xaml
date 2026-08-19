@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Search page layout: the on/off switch, the appearance options, and the
+     draggable preview that places the field on screen.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.SearchPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -17,7 +23,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Search the stack"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Start typing while the cascade is open and it narrows to the windows whose names match. The rest drop out of the stack the same way a closed window does, and come straight back when you clear what you typed. Off means printable keys are ignored, exactly as before."/>
+                                       Text="Filter windows in real time by typing while the cascade is open."/>
                             <!-- Search needs a cascade that stays open without
                                  the hotkey held: you cannot type a word while
                                  holding Win. -->
@@ -59,7 +65,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Search box"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The glass plate behind the field, on the same material as the selected-window label and in the theme chosen under Appearance. Off draws the text straight onto the cascade with a stronger shadow instead."/>
+                                       Text="Displays a plate background behind the active search query text."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding SearchBox}"/>
@@ -82,7 +88,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Match program names"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Searches the owning program's file name as well as the window title, so “chrome” finds a tab whose title mentions neither."/>
+                                       Text="Includes executable/process names in search results alongside window titles."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding SearchMatchProcess}"/>
@@ -102,7 +108,7 @@
                         </Style>
                     </StackPanel.Style>
                     <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,12"
-                               Text="A scale model of your primary display. Drag the field — or click where you want it — and the position is stored as a share of the screen, so it lands in the same place whatever resolution you are running."/>
+                               Text="Click or drag on the display preview to adjust the search box position on screen."/>
 
                     <v:SearchPreview x:Name="Preview"/>
 
@@ -115,7 +121,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Size"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The text is rendered at the chosen size rather than magnified, so a larger field is genuinely larger type — never a blurred small one."/>
+                                       Text="Adjusts the text and search box scale"/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="42" TextAlignment="Right"
@@ -135,7 +141,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Horizontal position"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The field's centre, across the screen. 50% is dead centre."/>
+                                       Text="Moves the search box left or right across the screen (50% is centered)."/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="42" TextAlignment="Right"
@@ -155,7 +161,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Vertical position"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The field's bottom edge, down the screen. 94% clears a standard taskbar."/>
+                                       Text="Moves the search box up or down (94% places it just above the taskbar)"/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="42" TextAlignment="Right"
@@ -175,7 +181,7 @@
                         <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
                                    TextWrapping="Wrap" Margin="0,0,16,0"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="Put the field back where it started: centred, just above the taskbar, at its natural size."/>
+                                   Text="Resets the search box size and position back to default."/>
                         <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                                 Content="Restore original placement" Click="RestorePlacement_Click"/>
                     </Grid>
@@ -191,7 +197,7 @@
                               Data="M8,1.5 A6.5,6.5 0 1 1 7.99,1.5 M8,7 V11.5 M8,4.6 V4.9"/>
                         <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap" MaxWidth="530"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="Only keys nothing else is bound to reach the search — Tab still cycles, the arrows still navigate, and the commit key still commits. Backspace deletes a character; the cancel key clears the whole query, and closes the cascade once it is empty."/>
+                                   Text="Unbound keys type into search while standard hotkeys keep their usual controls."/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal">
                         <Path Width="16" Height="16" Margin="0,1,10,0" VerticalAlignment="Top"
@@ -200,7 +206,7 @@
                               Data="M8,1.5 A6.5,6.5 0 1 1 7.99,1.5 M8,7 V11.5 M8,4.6 V4.9"/>
                         <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap" MaxWidth="530"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
-                                   Text="Several words all have to match, in any order. A query that matches nothing empties the stack and says so — and while it is empty the cascade will not commit, so a typo cannot switch you to the wrong window. When you do pick one, the rest of the windows slot back in around it before the cascade closes."/>
+                                   Text="Matches multiple words in any order, blocking selection when no results are found to prevent misclicks."/>
                     </StackPanel>
                 </StackPanel>
             </HeaderedContentControl>

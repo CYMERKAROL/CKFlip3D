@@ -1,9 +1,13 @@
+// ---------------------------------------------------------------------------
+// Easing curves shared by every animator in the project.  All of them take t
+// in [0,1] and return [0,1], so they stay interchangeable behind EaseFunc.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include <cmath>
 
-/// Standard easing functions for animations.
-/// All take t in [0,1] and return [0,1].
 namespace Easing {
 
 inline float Linear(float t) { return t; }
@@ -44,7 +48,6 @@ inline float InOutBack(float t) {
     }
 }
 
-/// Typedef for easing function pointer.
 using EaseFunc = float(*)(float);
 
 } // namespace Easing

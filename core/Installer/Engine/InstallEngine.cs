@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The install itself, as an ordered list of steps: unpack the embedded
+// payload, write the files, create the shortcuts and registry entries, record
+// a manifest.  Every step registers its own undo before it does anything.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;

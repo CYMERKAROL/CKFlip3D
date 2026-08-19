@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Deciding which windows belong in the switcher.  The result is the list the
+// whole cascade is built from, so anything that slips through here shows up as
+// a tile the user did not expect.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN

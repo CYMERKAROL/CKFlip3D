@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Every setting the Settings app can write and the core has to read, in one
+// struct.  The defaults here are what a fresh install behaves like, so they
+// are also the answer whenever the config file is missing or unreadable.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -94,7 +101,26 @@ struct AppConfig {
     // --- Input / triggers ---
     bool     ignoreFullscreen = false;    // Don't capture Win+Tab over fullscreen apps
     bool     mouseWheelCycle  = true;     // Mouse wheel cycles the cascade
-    bool     keyboardNav      = true;     // Arrow keys cycle while active
+    // EVERY key that steps through the stack while the cascade is open
+    // (Controls → Mouse & keyboard → Navigation keys), the activation hotkey's
+    // own key included, which is why the defaults name Tab.  It is an ordinary
+    // entry here, removable like the arrows.
+    //
+    // Each list is ';'-separated and uses the same token names as
+    // activationHotkey (KeyboardHook::ParseHotkey): a bare key, or SHIFT plus a
+    // key, Shift being the one modifier a hand is free to add while the
+    // activation combination is still held.
+    //
+    // A token prefixed with '!' is REMEMBERED BUT OFF, so a binding can be
+    // parked without being retyped later.  Anything unparsable is skipped.
+    // Empty lists are legitimate and mean "no keyboard navigation"; Config::Load
+    // folds a legacy `keyboardNav: false` into them.
+    //
+    // Up to KeyboardHook::kMaxBindingKeys per direction, because the hook reads
+    // each list from a single packed word, which is what keeps the
+    // per-keystroke lookup lock-free.
+    std::wstring navForwardKeys = L"Tab;Down;Right";       // next window
+    std::wstring navBackKeys    = L"Shift+Tab;Up;Left";    // previous window
     std::wstring ignoredApps;             // ';'-separated exe names/paths to ignore
     // Exclusion list (General): windows of these executables never appear
     // in the cascade — the hotkey still works, the windows are simply left
@@ -112,13 +138,25 @@ struct AppConfig {
     // "Win+XButton1", ...).  Parsed by KeyboardHook::ParseHotkey; invalid
     // strings fall back to Win+Tab.
     std::wstring activationHotkey = L"Win+Tab";
-    // Key that COMMITS the selection while the cascade is open, and the one
-    // that CANCELS it.  Same syntax as activationHotkey (KeyboardHook::
-    // ParseHotkey); an unparsable string falls back to the default.
-    std::wstring commitHotkey = L"Enter";
-    std::wstring cancelHotkey = L"Escape";
-    // Key that CLOSES the hovered (or selected) window from the cascade.
-    std::wstring closeHotkey  = L"Delete";
+    // Keys that COMMIT the selection while the cascade is open, the ones that
+    // CANCEL it, and the ones that CLOSE the hovered (or selected) window.
+    //
+    // LISTS, in exactly the form navForwardKeys uses: ';'-separated tokens, a
+    // bare key or Shift+key each, '!' for "kept but switched off".  They were
+    // one key apiece until 1.6 Build 3, which is the only reason they ever
+    // read as single strings — someone who commits with Enter AND with Space,
+    // or closes with both Delete and Backspace, was writing that binding twice
+    // in their head and could only have one of them.
+    //
+    // Empty means the action has no key at all.  For the close key that is
+    // exactly what the old `closeKeyEnabled` switch said, which is why that
+    // switch is gone (Config::Load folds it into this list).  Commit and cancel
+    // are different: a cascade with neither can only be closed with the mouse
+    // or the touchpad, so the Settings page keeps one entry on each and this
+    // side reports a file that says otherwise.
+    std::wstring commitKeys = L"Enter";
+    std::wstring cancelKeys = L"Escape";
+    std::wstring closeKeys  = L"Delete";
 
     // --- Mouse in the cascade (Controls → Mouse & keyboard) ---
     // Mouse button identifiers shared by the three bindings below:
@@ -149,14 +187,11 @@ struct AppConfig {
     // button had been pressed.  A pointer feature, so pointerInCascade gates it.
     bool     closeFromCascade  = true;
     int      mouseCloseButton  = 3;      // middle
-    // The same action from the KEYBOARD (closeHotkey, Delete by default): close
-    // the hovered window, or the selected one when the pointer is elsewhere.
-    //
-    // Its own switch rather than a share of closeFromCascade, because the two
-    // are genuinely different bindings: one needs a mouse and the other does
-    // not, and a keyboard-only user must be able to keep the key while every
-    // pointer feature is off — or drop the key while keeping the click.
-    bool     closeKeyEnabled   = true;
+    // The same action from the KEYBOARD is `closeKeys` above, deliberately NOT
+    // gated on anything here: one needs a mouse and the other does not, and a
+    // keyboard-only user must be able to keep the key while every pointer
+    // feature is off — or drop the key while keeping the click.  An empty
+    // closeKeys is how the key is switched off now.
 
     // --- Search (Settings → Search) ---
     // Type while the cascade is open and it narrows to the matching windows;
@@ -184,34 +219,53 @@ struct AppConfig {
     // a touchpad — or a user who wants none of this — pays nothing and the
     // keyboard/mouse paths stay bit-identical.
     bool     touchpadNav        = true;
-    // Fingers for the swipe that cycles the stack while it is open (2 or 4 —
-    // three is Windows' own, see touchpadActivateGesture).  Horizontal only:
-    // |dx| must dominate |dy|, so a two-finger scroll straight up/down still
-    // reaches the wheel path unchanged.
-    int      touchpadCycleFingers = 2;
+    // --- The three gesture LISTS -------------------------------------------
+    // Same shape as navForwardKeys: ';'-separated tokens, '!' for "kept but
+    // switched off", empty = the action has no gesture at all.  Lists because
+    // one hand does not always want to draw the same stroke: a pad where the
+    // four-finger diagonal is comfortable sitting down and the two-finger one
+    // is comfortable on a desk should be able to have both.
+    // Parsed case-insensitively by TouchpadHook::Parse*List; unknown tokens
+    // are skipped and reported once.
+    //
+    // Gestures that OPEN the cascade — DIAGONAL strokes, because Windows' own
+    // slide recogniser only claims the four cardinal directions, so a diagonal
+    // is free for the taking and nothing of the user's Windows configuration
+    // has to be touched.  Two or four fingers, never three: three-finger
+    // slides are the ones Windows ships bound to Alt+Tab and Task View, and
+    // its recogniser is loose enough about the angle that even a diagonal
+    // trips them.
+    //   TwoDownRight  — two fingers,  "\" (top-left → bottom-right)
+    //   TwoDownLeft   — two fingers,  "/" (top-right → bottom-left)
+    //   FourDownRight — four fingers, "\"
+    //   FourDownLeft  — four fingers, "/"
+    std::wstring touchpadActivateGestures = L"TwoDownRight";
+    // Swipes that CYCLE the stack while it is open (TwoSwipe / FourSwipe —
+    // three is Windows' own, see above).  Horizontal only: |dx| must dominate
+    // |dy|, so a two-finger scroll straight up/down still reaches the wheel
+    // path unchanged.
+    std::wstring touchpadCycleGestures = L"TwoSwipe";
+    // Gestures that COMMIT the selection while the cascade is open — the
+    // touchpad equivalent of Enter:
+    //   OneTap  — one-finger tap
+    //   TwoTap  — two-finger tap
+    //   TwoDown — two fingers swiped down
+    std::wstring touchpadCommitGestures = L"OneTap";
     // Swipe left = next window (false, the default: the row follows the
     // fingers) or previous (true).
     bool     touchpadReverse    = false;
     // Swipe distance per cycle step, 1-100.  100 = a flick of ~2 % of the
     // pad width steps once, 1 = ~14 %.  50 ≈ 8 %.
     int      touchpadSensitivity = 50;
-    // Gesture that OPENS the cascade — a DIAGONAL stroke, because Windows'
-    // own slide recogniser only claims the four cardinal directions, so a
-    // diagonal is free for the taking and nothing of the user's Windows
-    // configuration has to be touched.  Two or four fingers, never three:
-    // three-finger slides are the ones Windows ships bound to Alt+Tab and
-    // Task View, and its recogniser is loose enough about the angle that even
-    // a diagonal trips them.
-    // 0 = off,
-    // 1 = two fingers  "\" (top-left → bottom-right),
-    // 2 = two fingers  "/" (top-right → bottom-left),
-    // 3 = four fingers "\",
-    // 4 = four fingers "/".
-    int      touchpadActivateGesture = 1;
-    // Gesture that COMMITS the selection while the cascade is open — the
-    // touchpad equivalent of Enter:
-    // 0 = off, 1 = one-finger tap, 2 = two-finger tap, 3 = two fingers down.
-    int      touchpadCommitGesture = 1;
+    // Several gestures out of ONE touch.  Off (default), a touch that fires a
+    // gesture is finished — whatever else the fingers do before they lift is
+    // ignored, which is what keeps the tail of an opening diagonal from
+    // stepping the stack it just opened.  On, the stroke is retired and a new
+    // one starts under the same fingers: open the cascade with the diagonal,
+    // carry straight on sideways to pick a window, and never lift.  The price
+    // is that a wandering stroke can now say two things, and the Settings page
+    // says so.
+    bool     touchpadContinuous = false;
     // Input smoothing, 0-100.  Runs an exponential filter over the contact
     // centroid and drops sub-threshold jitter, so a resting hand or a
     // twitchy pad cannot nudge the stack.  0 = raw contact deltas.

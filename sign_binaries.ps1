@@ -9,8 +9,8 @@
 # Trusted Root / Trusted Publishers stores - swap in a commercial cert here
 # whenever one is available, the build scripts won't need to change.
 #
-# Called by build_local.bat / build.bat, core\Settings\build_settings.bat
-# and core\Installer\build_installer.bat after each successful build.
+# Called by build.bat, core\Settings\build_settings.bat and
+# core\Installer\build_installer.bat after each successful build.
 # Signing is best-effort: a failure prints a warning but never fails the
 # build (e.g. on a machine without the cert store rights).
 # ---------------------------------------------------------------------------

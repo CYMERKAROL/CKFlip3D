@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Multi-monitor behaviour: which display the cascade opens on, and what the
+// secondary taskbars do while it is up.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;

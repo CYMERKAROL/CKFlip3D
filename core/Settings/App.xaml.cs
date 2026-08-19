@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Startup for the Settings app.  Loads config.json once into a single shared
+// model, and makes a second launch surface the window that is already open
+// instead of opening another one.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 using CKFlip3D.Settings.Models;

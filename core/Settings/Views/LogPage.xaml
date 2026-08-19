@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Log page layout: one tile per problem, with its severity mark, how often
+     it happened, and what to do about it.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.LogPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"

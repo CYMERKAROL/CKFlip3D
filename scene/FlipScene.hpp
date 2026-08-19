@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The cascade's geometry and camera.  Every animator writes into the slots
+// this scene owns, and every draw call comes out of it, which is why the whole
+// program can stay layout-agnostic while the visual preset changes underneath.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define NOMINMAX
@@ -170,6 +177,27 @@ public:
     float GetFovDeg()     const { return m_cfg.fovDeg; }
     float GetCamDist()    const { return m_cfg.camDist; }
 
+    /// View and projection for the current camera and the given viewport
+    /// aspect, rebuilt only when one of those inputs actually changed.
+    ///
+    /// Both are a pure function of the camera, the FOV and the aspect, none of
+    /// which move between the tiles of a frame, while GetDrawCall runs once per
+    /// tile per pass and the hit test runs it again for every slot.  Uncached,
+    /// that is one look-at and one perspective built twenty to forty times a
+    /// frame for the same answer.
+    ///
+    /// Keyed on the inputs rather than invalidated by hand, so no future write
+    /// to the camera can forget to clear it.  The multiply order is unchanged,
+    /// only the two operands are reused, so the resulting MVP is bit-identical
+    /// to the uncached one rather than merely equivalent.
+    ///
+    /// Public because the controller builds the same chain by hand for tiles
+    /// FlipScene does not own: the entry morph's overflow tiles and the close
+    /// transition's dying tiles.
+    void CameraMatrices(float viewportAspect,
+                        DirectX::XMMATRIX& outView,
+                        DirectX::XMMATRIX& outProj) const;
+
 private:
     /// Cover Flow variant of BuildSlots — delegates the geometry to
     /// scene/CoverFlowLayout and stores the results in the same cached
@@ -200,4 +228,18 @@ private:
     // Rotated in RotateAspects() and applied to m_slots in BuildSlots().
     struct ScaleEntry { float sx, sy; };
     std::vector<ScaleEntry> m_windowScales;
+
+    // Memoised camera matrices — see CameraMatrices().  Stored unaligned and
+    // reloaded on use: a store/load round-trip of sixteen floats is exact,
+    // and it keeps FlipScene free of the 16-byte alignment an XMMATRIX member
+    // would impose on everything that owns one.
+    struct CameraCache {
+        float eyeX = 0.0f, eyeY = 0.0f, eyeZ = 0.0f;
+        float targetX = 0.0f, targetY = 0.0f, targetZ = 0.0f;
+        float fovDeg = 0.0f, aspect = 0.0f;
+        bool  valid = false;
+        DirectX::XMFLOAT4X4 view{};
+        DirectX::XMFLOAT4X4 proj{};
+    };
+    mutable CameraCache m_camCache;
 };

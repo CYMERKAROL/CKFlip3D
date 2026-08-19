@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Painting the search field with GDI into a premultiplied BGRA texture, on the
+// shared theme plate.  The texture is rebuilt only when the text, the theme or
+// the UI scale actually change, so an idle frame costs one textured quad.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "SearchBox.h"
 #include "ThemePlate.h"
 #include <algorithm>
@@ -25,7 +32,6 @@ constexpr float kBaseScale = 1.30f;
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 void SearchBox::Reset()
 {
     m_srv     = nullptr;
@@ -38,7 +44,6 @@ void SearchBox::Reset()
     m_texH = 0;
 }
 
-// ---------------------------------------------------------------------------
 void SearchBox::Update(ID3D11Device* device, const std::wstring& query,
                        bool haveMatches, int appTheme, bool showBox,
                        int scalePercent, float cascadeH)
@@ -148,7 +153,6 @@ void SearchBox::PaintText(HDC memDC, std::vector<float>& canvas,
     DeleteObject(dib);
 }
 
-// ---------------------------------------------------------------------------
 bool SearchBox::Build(ID3D11Device* device, const std::wstring& query,
                       bool haveMatches, int theme, bool showBox, float uiScale)
 {

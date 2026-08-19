@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The Recovery page: the buttons that put the desktop right after a session
+// that ended badly.  Each one names what it will do before it does it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;

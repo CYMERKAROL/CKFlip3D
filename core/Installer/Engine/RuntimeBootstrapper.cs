@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Making sure the .NET Desktop Runtime the Settings app needs is on the
+// machine, and fetching it from Microsoft when it is not.  A failure here is a
+// warning rather than a fatal error: the C++ core runs without .NET.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;

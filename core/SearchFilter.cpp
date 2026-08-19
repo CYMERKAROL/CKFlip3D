@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Editing the query and testing a window against it.  Tokens are rebuilt on
+// every edit rather than matched on the fly, since a query is at most a few
+// dozen characters and the test runs once per window per keystroke.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "SearchFilter.h"
 #include <algorithm>
 #include <cwctype>
@@ -12,14 +19,12 @@ std::wstring ToLower(std::wstring s)
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 void SearchFilter::Reset()
 {
     m_query.clear();
     m_tokens.clear();
 }
 
-// ---------------------------------------------------------------------------
 bool SearchFilter::Append(wchar_t c)
 {
     // Control characters never reach the query — the hook only forwards what
@@ -39,7 +44,6 @@ bool SearchFilter::Append(wchar_t c)
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool SearchFilter::Backspace()
 {
     if (m_query.empty())
@@ -49,7 +53,6 @@ bool SearchFilter::Backspace()
     return true;
 }
 
-// ---------------------------------------------------------------------------
 bool SearchFilter::Clear()
 {
     if (m_query.empty())
@@ -59,7 +62,6 @@ bool SearchFilter::Clear()
     return true;
 }
 
-// ---------------------------------------------------------------------------
 void SearchFilter::RebuildTokens()
 {
     m_tokens.clear();
@@ -74,7 +76,6 @@ void SearchFilter::RebuildTokens()
     }
 }
 
-// ---------------------------------------------------------------------------
 bool SearchFilter::Matches(const std::wstring& title,
                            const std::wstring& exeLower) const
 {

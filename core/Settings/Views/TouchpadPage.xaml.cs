@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// Touchpad gestures: which strokes are bound, how sensitive they are, and a
+// live pad preview that runs the same recogniser the core does, so a slider
+// can be judged by making the gesture instead of by guessing at the number.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -7,6 +15,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using CKFlip3D.Settings.Models;
 using CKFlip3D.Settings.Services;
 
 namespace CKFlip3D.Settings.Views;
@@ -14,10 +23,20 @@ namespace CKFlip3D.Settings.Views;
 /// <summary>
 /// Touchpad gesture customisation, reached from Controls → Hotkeys.
 ///
-/// The activity card is fed by <see cref="TouchpadService"/>, which reads the
-/// pad's raw HID reports directly — so the preview works with or without a
-/// running CKFlip3D core, and its recogniser uses the values currently in the
-/// UI (not the saved ones), letting the sensitivity be dialled in before Apply.
+/// Each of the three triggers is a LIST, the way the cascade's keys are: one
+/// hand does not always want to draw the same stroke, and a pad that is
+/// comfortable with four fingers on a lap is not the pad that is comfortable
+/// with two on a desk. Nothing in the recogniser ever needed the answer to be
+/// singular — it was a combo box because there had only ever been one gesture
+/// to name. Gestures come from a picker rather than from performing them: the
+/// vocabulary is four diagonals, two swipes and three commits, and choosing
+/// from what exists is honest about that. The activity panel below is where
+/// they are then actually tried.
+///
+/// That panel is fed by <see cref="TouchpadService"/>, which reads the pad's raw
+/// HID reports directly — so the preview works with or without a running
+/// CKFlip3D core, and its recogniser uses the values currently in the UI (not
+/// the saved ones), letting the sensitivity be dialled in before Apply.
 /// </summary>
 public partial class TouchpadPage : UserControl
 {
@@ -36,9 +55,74 @@ public partial class TouchpadPage : UserControl
     private Window? _host;
     private bool _live;
 
+    /// <summary>
+    /// One gesture list on this page: its rows, the vocabulary it may hold,
+    /// where it lives in the model, and the chrome that describes it.
+    /// </summary>
+    private sealed class GestureList
+    {
+        public required string PickTitle;
+        public required string PickPrompt;
+        public required IReadOnlyList<TouchpadGestures.Choice> Vocabulary;
+        public required ObservableCollection<GestureItem> Items;
+        public required Func<List<Binding>> Read;
+        public required Action<IEnumerable<Binding>> Write;
+        public required ItemsControl View;
+        public required UIElement Empty;
+        public required TextBlock Status;
+        public required Button Add;
+    }
+
+    private readonly List<GestureList> _lists;
+
     public TouchpadPage()
     {
         InitializeComponent();
+
+        _lists =
+        [
+            new GestureList
+            {
+                PickTitle = "Add an opening gesture",
+                PickPrompt = "Select a diagonal swipe with two or four fingers to open "
+                           + "the cascade without conflicting with standard Windows "
+                           + "gestures.",
+                Vocabulary = TouchpadGestures.Activate,
+                Items = new ObservableCollection<GestureItem>(),
+                Read = () => App.Settings.TouchpadActivateGestureList,
+                Write = g => App.Settings.SetTouchpadActivateGestureList(g),
+                View = ActivateList, Empty = ActivateEmpty,
+                Status = ActivateStatus, Add = ActivateAdd,
+            },
+            new GestureList
+            {
+                PickTitle = "Add a cycle gesture",
+                PickPrompt = "Select a horizontal swipe gesture to step through open "
+                           + "windows while the cascade is active.",
+                Vocabulary = TouchpadGestures.Cycle,
+                Items = new ObservableCollection<GestureItem>(),
+                Read = () => App.Settings.TouchpadCycleGestureList,
+                Write = g => App.Settings.SetTouchpadCycleGestureList(g),
+                View = CycleList, Empty = CycleEmpty,
+                Status = CycleStatus, Add = CycleAdd,
+            },
+            new GestureList
+            {
+                PickTitle = "Add a commit gesture",
+                PickPrompt = "Select a swipe gesture to confirm selection and switch "
+                           + "to the highlighted window.",
+                Vocabulary = TouchpadGestures.Commit,
+                Items = new ObservableCollection<GestureItem>(),
+                Read = () => App.Settings.TouchpadCommitGestureList,
+                Write = g => App.Settings.SetTouchpadCommitGestureList(g),
+                View = CommitList, Empty = CommitEmpty,
+                Status = CommitStatus, Add = CommitAdd,
+            },
+        ];
+
+        foreach (var list in _lists)
+            list.View.ItemsSource = list.Items;
+
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         _badgeTimer.Tick += (_, _) => { _badgeTimer.Stop(); FadeBadge(0); };
@@ -92,10 +176,16 @@ public partial class TouchpadPage : UserControl
 
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(Models.SettingsModel.TouchpadActivateGesture)
-                           or nameof(Models.SettingsModel.TouchpadCycleFingers)
-                           or nameof(Models.SettingsModel.TouchpadReverse)
-                           or nameof(Models.SettingsModel.TouchpadCommitGesture)
+        // Our own edits already match what is on screen; rebuilding on them
+        // would be a rebuild per click (and would drop the row the user is
+        // still pointing at).  Everything else — Revert, Reset, the Controls
+        // page's Restore defaults — has to land here.
+        if (_syncing) return;
+        if (e.PropertyName is nameof(SettingsModel.TouchpadActivateGestures)
+                           or nameof(SettingsModel.TouchpadCycleGestures)
+                           or nameof(SettingsModel.TouchpadCommitGestures)
+                           or nameof(SettingsModel.TouchpadReverse)
+                           or nameof(SettingsModel.TouchpadContinuous)
                            or null)
             SyncFromModel();
     }
@@ -258,45 +348,76 @@ public partial class TouchpadPage : UserControl
 
     private void OnWindowDeactivated(object? sender, EventArgs e) => SetLive(false);
 
-    // ---- Model ↔ combo boxes -----------------------------------------------
+    // ---- Model ↔ gesture lists ----------------------------------------------
 
     private void SyncFromModel()
     {
         _syncing = true;
-        ActivateCombo.SelectedIndex = Math.Clamp(App.Settings.TouchpadActivateGesture, 0, 4);
-        FingersCombo.SelectedIndex = App.Settings.TouchpadCycleFingers >= 4 ? 1 : 0;
         DirectionCombo.SelectedIndex = App.Settings.TouchpadReverse ? 1 : 0;
-        CommitCombo.SelectedIndex = Math.Clamp(App.Settings.TouchpadCommitGesture, 0, 3);
+
+        foreach (var list in _lists)
+        {
+            foreach (var old in list.Items)
+                old.PropertyChanged -= OnItemChanged;
+            list.Items.Clear();
+            foreach (var bound in list.Read())
+            {
+                var item = new GestureItem(bound,
+                    TouchpadGestures.Label(list.Vocabulary, bound.Token));
+                item.PropertyChanged += OnItemChanged;
+                list.Items.Add(item);
+            }
+        }
+        _syncing = false;
+        UpdateChrome();
+    }
+
+    private void OnItemChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_syncing) return;
+        Commit();
+    }
+
+    private void Commit()
+    {
+        _syncing = true;   // our own write must not bounce back as a reload
+        foreach (var list in _lists)
+            list.Write(list.Items.Select(i => i.ToBinding()));
+        _syncing = false;
+        UpdateChrome();
+    }
+
+    private void UpdateChrome()
+    {
+        foreach (var list in _lists)
+        {
+            list.Empty.Visibility = list.Items.Count == 0
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            // The vocabulary is the ceiling: every gesture it holds can be
+            // bound, and there is nothing left to add once they all are.
+            bool full = Unbound(list).Count == 0;
+            list.Add.IsEnabled = !full;
+            list.Status.Text = full ? "Every gesture is already on the list." : string.Empty;
+        }
 
         // Nothing to reverse while there is no opening stroke.
-        bool armed = App.Settings.TouchpadActivateGesture != 0;
+        bool armed = _lists[0].Items.Any(i => i.Enabled);
         CancelRow.IsEnabled = armed;
         CancelRow.Opacity = armed ? 1.0 : 0.45;
-        if (armed)
-            CancelHint.Text = $"Drawing the {StrokeName(App.Settings.TouchpadActivateGesture)} "
-                + "diagonal backwards closes the cascade without switching windows — "
-                + "the touchpad's Esc.";
-        _syncing = false;
+
+        // The misinput notice belongs to the switch being ON, not to the card:
+        // a warning about behaviour nobody has asked for is just noise.
+        ContinuousNotice.Visibility = App.Settings.TouchpadContinuous
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private static string StrokeName(int gesture) => gesture switch
-    {
-        1 or 3 => "↘",
-        2 or 4 => "↙",
-        _ => "",
-    };
-
-    private void ActivateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncing || ActivateCombo.SelectedIndex < 0) return;
-        App.Settings.TouchpadActivateGesture = ActivateCombo.SelectedIndex;
-    }
-
-    private void FingersCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncing || FingersCombo.SelectedIndex < 0) return;
-        App.Settings.TouchpadCycleFingers = FingersCombo.SelectedIndex == 1 ? 4 : 2;
-    }
+    /// <summary>Gestures this list could still take, in vocabulary order.</summary>
+    private static List<TouchpadGestures.Choice> Unbound(GestureList list) =>
+        list.Vocabulary
+            .Where(c => !list.Items.Any(i => string.Equals(i.Token, c.Token,
+                                                           StringComparison.OrdinalIgnoreCase)))
+            .ToList();
 
     private void DirectionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -304,21 +425,92 @@ public partial class TouchpadPage : UserControl
         App.Settings.TouchpadReverse = DirectionCombo.SelectedIndex == 1;
     }
 
-    private void CommitCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    // ---- Adding and removing gestures ---------------------------------------
+
+    private void AddActivate_Click(object sender, RoutedEventArgs e) => PickFor(_lists[0]);
+    private void AddCycle_Click(object sender, RoutedEventArgs e) => PickFor(_lists[1]);
+    private void AddCommit_Click(object sender, RoutedEventArgs e) => PickFor(_lists[2]);
+
+    /// <summary>
+    /// The picker: the gestures this list does not already hold, one button
+    /// each. No capture dialog — a gesture cannot be "pressed" unambiguously
+    /// enough to record from a standing start, and the activity panel below is
+    /// the place to try one out.
+    /// </summary>
+    private void PickFor(GestureList list)
     {
-        if (_syncing || CommitCombo.SelectedIndex < 0) return;
-        App.Settings.TouchpadCommitGesture = CommitCombo.SelectedIndex;
+        if (Window.GetWindow(this) is not MainWindow main) return;
+
+        var choices = Unbound(list);
+        if (choices.Count == 0) return;
+
+        var body = new StackPanel { MaxWidth = 420 };
+        body.Children.Add(new TextBlock
+        {
+            Text = list.PickPrompt,
+            TextWrapping = TextWrapping.Wrap,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 12,
+            Margin = new Thickness(0, 0, 0, 12),
+            Foreground = (Brush)FindResource("TextPrimaryBrush"),
+        });
+
+        foreach (var choice in choices)
+        {
+            var button = new Button
+            {
+                Content = choice.Label,
+                Style = (Style)FindResource("AeroButton"),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, 6),
+                Padding = new Thickness(12, 7, 12, 7),
+            };
+            var picked = choice;
+            button.Click += (_, _) =>
+            {
+                main.CloseModal();
+                Add(list, picked);
+            };
+            body.Children.Add(button);
+        }
+
+        main.ShowModal(list.PickTitle, body, ("Cancel", false, null));
+    }
+
+    private void Add(GestureList list, TouchpadGestures.Choice choice)
+    {
+        var item = new GestureItem(new Binding(choice.Token, true), choice.Label);
+        item.PropertyChanged += OnItemChanged;
+        list.Items.Add(item);
+        Commit();
+    }
+
+    private void RemoveGesture_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: GestureItem item }) return;
+
+        foreach (var list in _lists)
+        {
+            if (!list.Items.Contains(item)) continue;
+            item.PropertyChanged -= OnItemChanged;
+            list.Items.Remove(item);
+            Commit();
+            return;
+        }
     }
 
     private void RestoreDefaults_Click(object sender, RoutedEventArgs e)
     {
-        App.Settings.TouchpadActivateGesture = 1;   // two fingers, "\"
+        App.Settings.TouchpadActivateGestures = SettingsModel.DefaultTouchpadActivateGestures;
         App.Settings.TouchpadCancelSwipe = true;
-        App.Settings.TouchpadCycleFingers = 2;
+        App.Settings.TouchpadCycleGestures = SettingsModel.DefaultTouchpadCycleGestures;
+        App.Settings.TouchpadCommitGestures = SettingsModel.DefaultTouchpadCommitGestures;
         App.Settings.TouchpadReverse = false;
         App.Settings.TouchpadSensitivity = 50;
         App.Settings.TouchpadSmoothing = 35;
-        App.Settings.TouchpadCommitGesture = 1;     // one-finger tap
+        App.Settings.TouchpadContinuous = false;
+        SyncFromModel();
     }
 
     // ---- Live activity ------------------------------------------------------
@@ -384,4 +576,38 @@ public partial class TouchpadPage : UserControl
         GestureBadge.BeginAnimation(OpacityProperty,
             new DoubleAnimation(to, TimeSpan.FromMilliseconds(to > 0 ? 120 : 320))
             { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } });
+}
+
+/// <summary>
+/// One row of a gesture list. Carries the LABEL as well as the token: the file
+/// stores "TwoDownRight" and the row has to read "Two fingers ↘", and a token
+/// this build does not know still shows as itself rather than as a blank row.
+/// </summary>
+public sealed class GestureItem : INotifyPropertyChanged
+{
+    public GestureItem(Binding gesture, string label)
+    {
+        Token = gesture.Token;
+        Label = label;
+        _enabled = gesture.Enabled;
+    }
+
+    public string Token { get; }
+    public string Label { get; }
+
+    private bool _enabled;
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled == value) return;
+            _enabled = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+        }
+    }
+
+    public Binding ToBinding() => new(Token, Enabled);
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

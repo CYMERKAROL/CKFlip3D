@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// The flat end of the entry/exit morph: where every tile sits when it is still
+// pretending to be the real window on the desktop.  Derived from window rects
+// inverse-projected through the cascade camera, so the two endpoints line up
+// on screen and the morph between them has nothing to hide.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -7,18 +15,15 @@
 #include "../scene/FlipScene.hpp"
 #include "../capture/windowscanner.h"
 
-/// Builds the flat (2D-rect) endpoint of the entry/exit morph.
-/// Flat geometry is derived ONLY from read-only window rects plus the scene's
-/// camera projection.  Cascade slot data is never used as the source of flat
-/// geometry — the only thing shared with the cascade is the camera (so screen
-/// positions are continuous across the morph).
+/// Cascade slot data is never a source of flat geometry.  The camera is the
+/// only thing the two endpoints share, which is what keeps screen positions
+/// continuous across the morph.
 namespace FlatStackBuilder {
 
-/// Z spacing between adjacent flat slots in world space (spec §3.1, kFlatZStep).
+/// Z spacing between adjacent flat slots in world space.
 constexpr float kFlatZStep = 0.08f;
 
-/// Resolve a 2D screen rect for one window with ordered fallbacks
-/// (spec §3.1 step 1):
+/// Resolve a 2D screen rect for one window with ordered fallbacks:
 ///   1. WindowInfo.rect
 ///   2. GetWindowPlacement -> rcNormalPosition (for minimised windows)
 ///   3. GetWindowRect
@@ -49,13 +54,12 @@ void BuildStackRects(const std::vector<WindowInfo>& windows,
 /// left-hand slots have rising indices at falling depth.  Feeding the cascade
 /// endpoint's depth ranking through `depthRanks` keeps the flat and cascade
 /// endpoints in the SAME relative order, so no two tiles swap painter's order
-/// mid-morph.  Passing the identity permutation (or nullptr) reproduces the
-/// previous behaviour exactly.
+/// mid-morph.  Passing the identity permutation (or nullptr) falls back to
+/// plain index order.
 ///
 /// The rank participates in the inverse projection, so x/y/scale are solved at
 /// the final z — the on-screen rect is exact regardless of which rank a slot
-/// receives.
-/// alpha = 1.0 for every slot (spec §3.1 StabilizeFlatStack).
+/// receives.  alpha = 1.0 for every slot.
 ///
 /// `flatZOverride` ≤ 0 (the default) anchors the flat plane at the cascade's
 /// natural focal depth (camEyeZ + camDist).  A positive value pins the plane

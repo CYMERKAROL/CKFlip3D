@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The page shown while the engine works: a progress bar, the current step, and
+// the cancel button that unwinds everything done so far.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;

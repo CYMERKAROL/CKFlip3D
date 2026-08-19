@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The authored sample table and the interpolator that reads it.  The values
+// were matched frame by frame against a 60fps capture of the real Win7 morph.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "EntryExitTimeline.h"
 
 #include <algorithm>
@@ -5,11 +11,11 @@
 
 namespace EntryExitTimeline {
 
-// Round 4 — synchronised scale+tilt, front-loaded to match Win7 visual
-// cadence.  Position (planar) lags behind so XY drift is muted and the
-// cascade "spread" emerges via Z + tilt-driven perspective rather than
-// translation.  All channels strictly monotonic; smooth tail prevents
-// last-frame snapping.
+// Scale and tilt run together and front-loaded, matching the Win7 cadence.
+// Position (planar) lags behind, so XY drift stays muted and the cascade
+// "spread" emerges out of Z plus tilt-driven perspective rather than out of
+// translation.  All channels are strictly monotonic, and the tail is smooth
+// enough that the last frame does not snap.
 //
 // Sampled at frame N (0-indexed, 60fps capture, 17 frames spanning the
 // 266.67ms morph): rawT = N / 16, falling between samples ⌊N×15/16⌋ and
@@ -17,19 +23,16 @@ namespace EntryExitTimeline {
 // → samples 14-15; frame 17 → rawT=1.0 → final cascade.
 const Sample kTimeline[kSampleCount] = {
     // planar  depth   scale   tilt    rot     dim
-    // Bug 4 (v8.2) rebalance — row 1's tilt/planar ratio dropped from 33×
-    // to 0.23× so the very first entry frame no longer snaps tilt while
-    // position has barely moved.  All channels strictly non-decreasing
-    // row-over-row; row 15 lands exactly at {1,1,1,1,1,1}.
-    // Rows 1-7 reauthored (v8.5 Patch B) — much gentler front third so the
-    // entry no longer pops into a strong 3D pose within the first ~quarter.
-    // Tilt is near-zero in rows 1-2 (scale-coupled feel — see Win7 6nwin7).
-    // Rows 8-15 unchanged (the tail was already fine).
-    // rot column authored for the Cover Flow preset (per-tile rotY): the
-    // most delayed channel — flat through the first fifth, then trailing
-    // tilt so side tiles turn inward late in the entry and unwind first on
-    // exit.  A pure no-op for the cascade preset, whose slot rotY is 0
-    // everywhere (the lerp endpoints are equal regardless of the blend).
+    // Rows are non-decreasing column by column and row 15 lands exactly on
+    // {1,1,1,1,1,1}.  The front third is deliberately gentle: entry must not
+    // pop into a strong 3D pose within the first quarter, so tilt stays near
+    // zero through rows 1-2 and only picks up once scale has moved.
+    //
+    // The rot column exists for the Cover Flow preset (per-tile rotY).  It is
+    // the most delayed channel: flat through the first fifth, then trailing
+    // tilt, so side tiles turn inward late on entry and unwind first on exit.
+    // For the cascade preset it is a no-op, since every slot rotY is 0 there
+    // and both lerp endpoints are equal no matter what the blend says.
     { 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f },  //  0
     { 0.025f, 0.020f, 0.025f, 0.001f, 0.000f, 0.090f },  //  1
     { 0.075f, 0.060f, 0.080f, 0.008f, 0.000f, 0.190f },  //  2
@@ -50,7 +53,6 @@ const Sample kTimeline[kSampleCount] = {
 
 Sample SampleAt(float timelineT)
 {
-    // Clamp to [0,1].  Spec §5.2: index = floor(t * 15), frac = t*15 - index.
     float t = std::min(std::max(timelineT, 0.0f), 1.0f);
     float pos = t * static_cast<float>(kSampleCount - 1);
     int   i0  = static_cast<int>(std::floor(pos));

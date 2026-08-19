@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The setup window: its glass chrome, the page-to-page navigation, and the
+// orchestration that drives InstallEngine or UninstallEngine and reports
+// progress back to the user.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;

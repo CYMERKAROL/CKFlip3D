@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Taking the install back out.  Removal is driven by the manifest written at
+// install time, never by wiping a folder, so a directory the user already had
+// keeps whatever else they put in it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using Microsoft.Win32;
@@ -83,6 +90,12 @@ public sealed class UninstallEngine
             // ---- 4. Shortcuts (66–76%) -----------------------------------
             progress.Report(new InstallProgress(66, "Removing shortcuts…", "Start Menu / Desktop"));
             TryDeleteFile(InstallContext.CommonDesktopShortcut);
+            // The user's own launch shortcut, if they ever asked for one. Setup
+            // does not create it, but leaving it behind would leave an icon
+            // pointing at an exe that is no longer there. Best-effort: an
+            // uninstall started with somebody else's admin credentials resolves
+            // a different desktop, and that is not worth failing over.
+            TryDeleteFile(InstallContext.UserLaunchShortcut);
             TryDeleteDirectory(InstallContext.StartMenuDir, recursive: true);
 
             // ---- 5. Registry (76–84%) ------------------------------------
@@ -127,8 +140,6 @@ public sealed class UninstallEngine
             progress.Report(new InstallProgress(100, "Uninstall complete", ""));
         }, ct);
     }
-
-    // =====================================================================
 
     private static (List<string> Files, bool DirCreated) ReadManifest(string installDir)
     {

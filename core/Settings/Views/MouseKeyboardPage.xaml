@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Mouse and keyboard layout: the activation combination, the in-cascade
+     mouse buttons, and the way through to the cascade key lists.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.MouseKeyboardPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -16,7 +22,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Activation hotkey"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="The combination that opens the 3D cascade — keyboard keys, mouse buttons or both. With a held modifier (Ctrl/Shift/Alt/Win), releasing it commits the selection; single-key bindings toggle instead. Click to record a new combination."/>
+                                       Text="Shortcut or mouse button used to open the cascade."/>
                         </StackPanel>
                         <Button Grid.Column="1" x:Name="HotkeyButton" Style="{StaticResource AeroButton}"
                                 VerticalAlignment="Center" MinWidth="130"
@@ -26,6 +32,32 @@
                         </Button>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <!-- Directly under the hotkey: every key that acts on what
+                         the hotkey opened — stepping, committing, cancelling,
+                         closing — and the hotkey's own key is one of the
+                         entries.  Lists rather than picker buttons, and one
+                         sub-page rather than four rows, because these bindings
+                         are chosen against each other: the page that knows a
+                         key is taken is the page that can say by what. -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Keys in the cascade"/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Configure navigation, commit, cancel, and close keys. Click customize to edit bindings."/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource AeroButton}"
+                                VerticalAlignment="Center" MinWidth="130"
+                                Content="Customize…" Click="ManageCascadeKeys_Click"/>
+                    </Grid>
+                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <!-- LAST in the card, under every binding: this one is not
+                         a binding at all but a switch over how the ones above
+                         behave, and mixing it in among them read as a third
+                         key picker. -->
                     <Grid x:Name="ToggleModeRow">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -34,7 +66,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Toggle activation"/>
                             <TextBlock x:Name="ToggleModeHint" Style="{StaticResource SettingHintText}"
-                                       Text="Keeps the cascade open after the hotkey is released — commit, cancel, and keep cycling with the main key. Off restores the classic hold-to-keep-open behaviour."/>
+                                       Text="Keeps the cascade open after releasing the key instead of holding it."/>
                         </StackPanel>
                         <!-- Managed from code-behind (no direct binding): a
                              single-key binding is inherently toggle, so the
@@ -42,64 +74,6 @@
                              the persisted value. -->
                         <CheckBox Grid.Column="1" x:Name="ToggleModeCheck" Style="{StaticResource AeroToggle}"
                                   Checked="ToggleMode_Changed" Unchecked="ToggleMode_Changed"/>
-                    </Grid>
-                    <Rectangle Style="{StaticResource RowSeparator}"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Commit key"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Switches to the window in front and closes the cascade. Needed for bindings you do not hold down, and always available for the ones you do."/>
-                        </StackPanel>
-                        <Button Grid.Column="1" Style="{StaticResource AeroButton}"
-                                VerticalAlignment="Center" MinWidth="130"
-                                Click="ChangeCommit_Click">
-                            <TextBlock Style="{StaticResource MonoValueText}"
-                                       Text="{Binding CommitHotkey}"/>
-                        </Button>
-                    </Grid>
-                    <Rectangle Style="{StaticResource RowSeparator}"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Cancel key"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Closes the cascade without switching windows. With Search on, the first press clears what you typed and the second one closes."/>
-                        </StackPanel>
-                        <Button Grid.Column="1" Style="{StaticResource AeroButton}"
-                                VerticalAlignment="Center" MinWidth="130"
-                                Click="ChangeCancel_Click">
-                            <TextBlock Style="{StaticResource MonoValueText}"
-                                       Text="{Binding CancelHotkey}"/>
-                        </Button>
-                    </Grid>
-                    <Rectangle Style="{StaticResource RowSeparator}"/>
-                    <Grid x:Name="CloseKeyRow">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Close-window key"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Closes the window you are pointing at, or the selected one when the pointer is elsewhere — so it works with the mouse features switched off entirely. The application is asked to close, exactly as if you had clicked its own × — unsaved work still prompts."/>
-                        </StackPanel>
-                        <Button Grid.Column="1" Style="{StaticResource AeroButton}"
-                                VerticalAlignment="Center" MinWidth="130" Margin="0,0,14,0"
-                                IsEnabled="{Binding CloseKeyEnabled}"
-                                Click="ChangeCloseKey_Click">
-                            <TextBlock Style="{StaticResource MonoValueText}"
-                                       Text="{Binding CloseHotkey}"/>
-                        </Button>
-                        <CheckBox Grid.Column="2" Style="{StaticResource AeroToggle}"
-                                  IsChecked="{Binding CloseKeyEnabled}"/>
                     </Grid>
                 </StackPanel>
             </HeaderedContentControl>
@@ -114,7 +88,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Let the mouse act on the stack"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Master switch for everything below — hovering, picking, closing and dragging. Off returns the cascade to the keyboard, the wheel and the touchpad alone: no window reacts to the pointer at all."/>
+                                       Text="Enables all mouse interactions (picking, closing and dragging) inside the cascade."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding PointerInCascade}"/>
@@ -141,7 +115,7 @@
                             <StackPanel Margin="0,0,20,0">
                                 <TextBlock Style="{StaticResource SettingLabelText}" Text="Pick a window"/>
                                 <TextBlock Style="{StaticResource SettingHintText}"
-                                           Text="Point at a window in the stack and it lifts slightly; click it to switch. A window further back spins to the front first, then the cascade closes on it."/>
+                                           Text="Point at a window to highlight, click to select and switch to it."/>
                             </StackPanel>
                             <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                                     VerticalAlignment="Center" MinWidth="130" Margin="0,0,14,0"
@@ -166,7 +140,7 @@
                             <StackPanel Margin="0,0,20,0">
                                 <TextBlock Style="{StaticResource SettingLabelText}" Text="Close a window"/>
                                 <TextBlock Style="{StaticResource SettingHintText}"
-                                           Text="Closes the window you are pointing at. The application is asked to close, exactly as if you had clicked its own × — unsaved work still prompts."/>
+                                           Text="Click a window with the assigned button to close it."/>
                             </StackPanel>
                             <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                                     VerticalAlignment="Center" MinWidth="130" Margin="0,0,14,0"
@@ -219,7 +193,7 @@
                     <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
                                TextWrapping="Wrap" Margin="0,0,16,0"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="Restore Win + Tab, Enter to commit, Esc to cancel and Delete to close. The mouse goes back to off, with left to pick, middle to close and right to drag waiting behind it."/>
+                               Text="Restore to default bindings."/>
                     <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                             Content="Restore defaults" Click="RestoreDefaults_Click"/>
                 </Grid>

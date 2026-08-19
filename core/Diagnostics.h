@@ -1,8 +1,5 @@
-#pragma once
-
 // ---------------------------------------------------------------------------
-// Diagnostics — the record of everything that went wrong, kept where the user
-// can read it.
+// The record of everything that went wrong, kept where the user can read it.
 //
 // CKFlip3D spends its life behind an overlay, inside a keyboard hook, on a
 // device it does not own.  When something fails there, the failure has
@@ -22,7 +19,10 @@
 // direction: a failure to write a diagnostic never becomes a failure of its
 // own.  Nothing here throws, nothing here blocks, and every call is safe from
 // any thread, including the low-level hook thread and the crash filter.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
 // ---------------------------------------------------------------------------
+#pragma once
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>

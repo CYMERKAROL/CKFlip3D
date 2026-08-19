@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Options page layout: the install folder with its browse button, and the
+     shortcut and startup checkboxes.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Installer.Views.OptionsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">

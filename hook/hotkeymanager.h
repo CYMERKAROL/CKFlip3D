@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The vocabulary of window messages the input hooks speak, and the dispatcher
+// that turns them back into callbacks.  Keyboard and touchpad both post the
+// same set, so nothing downstream can tell which device the user reached for.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN

@@ -7,37 +7,35 @@
 // ---------------------------------------------------------------------------
 // Windows Precision Touchpad gesture source.
 //
-// Sits next to the low-level keyboard/mouse hook (hook/keyboardhook) as a
-// SECOND, fully optional input source that posts the same WM_FLIP_* messages
-// to the app window — so every gesture ends up in the unchanged
-// FlipController path (Activate / Cycle / CycleBack / Dismiss / Escape /
-// Scrub) and nothing about the keyboard trigger changes.
+// A second, fully optional input source alongside the keyboard hook.  It posts
+// the same WM_FLIP_* messages, so every gesture reaches the unchanged
+// FlipController path and nothing about the keyboard trigger changes.
 //
 // Contacts come from WM_INPUT (HID usage page 0x0D "Digitizer", usage 0x05
 // "Touch Pad") on a dedicated worker thread with a message-only window.  The
 // report layout is read from the device's own descriptor through HidP_*, so
-// the code is vendor-agnostic: pads that pack every contact into one report
-// and pads that split a frame across several both work, as do descriptors
-// that declare contacts as usage ranges.
+// this is vendor-agnostic: pads that pack every contact into one report and
+// pads that split a frame across several both work, as do descriptors that
+// declare contacts as usage ranges.
 //
 // WHY DIAGONALS
-// There is no low-level hook for touchpad gestures: SetWindowsHookEx offers
+// There is no low-level hook for touchpad gestures.  SetWindowsHookEx offers
 // WH_KEYBOARD_LL and WH_MOUSE_LL and nothing for digitizers, raw input is a
 // passive copy with no way to consume an event, and the multi-finger
-// recogniser lives inside the OS input stack — above the driver, below
+// recogniser lives inside the OS input stack, above the driver and below
 // anything user mode can reach.  Fighting the shell for a gesture it already
-// owns therefore cannot be won cleanly.  So we do not: the cascade opens on
-// a DIAGONAL stroke, which Windows' slide recogniser (four cardinal
-// directions) does not claim.  Nothing of the user's Windows configuration
-// is touched, and Task View / show-desktop keep working exactly as before.
+// owns cannot be won cleanly, so we do not: the cascade opens on a DIAGONAL
+// stroke, which Windows' slide recogniser does not claim.  Nothing of the
+// user's configuration is touched and Task View keeps working.
 //
-// Session state is SHARED with the keyboard hook
-// (KeyboardHook::IsSessionActive), so a gesture-opened cascade still takes
-// Enter/Escape/Tab and a Win+Tab-opened one still takes gestures.
+// Session state is SHARED with the keyboard hook, so a gesture-opened cascade
+// still takes Enter/Escape/Tab and a Win+Tab-opened one still takes gestures.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
 // ---------------------------------------------------------------------------
 namespace TouchpadHook {
 
-/// Gesture that opens the cascade (config `touchpadActivateGesture`).
+/// Gesture that opens the cascade (config `touchpadActivateGestures`).
 /// Diagonals only — see WHY DIAGONALS above.  "\" runs from the pad's
 /// top-left toward its bottom-right; "/" mirrors it from top-right to
 /// bottom-left.  Reversing the same stroke cancels.
@@ -56,7 +54,7 @@ enum ActivateGesture : int {
     kActivateFourFwd   = 4,   // four fingers, "/"
 };
 
-/// Gesture that commits the selection (config `touchpadCommitGesture`).
+/// Gesture that commits the selection (config `touchpadCommitGestures`).
 enum CommitGesture : int {
     kCommitOff     = 0,
     kCommitOneTap  = 1,
@@ -64,20 +62,52 @@ enum CommitGesture : int {
     kCommitTwoDown = 3,
 };
 
+/// Swipe that cycles the stack (config `touchpadCycleGestures`).
+enum CycleGesture : int {
+    kCycleTwo  = 2,   // two fingers left / right
+    kCycleFour = 4,   // four fingers left / right
+};
+
+/// Bit for one gesture inside the masks below.  Every list the config carries
+/// is a SET, not a choice: two hands (and two postures) do not always want the
+/// same stroke, and nothing in the recogniser ever needed the answer to be
+/// singular.
+constexpr unsigned GestureBit(int gesture) { return 1u << gesture; }
+
 /// Runtime options, pushed from the config on every load/reload.
 struct Options {
     bool enabled          = true;  // master switch (config touchpadNav)
-    int  cycleFingers     = 2;     // fingers for the left/right cycle swipe (2 or 4)
+    // Gesture SETS — see GestureBit.  Zero means the action has no gesture,
+    // which is what the old `0 = off` value of each single-gesture setting
+    // said.  Built from the config's token lists by the Parse*List functions
+    // below, so the parsing lives with the recogniser that consumes it.
+    unsigned activateMask = GestureBit(kActivateTwoBack);
+    unsigned cycleMask    = GestureBit(kCycleTwo);
+    unsigned commitMask   = GestureBit(kCommitOneTap);
     bool reverse          = false; // invert the cycle direction
     int  sensitivity      = 50;    // 1-100, swipe distance per step
     int  smoothing        = 35;    // 0-100, jitter filter strength
-    int  activateGesture  = kActivateTwoBack;
-    int  commitGesture    = kCommitOneTap;
     bool cancelSwipe      = true;  // reversed activation stroke cancels
+    // Several gestures out of one touch (config touchpadContinuous).  Off, a
+    // touch that fires a gesture is finished; on, the stroke is retired and a
+    // fresh one starts under the same fingers.
+    bool continuous       = false;
     // Window snap off = the cycle swipe scrubs the stack continuously
     // instead of stepping window by window (config windowSnap).
     bool windowSnap       = true;
 };
+
+/// Config token list → gesture mask.  Case-insensitive, ';'-separated, a '!'
+/// prefix parks an entry (kept in the file, ignored here), and an unknown
+/// token is skipped rather than fatal — `dropped`, when given, counts them so
+/// the caller can report once.
+///
+///   activate: TwoDownRight, TwoDownLeft, FourDownRight, FourDownLeft
+///   cycle:    TwoSwipe, FourSwipe
+///   commit:   OneTap, TwoTap, TwoDown
+unsigned ParseActivateList(const std::wstring& list, unsigned* dropped = nullptr);
+unsigned ParseCycleList(const std::wstring& list, unsigned* dropped = nullptr);
+unsigned ParseCommitList(const std::wstring& list, unsigned* dropped = nullptr);
 
 /// True when at least one precision touchpad is currently attached.
 bool IsTouchpadPresent();

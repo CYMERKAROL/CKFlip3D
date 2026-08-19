@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The snapshot of the machine shown on the Diagnostics page and copied into a
+// report: where the core lives, whether it is running, what the monitors and
+// the taskbar look like, and which input devices Windows is offering.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -187,27 +194,43 @@ public static class DiagnosticsService
     /// claims the four cardinal slide directions, so nothing of the user's
     /// touchpad configuration has to be touched for this to work.
     /// </summary>
-    private static string DescribeActivationGesture() =>
-        App.Settings.TouchpadActivateGesture switch
-        {
-            1 => "Two fingers ↘ (top-left → bottom-right) — Windows' own gestures untouched",
-            2 => "Two fingers ↙ (top-right → bottom-left) — Windows' own gestures untouched",
-            3 => "Four fingers ↘ (top-left → bottom-right) — Windows' own gestures untouched",
-            4 => "Four fingers ↙ (top-right → bottom-left) — Windows' own gestures untouched",
-            _ => "No touchpad opening gesture",
-        };
+    private static string DescribeActivationGesture()
+    {
+        var live = Models.TouchpadGestures.Live(Models.TouchpadGestures.Activate,
+                                                App.Settings.TouchpadActivateGestureList);
+        return live.Count == 0
+            ? "No touchpad opening gesture"
+            : string.Join(", ", live.Select(g => g.Label))
+              + " — Windows' own gestures untouched";
+    }
+
+    /// <summary>
+    /// The bindings that are actually live, not just the ones on the list — a
+    /// parked binding is exactly the thing a report like this exists to make
+    /// visible.
+    /// </summary>
+    private static string DescribeLive(IEnumerable<Models.Binding> list)
+    {
+        string live = string.Join("/", list.Where(k => k.Enabled).Select(k => k.Token));
+        return live.Length == 0 ? "none" : live;
+    }
 
     private static string DescribeTriggers()
     {
         var s = App.Settings;
         string touchpad = !s.TouchpadNav ? "touchpad off"
-            : $"touchpad: {s.TouchpadCycleFingers}-finger cycle, "
-              + $"activation {s.TouchpadActivateGesture}, commit {s.TouchpadCommitGesture}, "
+            : $"touchpad: cycle {DescribeLive(s.TouchpadCycleGestureList)}, "
+              + $"activation {DescribeLive(s.TouchpadActivateGestureList)}, "
+              + $"commit {DescribeLive(s.TouchpadCommitGestureList)}, "
+              + $"continuous {(s.TouchpadContinuous ? "on" : "off")}, "
               + $"sensitivity {s.TouchpadSensitivity}%, smoothing {s.TouchpadSmoothing}%";
         return $"hotkey {s.ActivationHotkey}"
              + $"{(s.HotkeyToggleMode ? " (toggle)" : "")}, "
              + $"wheel {(s.MouseWheelCycle ? "on" : "off")}, "
-             + $"arrows {(s.KeyboardNav ? "on" : "off")}, "
+             + $"navigation keys {DescribeLive(s.NavForwardKeyList.Concat(s.NavBackKeyList))}, "
+             + $"commit {DescribeLive(s.CommitKeyList)}, "
+             + $"cancel {DescribeLive(s.CancelKeyList)}, "
+             + $"close {DescribeLive(s.CloseKeyList)}, "
              + $"window snap {(s.WindowSnap ? "on" : "off")}, {touchpad}";
     }
 }

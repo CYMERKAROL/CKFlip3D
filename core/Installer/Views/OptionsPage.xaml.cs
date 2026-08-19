@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Where the user picks the install folder and the optional extras.  Everything
+// chosen here lands in the InstallContext the engine later works from.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;

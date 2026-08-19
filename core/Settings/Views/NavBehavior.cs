@@ -1,13 +1,15 @@
+// ---------------------------------------------------------------------------
+// An attached pressed-state flag for the navigation items.  ListBoxItem has no
+// pressed state of its own, and selection must not change on MouseDown, since
+// the page switch commits on MouseUp inside the same item (see MainWindow), so
+// the nav template animates its pressed layer off this instead.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 
 namespace CKFlip3D.Settings.Views;
 
-/// <summary>
-/// Attached "IsPressed" flag for navigation ListBoxItems. ListBoxItem has no
-/// native pressed state, and selection must not change on MouseDown (the page
-/// switch is committed on MouseUp inside the same item — see MainWindow).
-/// The nav item template animates its pressed layer off this property.
-/// </summary>
 public static class NavBehavior
 {
     public static readonly DependencyProperty IsPressedProperty =

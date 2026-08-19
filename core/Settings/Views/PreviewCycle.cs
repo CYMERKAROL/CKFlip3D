@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// A managed port of the cascade's cycle animation, for the Appearance preview.
+// Faithful on purpose: the preview is only worth showing if it moves and fades
+// the way the real switcher does.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using Slot = CKFlip3D.Settings.Views.PreviewScene.Slot;
 
 namespace CKFlip3D.Settings.Views;

@@ -1,7 +1,42 @@
+<!-- =========================================================================
+     Touchpad page layout: the gesture lists, the sensitivity and smoothing
+     sliders, and the live pad preview they are tuned against.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.TouchpadPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              PreviewMouseWheel="OnPreviewWheel">
+
+    <UserControl.Resources>
+        <!-- One bound gesture: its name, a switch that parks it without
+             throwing it away, and the X that does throw it away.  Deliberately
+             the same row the key lists use — a binding is a binding. -->
+        <DataTemplate x:Key="GestureRow">
+            <Grid Margin="0,3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border CornerRadius="4" Padding="10,5" HorizontalAlignment="Left"
+                        Background="{DynamicResource InsetFieldBrush}"
+                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                    <TextBlock FontFamily="Segoe UI" FontSize="12"
+                               Foreground="{DynamicResource TextPrimaryBrush}"
+                               Text="{Binding Label}"/>
+                </Border>
+                <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                          VerticalAlignment="Center" Margin="12,0,10,0"
+                          ToolTip="Off keeps the gesture on the list but stops it acting."
+                          IsChecked="{Binding Enabled, Mode=TwoWay}"/>
+                <Button Grid.Column="2" Style="{StaticResource LogDismissButton}"
+                        VerticalAlignment="Center" ToolTip="Remove this gesture"
+                        Tag="{Binding}" Click="RemoveGesture_Click"/>
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
 
     <ScrollViewer Style="{StaticResource AeroScrollViewer}" VerticalScrollBarVisibility="Auto"
                   Padding="24,4,16,20">
@@ -9,25 +44,23 @@
 
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Opening the cascade">
                 <StackPanel>
-                    <Grid>
+                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Activation gesture"/>
+                    <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
+                               Text="Diagonal swipe gesture used to open the cascade without conflicting with Windows defaults."/>
+                    <ItemsControl x:Name="ActivateList" ItemTemplate="{StaticResource GestureRow}"/>
+                    <TextBlock x:Name="ActivateEmpty" Style="{StaticResource SettingHintText}"
+                               FontStyle="Italic" Visibility="Collapsed"
+                               Text="No gesture opens the cascade. The hotkey and the launch shortcut still do."/>
+                    <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Activation gesture"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="A diagonal stroke opens the cascade. Windows only claims straight slides, so a diagonal is free — your touchpad settings and Task View are untouched. Two or four fingers: Windows already owns three."/>
-                        </StackPanel>
-                        <ComboBox Grid.Column="1" x:Name="ActivateCombo" Style="{StaticResource AeroComboBox}"
-                                  VerticalAlignment="Center" MinWidth="230"
-                                  SelectionChanged="ActivateCombo_SelectionChanged">
-                            <ComboBoxItem Content="Off"/>
-                            <ComboBoxItem Content="Two fingers ↘ (top-left → bottom-right)"/>
-                            <ComboBoxItem Content="Two fingers ↙ (top-right → bottom-left)"/>
-                            <ComboBoxItem Content="Four fingers ↘ (top-left → bottom-right)"/>
-                            <ComboBoxItem Content="Four fingers ↙ (top-right → bottom-left)"/>
-                        </ComboBox>
+                        <TextBlock x:Name="ActivateStatus" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   FontFamily="Segoe UI" FontSize="11" Margin="0,0,12,0"
+                                   Foreground="{DynamicResource TextFaintBrush}"/>
+                        <Button Grid.Column="1" x:Name="ActivateAdd" Style="{StaticResource AccentButton}"
+                                Content="Add gesture…" Click="AddActivate_Click"/>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
                     <Grid x:Name="CancelRow">
@@ -37,8 +70,8 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Cancel with the reversed stroke"/>
-                            <TextBlock x:Name="CancelHint" Style="{StaticResource SettingHintText}"
-                                       Text="Drawing the opening diagonal backwards closes the cascade without switching windows — the touchpad's Esc."/>
+                            <TextBlock Style="{StaticResource SettingHintText}"
+                                       Text="Drawing the activation gesture backwards closes the switcher without switching windows."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding TouchpadCancelSwipe}"/>
@@ -48,22 +81,23 @@
 
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Moving through the stack">
                 <StackPanel>
-                    <Grid>
+                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Cycle gesture"/>
+                    <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
+                               Text="Horizontal swipe gesture to switch through windows while the cascade is open"/>
+                    <ItemsControl x:Name="CycleList" ItemTemplate="{StaticResource GestureRow}"/>
+                    <TextBlock x:Name="CycleEmpty" Style="{StaticResource SettingHintText}"
+                               FontStyle="Italic" Visibility="Collapsed"
+                               Text="No swipe steps the stack. The keyboard and the wheel still do."/>
+                    <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Cycle gesture"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Swipe sideways with this many fingers to walk through the windows while the cascade is open. Only horizontal movement counts, so plain scrolling is unaffected."/>
-                        </StackPanel>
-                        <ComboBox Grid.Column="1" x:Name="FingersCombo" Style="{StaticResource AeroComboBox}"
-                                  VerticalAlignment="Center" MinWidth="230"
-                                  SelectionChanged="FingersCombo_SelectionChanged">
-                            <ComboBoxItem Content="Two fingers left / right"/>
-                            <ComboBoxItem Content="Four fingers left / right"/>
-                        </ComboBox>
+                        <TextBlock x:Name="CycleStatus" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   FontFamily="Segoe UI" FontSize="11" Margin="0,0,12,0"
+                                   Foreground="{DynamicResource TextFaintBrush}"/>
+                        <Button Grid.Column="1" x:Name="CycleAdd" Style="{StaticResource AccentButton}"
+                                Content="Add gesture…" Click="AddCycle_Click"/>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
                     <Grid>
@@ -74,7 +108,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Swipe direction"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Natural moves the row with your fingers — swiping left brings the next window in from the right, matching the mouse wheel."/>
+                                       Text="Sets whether swiping left/right moves with your fingers (Natural), or opposite."/>
                         </StackPanel>
                         <ComboBox Grid.Column="1" x:Name="DirectionCombo" Style="{StaticResource AeroComboBox}"
                                   VerticalAlignment="Center" MinWidth="230"
@@ -92,7 +126,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Gesture sensitivity"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="How far your fingers travel per window. Higher is quicker — a flick steps several windows; lower asks for a longer, more deliberate drag."/>
+                                       Text="Adjusts how far your fingers must travel to switch between windows."/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
@@ -112,7 +146,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Gesture smoothing"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Filters out the small stuff — a resting hand, a twitchy pad, the wobble at the end of a swipe. Higher is steadier but starts moving a fraction later; 0 passes the raw contact motion straight through."/>
+                                       Text="Filters out minor touchpad jitter and resting hand noise for cleaner input."/>
                         </StackPanel>
                         <DockPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock DockPanel.Dock="Right" Width="38" TextAlignment="Right"
@@ -124,32 +158,59 @@
                         </DockPanel>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Commit gesture"/>
+                    <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
+                               Text="Gesture used to confirm selection and switch to the highlighted window."/>
+                    <ItemsControl x:Name="CommitList" ItemTemplate="{StaticResource GestureRow}"/>
+                    <TextBlock x:Name="CommitEmpty" Style="{StaticResource SettingHintText}"
+                               FontStyle="Italic" Visibility="Collapsed"
+                               Text="No gesture commits. The commit key and the mouse still do."/>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="CommitStatus" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   FontFamily="Segoe UI" FontSize="11" Margin="0,0,12,0"
+                                   Foreground="{DynamicResource TextFaintBrush}"/>
+                        <Button Grid.Column="1" x:Name="CommitAdd" Style="{StaticResource AccentButton}"
+                                Content="Add gesture…" Click="AddCommit_Click"/>
+                    </Grid>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Gesture Chaining">
+                <StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Commit gesture"/>
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Continuous gestures"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Switches to the selected window — the touchpad's Enter, so a gesture-opened cascade never needs the keyboard. The downward swipe wants a long, deliberately vertical stroke, and is ignored once the same touch has started cycling."/>
+                                       Text="Chain opening and cycling into a single continuous gesture without lifting your fingers"/>
                         </StackPanel>
-                        <ComboBox Grid.Column="1" x:Name="CommitCombo" Style="{StaticResource AeroComboBox}"
-                                  VerticalAlignment="Center" MinWidth="230"
-                                  SelectionChanged="CommitCombo_SelectionChanged">
-                            <ComboBoxItem Content="Off"/>
-                            <ComboBoxItem Content="One-finger tap"/>
-                            <ComboBoxItem Content="Two-finger tap"/>
-                            <ComboBoxItem Content="Two fingers down"/>
-                        </ComboBox>
+                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
+                                  IsChecked="{Binding TouchpadContinuous}"/>
                     </Grid>
+                    <StackPanel x:Name="ContinuousNotice" Orientation="Horizontal"
+                                Visibility="Collapsed" Margin="0,12,0,0">
+                        <Path Width="13" Height="12" Margin="0,1,7,0" VerticalAlignment="Top"
+                              Stroke="#FFE8A33D" StrokeThickness="1.3"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                              Data="M6.5,1.2 L12.2,11 H0.8 Z M6.5,4.8 V7.6 M6.5,9.2 V9.7"/>
+                        <TextBlock FontFamily="Segoe UI" FontSize="11" TextWrapping="Wrap"
+                                   MaxWidth="470" Foreground="#FFE8A33D"
+                                   Text="May cause misinput (if occuring - Adjust Gesture smoothing and sensitivity)."/>
+                    </StackPanel>
                 </StackPanel>
             </HeaderedContentControl>
 
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Touchpad activity">
                 <StackPanel>
                     <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,12"
-                               Text="A live view of your touchpad. Click once and the panel takes over: the pointer is hidden and held inside it, and scrolling stays here. Try a gesture — the recogniser uses the settings above, so you can feel them out before applying, and the cascade will not open while you practise. Press Esc, or switch away, to get the pointer back."/>
+                               Text="Testing area to preview gesture response live without opening the cascade. Click once and the panel takes over: the pointer is hidden and held inside it, and scrolling stays here. The recogniser uses the settings above, so you can feel them out before applying. Press Esc, or switch away, to get the pointer back."/>
 
                     <Border x:Name="PadSurface" CornerRadius="6" Height="184" Cursor="Hand"
                             Focusable="True" Background="{DynamicResource InsetFieldBrush}"
@@ -204,7 +265,7 @@
                     <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
                                TextWrapping="Wrap" Margin="0,0,16,0"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="Restore the stock gestures: a two-finger ↘ diagonal to open, two fingers left and right to cycle, one-finger tap to commit."/>
+                               Text="Resets all touchpad gesture triggers, sensitivity, and smoothing to defaults."/>
                     <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                             Content="Restore default gestures" Click="RestoreDefaults_Click"/>
                 </Grid>

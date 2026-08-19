@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The live miniature on the Appearance page.  Real geometry rather than a
+// mock-up: the same layout, the same camera chain and the same transition as
+// the switcher, so a setting can be judged by looking at it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;

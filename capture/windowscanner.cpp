@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The window enumeration and the filters it runs.  Alt-Tab eligibility is not
+// a single flag anywhere in the API, so this walks the same set of checks the
+// shell does: visibility, ownership, tool windows, cloaked UWP frames.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "windowscanner.h"
 #include <dwmapi.h>
 

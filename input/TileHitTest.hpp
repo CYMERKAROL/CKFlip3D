@@ -18,6 +18,8 @@
 //
 // Overlay pixel space throughout (screen coordinates minus the virtual-screen
 // origin) — the same space RenderFrame's viewport uses.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
 // ---------------------------------------------------------------------------
 namespace TileHitTest {
 

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Start with Windows, done through a scheduled logon task rather than the Run
+// key.  The core needs administrator, and Windows quietly skips Run entries
+// that would require elevation: they appear in the startup list and never run.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The cloaking itself: who is eligible, who must never be touched, and the
+// bookkeeping that guarantees everything cloaked here gets uncloaked again
+// even if the session ends badly.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "windowcloaker.h"
 #include "../core/DebugLog.h"
 #include "../core/Diagnostics.h"
@@ -213,8 +220,8 @@ void UncloakAll()
 {
     // A cloak that fails to lift is the worst outcome this file has: the
     // window is still there, still in the taskbar, and invisible until
-    // something else happens to repaint it.  It is exactly the kind of failure
-    // that used to leave no trace at all.
+    // something else happens to repaint it.  So it gets reported rather than
+    // passing silently.
     size_t stuck = 0;
     for (HWND hwnd : g_cloakedWindows) {
         if (!IsWindow(hwnd))

@@ -17,6 +17,8 @@ namespace CKFlip3D.Settings.Views;
 // The marks are drawn as geometry rather than typed as characters. A glyph
 // depends on a font being installed and on the platform's idea of what an
 // emoji looks like; a Path is the same 18 pixels everywhere.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
 // ---------------------------------------------------------------------------
 internal static class SeverityPalette
 {

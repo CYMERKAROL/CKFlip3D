@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Editor for the ignore list: programs where the trigger is left alone, so a
+// game or a remote session keeps the key combination for itself.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;

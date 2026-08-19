@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Where each tile ends up, and where the camera has to stand to frame them.
+// Both are recomputed from scratch whenever the window count changes, since
+// the Win7 look depends on density rather than on fixed spacing.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "FlipScene.hpp"
 #include "CoverFlowLayout.hpp"
 #include "../core/DebugLog.h"
@@ -264,7 +271,6 @@ void FlipScene::BuildSlotsCoverFlow(uint32_t visible, float vpW, float vpH)
         m_windowScales[i] = { m_slots[i].scaleX, m_slots[i].scaleY };
 }
 
-// ---------------------------------------------------------------------------
 void FlipScene::RelayoutCoverFlowX()
 {
     if (m_preset != VisualPreset::CoverFlow || m_slots.empty())
@@ -272,7 +278,6 @@ void FlipScene::RelayoutCoverFlowX()
     CoverFlowLayout::RelayoutX(m_cfg, m_slots, m_viewportAspect, m_eyeZ);
 }
 
-// ---------------------------------------------------------------------------
 void FlipScene::SetSlotAspect(uint32_t index, float aspect)
 {
     if (index < m_slots.size()) {
@@ -305,7 +310,6 @@ static inline float TileSizeAspectScale(float viewportAspect)
     return std::sqrt(std::max(hScale, 0.1f));
 }
 
-// ---------------------------------------------------------------------------
 void FlipScene::SetSlotScale(uint32_t index, float widthPx, float heightPx,
                               float desktopW, float desktopH)
 {
@@ -346,7 +350,6 @@ void FlipScene::SetSlotScale(uint32_t index, float widthPx, float heightPx,
         s.y = m_floorY + s.scaleY * 0.5f;
 }
 
-// ---------------------------------------------------------------------------
 void FlipScene::RotateAspects(bool forward)
 {
     uint32_t n = static_cast<uint32_t>(m_windowScales.size());
@@ -369,7 +372,35 @@ void FlipScene::RotateAspects(bool forward)
     }
 }
 
-// ---------------------------------------------------------------------------
+void FlipScene::CameraMatrices(float viewportAspect,
+                               XMMATRIX& outView, XMMATRIX& outProj) const
+{
+    if (!m_camCache.valid
+        || m_camCache.eyeX    != m_eyeX    || m_camCache.eyeY    != m_eyeY
+        || m_camCache.eyeZ    != m_eyeZ    || m_camCache.targetX != m_targetX
+        || m_camCache.targetY != m_targetY || m_camCache.targetZ != m_targetZ
+        || m_camCache.fovDeg  != m_cfg.fovDeg
+        || m_camCache.aspect  != viewportAspect) {
+
+        const XMVECTOR eye    = XMVectorSet(m_eyeX, m_eyeY, m_eyeZ, 1.0f);
+        const XMVECTOR target = XMVectorSet(m_targetX, m_targetY, m_targetZ, 1.0f);
+        const XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        XMStoreFloat4x4(&m_camCache.view, XMMatrixLookAtLH(eye, target, up));
+        XMStoreFloat4x4(&m_camCache.proj, XMMatrixPerspectiveFovLH(
+            XMConvertToRadians(m_cfg.fovDeg), viewportAspect, 0.1f, 200.0f));
+
+        m_camCache.eyeX    = m_eyeX;    m_camCache.eyeY    = m_eyeY;
+        m_camCache.eyeZ    = m_eyeZ;    m_camCache.targetX = m_targetX;
+        m_camCache.targetY = m_targetY; m_camCache.targetZ = m_targetZ;
+        m_camCache.fovDeg  = m_cfg.fovDeg;
+        m_camCache.aspect  = viewportAspect;
+        m_camCache.valid   = true;
+    }
+
+    outView = XMLoadFloat4x4(&m_camCache.view);
+    outProj = XMLoadFloat4x4(&m_camCache.proj);
+}
+
 void FlipScene::GetDrawCall(uint32_t index, float viewportAspect,
                              XMFLOAT4X4& outMVP, float& outAlpha,
                              float worldYOffset) const
@@ -392,20 +423,16 @@ void FlipScene::GetDrawCall(uint32_t index, float viewportAspect,
         XMMatrixRotationY(XMConvertToRadians(m_tiltY_actual + s.rotY)) *
         XMMatrixTranslation(s.x, s.y + worldYOffset, s.z);
 
-    // --- View matrix (camera) ---
-    XMVECTOR eye    = XMVectorSet(m_eyeX, m_eyeY, m_eyeZ, 1.0f);
-    XMVECTOR target = XMVectorSet(m_targetX, m_targetY, m_targetZ, 1.0f);
-    XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-    XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-
-    // --- Perspective projection ---
+    // --- View matrix (camera) and perspective projection ---
     // Vertical FOV tuned to match the original cascade's perspective.
     // The perspective creates ALL the Flip3D magic:
     //   - front tile appears large (close to camera)
     //   - rear tiles shrink dramatically (far away)
     //   - off-axis camera makes the stack cascade diagonally
-    XMMATRIX proj = XMMatrixPerspectiveFovLH(
-        XMConvertToRadians(m_cfg.fovDeg), viewportAspect, 0.1f, 200.0f);
+    // Both come from the memoised pair (see CameraMatrices) — the same
+    // matrices this used to rebuild for every tile.
+    XMMATRIX view, proj;
+    CameraMatrices(viewportAspect, view, proj);
 
     XMMATRIX mvp = world * view * proj;
     XMStoreFloat4x4(&outMVP, mvp);
@@ -443,12 +470,8 @@ void FlipScene::GetReflectionDrawCall(uint32_t index, float viewportAspect,
         XMMatrixRotationY(XMConvertToRadians(m_tiltY_actual + s.rotY)) *
         XMMatrixTranslation(s.x, s.y + worldYOffset, s.z);
 
-    XMVECTOR eye    = XMVectorSet(m_eyeX, m_eyeY, m_eyeZ, 1.0f);
-    XMVECTOR target = XMVectorSet(m_targetX, m_targetY, m_targetZ, 1.0f);
-    XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-    XMMATRIX view   = XMMatrixLookAtLH(eye, target, up);
-    XMMATRIX proj   = XMMatrixPerspectiveFovLH(
-        XMConvertToRadians(m_cfg.fovDeg), viewportAspect, 0.1f, 200.0f);
+    XMMATRIX view, proj;
+    CameraMatrices(viewportAspect, view, proj);
 
     XMStoreFloat4x4(&outMVP, world * view * proj);
 }

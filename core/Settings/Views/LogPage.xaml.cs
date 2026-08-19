@@ -1,18 +1,18 @@
+// ---------------------------------------------------------------------------
+// The log page: everything CKFlip3D has recorded going wrong, folded one tile
+// per problem.  Reached from the marks above the version in the sidebar rather
+// than from the navigation list, because it is not a settings page and has
+// nothing to apply.  Opening it is what marks its contents as read, so the
+// marks stop drawing attention once someone has looked.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using CKFlip3D.Settings.Services;
 
 namespace CKFlip3D.Settings.Views;
 
-/// <summary>
-/// The log: everything CKFlip3D has recorded going wrong, folded one tile per
-/// problem.
-///
-/// Reached from the marks above the version in the sidebar rather than from
-/// the navigation list, because it is not a settings page — it has nothing to
-/// change and nothing to apply. Opening it is what marks its contents as read,
-/// so the marks stop drawing attention once someone has actually looked.
-/// </summary>
 public partial class LogPage : UserControl
 {
     public LogPage()

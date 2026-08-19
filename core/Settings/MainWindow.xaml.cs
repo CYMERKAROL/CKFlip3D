@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The settings window itself: custom chrome, the navigation between pages and
+// sub-pages, the Apply bar that only shows up when something is unsaved, and
+// the modal layer the pages borrow for confirmations.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;

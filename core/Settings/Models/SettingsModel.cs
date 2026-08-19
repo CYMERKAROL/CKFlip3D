@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Everything the settings window binds to, in one observable object.  It also
+// tracks whether anything has changed since the last save, which is what makes
+// the Apply bar appear and disappear on its own.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
@@ -33,8 +40,11 @@ public sealed class SettingsModel : INotifyPropertyChanged
     }
 
     // ---- General ----------------------------------------------------------
-    private bool _startWithWindows;        // mirrors the HKCU Run entry
+    private bool _startWithWindows;        // mirrors the scheduled logon task
     private string _excludedApps = "";     // [Core] excludedApps — ';'-separated exe paths/names
+
+    // The launch shortcut is deliberately NOT here: it is a button that writes
+    // a file, not a setting with a saved state (see LaunchShortcutService).
 
     public bool StartWithWindows { get => _startWithWindows; set => Set(ref _startWithWindows, value); }
     public string ExcludedApps   { get => _excludedApps;     set => Set(ref _excludedApps, value); }
@@ -105,14 +115,22 @@ public sealed class SettingsModel : INotifyPropertyChanged
     // ---- Controls -----------------------------------------------------------
     private bool _ignoreFullscreen;        // [Core] ignoreFullscreen
     private bool _mouseWheelCycle = true;  // [Core] mouseWheelCycle
-    private bool _keyboardNav = true;      // [Core] keyboardNav
+    // [Core] navForwardKeys / navBackKeys — ';'-separated key tokens that step
+    // through the open stack, the activation hotkey's own key included (hence
+    // Tab in the defaults).  A token may carry Shift and nothing else.  A '!'
+    // prefix means "kept, but switched off", so a binding can be parked without
+    // being retyped.  Empty is legitimate: it means that direction has no key
+    // at all.  See NavKeyList / SetNavKeyList.
+    private string _navForwardKeys = DefaultNavForwardKeys;
+    private string _navBackKeys = DefaultNavBackKeys;
     private string _ignoredApps = "";      // [Core] ignoredApps — ';'-separated exe paths/names
     private bool _hotkeyToggleMode;        // [Core] hotkeyToggleMode — combo bindings toggle instead of hold
     private string _activationHotkey = "Win+Tab"; // [Core] activationHotkey — see HotkeyService
 
     public bool IgnoreFullscreen { get => _ignoreFullscreen; set => Set(ref _ignoreFullscreen, value); }
     public bool MouseWheelCycle  { get => _mouseWheelCycle;  set => Set(ref _mouseWheelCycle, value); }
-    public bool KeyboardNav      { get => _keyboardNav;      set => Set(ref _keyboardNav, value); }
+    public string NavForwardKeys { get => _navForwardKeys;   set => Set(ref _navForwardKeys, value ?? ""); }
+    public string NavBackKeys    { get => _navBackKeys;      set => Set(ref _navBackKeys, value ?? ""); }
     public bool HotkeyToggleMode
     {
         get => _hotkeyToggleMode;
@@ -154,9 +172,9 @@ public sealed class SettingsModel : INotifyPropertyChanged
     // ---- Mouse & keyboard (Controls → Mouse & keyboard) ---------------------
     // Button ids match the core 1:1: 0 off, 1 left, 2 right, 3 middle,
     // 4 X1, 5 X2.
-    private string _commitHotkey = "Enter";    // [Core] commitHotkey
-    private string _cancelHotkey = "Escape";   // [Core] cancelHotkey
-    private string _closeHotkey = "Delete";    // [Core] closeHotkey
+    //
+    // The commit / cancel / close KEYS are lists, next to the navigation ones —
+    // see "Keys in the cascade" below.
     private bool _pointerInCascade;            // [Core] pointerInCascade — master switch, default OFF
     private bool _mouseSelect = true;          // [Core] mouseSelect — hover + click to pick
     private int _mouseSelectButton = 1;        // [Core] mouseSelectButton
@@ -164,23 +182,7 @@ public sealed class SettingsModel : INotifyPropertyChanged
     private int _mouseDragButton = 2;          // [Core] mouseDragButton — free drag (Window snap off)
     private bool _closeFromCascade = true;     // [Core] closeFromCascade — close CLICK only
     private int _mouseCloseButton = 3;         // [Core] mouseCloseButton
-    private bool _closeKeyEnabled = true;      // [Core] closeKeyEnabled — close KEY, own switch
 
-    public string CommitHotkey
-    {
-        get => _commitHotkey;
-        set => Set(ref _commitHotkey, string.IsNullOrWhiteSpace(value) ? "Enter" : value);
-    }
-    public string CancelHotkey
-    {
-        get => _cancelHotkey;
-        set => Set(ref _cancelHotkey, string.IsNullOrWhiteSpace(value) ? "Escape" : value);
-    }
-    public string CloseHotkey
-    {
-        get => _closeHotkey;
-        set => Set(ref _closeHotkey, string.IsNullOrWhiteSpace(value) ? "Delete" : value);
-    }
     public bool PointerInCascade
     {
         get => _pointerInCascade;
@@ -192,7 +194,6 @@ public sealed class SettingsModel : INotifyPropertyChanged
     public int MouseDragButton    { get => _mouseDragButton;   set => Set(ref _mouseDragButton, Math.Clamp(value, 0, 5)); }
     public bool CloseFromCascade  { get => _closeFromCascade;  set => Set(ref _closeFromCascade, value); }
     public int MouseCloseButton   { get => _mouseCloseButton;  set => Set(ref _mouseCloseButton, Math.Clamp(value, 0, 5)); }
-    public bool CloseKeyEnabled   { get => _closeKeyEnabled;   set => Set(ref _closeKeyEnabled, value); }
 
     /// <summary>
     /// Free stack movement (Window snap OFF) is a POINTER feature: the whole
@@ -240,26 +241,43 @@ public sealed class SettingsModel : INotifyPropertyChanged
     public int SearchScale         { get => _searchScale;        set => Set(ref _searchScale, Math.Clamp(value, 50, 200)); }
 
     // ---- Touchpad (precision touchpad gestures) -----------------------------
+    // The three gesture settings are LISTS in the same '!'-parking, ';'-separated
+    // form the key bindings use (see ParseBindings); the token vocabulary lives
+    // in TouchpadGestures. Empty means the action has no gesture at all, which
+    // is what the old single-value "Off" said.
     private bool _touchpadNav = true;          // [Core] touchpadNav — master switch
-    private int _touchpadCycleFingers = 2;     // [Core] 2 or 4 fingers, left/right = cycle
+    private string _touchpadActivateGestures = DefaultTouchpadActivateGestures;  // [Core]
+    private string _touchpadCycleGestures = DefaultTouchpadCycleGestures;        // [Core]
+    private string _touchpadCommitGestures = DefaultTouchpadCommitGestures;      // [Core]
     private bool _touchpadReverse;             // [Core] invert the cycle direction
     private int _touchpadSensitivity = 50;     // [Core] 1..100, swipe distance per step
-    private int _touchpadActivateGesture = 1;  // [Core] 0=off,1=2↘,2=2↙,3=4↘,4=4↙
-    private int _touchpadCommitGesture = 1;    // [Core] 0=off,1=1-tap,2=2-tap,3=2-down
     private int _touchpadSmoothing = 35;       // [Core] 0..100 jitter filter
     private bool _touchpadCancelSwipe = true;  // [Core] reverse activation swipe cancels
+    private bool _touchpadContinuous;          // [Core] several gestures out of one touch
     private bool _windowSnap = true;           // [Core] windowSnap — free drag vs whole-window steps
 
     public bool TouchpadNav             { get => _touchpadNav;             set => Set(ref _touchpadNav, value); }
-    // Two or four fingers only — three is Windows' own (Alt+Tab / Task View),
-    // so a config written by an older build folds onto the nearest survivor.
-    public int TouchpadCycleFingers     { get => _touchpadCycleFingers;    set => Set(ref _touchpadCycleFingers, value >= 4 ? 4 : 2); }
+    public string TouchpadActivateGestures { get => _touchpadActivateGestures; set => Set(ref _touchpadActivateGestures, value ?? ""); }
+    public string TouchpadCycleGestures    { get => _touchpadCycleGestures;    set => Set(ref _touchpadCycleGestures, value ?? ""); }
+    public string TouchpadCommitGestures   { get => _touchpadCommitGestures;   set => Set(ref _touchpadCommitGestures, value ?? ""); }
     public bool TouchpadReverse         { get => _touchpadReverse;         set => Set(ref _touchpadReverse, value); }
     public int TouchpadSensitivity      { get => _touchpadSensitivity;     set => Set(ref _touchpadSensitivity, Math.Clamp(value, 1, 100)); }
-    public int TouchpadActivateGesture  { get => _touchpadActivateGesture; set => Set(ref _touchpadActivateGesture, Math.Clamp(value, 0, 4)); }
-    public int TouchpadCommitGesture    { get => _touchpadCommitGesture;   set => Set(ref _touchpadCommitGesture, Math.Clamp(value, 0, 3)); }
     public int TouchpadSmoothing        { get => _touchpadSmoothing;       set => Set(ref _touchpadSmoothing, Math.Clamp(value, 0, 100)); }
     public bool TouchpadCancelSwipe     { get => _touchpadCancelSwipe;     set => Set(ref _touchpadCancelSwipe, value); }
+    public bool TouchpadContinuous      { get => _touchpadContinuous;      set => Set(ref _touchpadContinuous, value); }
+
+    /// <summary>Shipped gestures — keep in step with core/Config.h.</summary>
+    public const string DefaultTouchpadActivateGestures = "TwoDownRight";
+    public const string DefaultTouchpadCycleGestures = "TwoSwipe";
+    public const string DefaultTouchpadCommitGestures = "OneTap";
+
+    public List<Binding> TouchpadActivateGestureList => ParseBindings(_touchpadActivateGestures);
+    public List<Binding> TouchpadCycleGestureList    => ParseBindings(_touchpadCycleGestures);
+    public List<Binding> TouchpadCommitGestureList   => ParseBindings(_touchpadCommitGestures);
+
+    public void SetTouchpadActivateGestureList(IEnumerable<Binding> g) => TouchpadActivateGestures = FormatBindings(g);
+    public void SetTouchpadCycleGestureList(IEnumerable<Binding> g)    => TouchpadCycleGestures = FormatBindings(g);
+    public void SetTouchpadCommitGestureList(IEnumerable<Binding> g)   => TouchpadCommitGestures = FormatBindings(g);
     // OFF needs the pointer master — see WindowSnapSatisfied, which is what
     // Apply consults.  The value itself is left exactly as set: the block is
     // on saving it, not on choosing it.
@@ -268,6 +286,113 @@ public sealed class SettingsModel : INotifyPropertyChanged
         get => _windowSnap;
         set { Set(ref _windowSnap, value); RaiseWindowSnapSatisfied(); }
     }
+
+    // ---- Keys in the cascade (Mouse & keyboard → Keys in the cascade) -------
+    // Five lists: the two navigation directions and the three bindings that used
+    // to be one key apiece (commit, cancel, close). The stored form is one
+    // string per list so the whole model stays snapshot/compare-able the way
+    // every other setting is; the page works in Binding objects and hands the
+    // string back.
+
+    /// <summary>Matches KeyboardHook::kMaxBindingKeys — what one packed word holds.</summary>
+    public const int MaxBindingKeys = 7;
+
+    /// <summary>Shipped bindings — keep in step with core/Config.h.</summary>
+    public const string DefaultNavForwardKeys = "Tab;Down;Right";
+    public const string DefaultNavBackKeys = "Shift+Tab;Up;Left";
+    public const string DefaultCommitKeys = "Enter";
+    public const string DefaultCancelKeys = "Escape";
+    public const string DefaultCloseKeys = "Delete";
+
+    private string _commitKeys = DefaultCommitKeys;   // [Core] commitKeys
+    private string _cancelKeys = DefaultCancelKeys;   // [Core] cancelKeys
+    private string _closeKeys = DefaultCloseKeys;     // [Core] closeKeys — empty = no close key
+
+    public string CommitKeys { get => _commitKeys; set => Set(ref _commitKeys, value ?? ""); }
+    public string CancelKeys { get => _cancelKeys; set => Set(ref _cancelKeys, value ?? ""); }
+    public string CloseKeys  { get => _closeKeys;  set => Set(ref _closeKeys, value ?? ""); }
+
+    public List<Binding> NavForwardKeyList => ParseBindings(_navForwardKeys);
+    public List<Binding> NavBackKeyList    => ParseBindings(_navBackKeys);
+    public List<Binding> CommitKeyList     => ParseBindings(_commitKeys);
+    public List<Binding> CancelKeyList     => ParseBindings(_cancelKeys);
+    public List<Binding> CloseKeyList      => ParseBindings(_closeKeys);
+
+    public void SetNavForwardKeyList(IEnumerable<Binding> keys) => NavForwardKeys = FormatBindings(keys);
+    public void SetNavBackKeyList(IEnumerable<Binding> keys)    => NavBackKeys = FormatBindings(keys);
+    public void SetCommitKeyList(IEnumerable<Binding> keys)     => CommitKeys = FormatBindings(keys);
+    public void SetCancelKeyList(IEnumerable<Binding> keys)     => CancelKeys = FormatBindings(keys);
+    public void SetCloseKeyList(IEnumerable<Binding> keys)      => CloseKeys = FormatBindings(keys);
+
+    /// <summary>
+    /// ';'-separated tokens → bindings. A leading '!' is the "kept but off"
+    /// mark. Blank entries are dropped rather than becoming empty bindings, so
+    /// a hand-edited trailing ';' costs nothing. Shared by the key lists and the
+    /// touchpad gesture lists — the file format is the same one twice.
+    /// </summary>
+    public static List<Binding> ParseBindings(string? list)
+    {
+        var result = new List<Binding>();
+        if (string.IsNullOrWhiteSpace(list)) return result;
+
+        foreach (string raw in list.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            bool enabled = !raw.StartsWith('!');
+            string token = (enabled ? raw : raw[1..]).Trim();
+            if (token.Length == 0) continue;
+            // The same entry twice would only ever fire once; keep the first.
+            if (result.Any(k => string.Equals(k.Token, token, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            result.Add(new Binding(token, enabled));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Follow a change of activation hotkey through the navigation lists:
+    /// wherever the OLD hotkey's key was an entry, it becomes the new one,
+    /// keeping its direction, its Shift qualifier and whether it was switched
+    /// on.
+    ///
+    /// The hotkey's key is an ordinary entry here — that is what makes Tab
+    /// removable — and the price of that is a hotkey rebound to a key nobody
+    /// ever put on a list, which would open the cascade and then not step it.
+    /// Carrying the entry across is the quiet fix: rebinding Win+Tab to
+    /// Ctrl+Alt+F leaves F stepping the stack exactly as Tab did, and someone
+    /// who had already REMOVED Tab has nothing to carry, so nothing comes back.
+    ///
+    /// Called when the user assigns a hotkey, never while loading: on load the
+    /// lists in the file are the truth.
+    /// </summary>
+    public void RepointNavKeysToHotkey(string? oldCombo, string? newCombo)
+    {
+        string oldKey = MainToken(oldCombo);
+        string newKey = MainToken(newCombo);
+        if (oldKey.Length == 0 || newKey.Length == 0
+            || string.Equals(oldKey, newKey, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        NavForwardKeys = FormatBindings(Repoint(ParseBindings(_navForwardKeys)));
+        NavBackKeys    = FormatBindings(Repoint(ParseBindings(_navBackKeys)));
+
+        List<Binding> Repoint(List<Binding> keys) => keys.ConvertAll(k =>
+        {
+            string[] parts = k.Token.Split('+', StringSplitOptions.TrimEntries);
+            if (!string.Equals(parts[^1], oldKey, StringComparison.OrdinalIgnoreCase))
+                return k;
+            parts[^1] = newKey;
+            return k with { Token = string.Join('+', parts) };
+        });
+
+        static string MainToken(string? combo) =>
+            string.IsNullOrWhiteSpace(combo)
+                ? ""
+                : combo.Split('+', StringSplitOptions.TrimEntries)[^1];
+    }
+
+    public static string FormatBindings(IEnumerable<Binding> keys) =>
+        string.Join(';', keys.Where(k => !string.IsNullOrWhiteSpace(k.Token))
+                             .Select(k => (k.Enabled ? "" : "!") + k.Token.Trim()));
 
     /// <summary>Split helper for the ignored-apps editor page.</summary>
     public List<string> IgnoredAppsList =>
@@ -351,21 +476,21 @@ public sealed class SettingsModel : INotifyPropertyChanged
         SecondaryTaskbarMode = s.SecondaryTaskbarMode;
         IgnoreFullscreen = s.IgnoreFullscreen;
         MouseWheelCycle = s.MouseWheelCycle;
-        KeyboardNav = s.KeyboardNav;
+        NavForwardKeys = s.NavForwardKeys;
+        NavBackKeys = s.NavBackKeys;
         HotkeyToggleMode = s.HotkeyToggleMode;
         IgnoredApps = s.IgnoredApps;
         ExcludedApps = s.ExcludedApps;
         ActivationHotkey = s.ActivationHotkey;
-        CommitHotkey = s.CommitHotkey;
-        CancelHotkey = s.CancelHotkey;
-        CloseHotkey = s.CloseHotkey;
+        CommitKeys = s.CommitKeys;
+        CancelKeys = s.CancelKeys;
+        CloseKeys = s.CloseKeys;
         PointerInCascade = s.PointerInCascade;
         MouseSelect = s.MouseSelect;
         MouseSelectButton = s.MouseSelectButton;
         MouseDragEnabled = s.MouseDragEnabled;
         MouseDragButton = s.MouseDragButton;
         CloseFromCascade = s.CloseFromCascade;
-        CloseKeyEnabled = s.CloseKeyEnabled;
         MouseCloseButton = s.MouseCloseButton;
         SearchEnabled = s.SearchEnabled;
         SearchBox = s.SearchBox;
@@ -374,13 +499,14 @@ public sealed class SettingsModel : INotifyPropertyChanged
         SearchPosY = s.SearchPosY;
         SearchScale = s.SearchScale;
         TouchpadNav = s.TouchpadNav;
-        TouchpadCycleFingers = s.TouchpadCycleFingers;
+        TouchpadActivateGestures = s.TouchpadActivateGestures;
+        TouchpadCycleGestures = s.TouchpadCycleGestures;
+        TouchpadCommitGestures = s.TouchpadCommitGestures;
         TouchpadReverse = s.TouchpadReverse;
         TouchpadSensitivity = s.TouchpadSensitivity;
-        TouchpadActivateGesture = s.TouchpadActivateGesture;
-        TouchpadCommitGesture = s.TouchpadCommitGesture;
         TouchpadSmoothing = s.TouchpadSmoothing;
         TouchpadCancelSwipe = s.TouchpadCancelSwipe;
+        TouchpadContinuous = s.TouchpadContinuous;
         WindowSnap = s.WindowSnap;
         MaxWindows = s.MaxWindows;
         AutoPerfTune = s.AutoPerfTune;
@@ -418,21 +544,21 @@ public sealed class SettingsModel : INotifyPropertyChanged
         SecondaryTaskbarMode == s.SecondaryTaskbarMode &&
         IgnoreFullscreen == s.IgnoreFullscreen &&
         MouseWheelCycle == s.MouseWheelCycle &&
-        KeyboardNav == s.KeyboardNav &&
+        NavForwardKeys == s.NavForwardKeys &&
+        NavBackKeys == s.NavBackKeys &&
         HotkeyToggleMode == s.HotkeyToggleMode &&
         IgnoredApps == s.IgnoredApps &&
         ExcludedApps == s.ExcludedApps &&
         ActivationHotkey == s.ActivationHotkey &&
-        CommitHotkey == s.CommitHotkey &&
-        CancelHotkey == s.CancelHotkey &&
-        CloseHotkey == s.CloseHotkey &&
+        CommitKeys == s.CommitKeys &&
+        CancelKeys == s.CancelKeys &&
+        CloseKeys == s.CloseKeys &&
         PointerInCascade == s.PointerInCascade &&
         MouseSelect == s.MouseSelect &&
         MouseSelectButton == s.MouseSelectButton &&
         MouseDragEnabled == s.MouseDragEnabled &&
         MouseDragButton == s.MouseDragButton &&
         CloseFromCascade == s.CloseFromCascade &&
-        CloseKeyEnabled == s.CloseKeyEnabled &&
         MouseCloseButton == s.MouseCloseButton &&
         SearchEnabled == s.SearchEnabled &&
         SearchBox == s.SearchBox &&
@@ -441,13 +567,14 @@ public sealed class SettingsModel : INotifyPropertyChanged
         SearchPosY == s.SearchPosY &&
         SearchScale == s.SearchScale &&
         TouchpadNav == s.TouchpadNav &&
-        TouchpadCycleFingers == s.TouchpadCycleFingers &&
+        TouchpadActivateGestures == s.TouchpadActivateGestures &&
+        TouchpadCycleGestures == s.TouchpadCycleGestures &&
+        TouchpadCommitGestures == s.TouchpadCommitGestures &&
         TouchpadReverse == s.TouchpadReverse &&
         TouchpadSensitivity == s.TouchpadSensitivity &&
-        TouchpadActivateGesture == s.TouchpadActivateGesture &&
-        TouchpadCommitGesture == s.TouchpadCommitGesture &&
         TouchpadSmoothing == s.TouchpadSmoothing &&
         TouchpadCancelSwipe == s.TouchpadCancelSwipe &&
+        TouchpadContinuous == s.TouchpadContinuous &&
         WindowSnap == s.WindowSnap &&
         MaxWindows == s.MaxWindows &&
         AutoPerfTune == s.AutoPerfTune &&
@@ -455,3 +582,16 @@ public sealed class SettingsModel : INotifyPropertyChanged
         StartDelayMs == s.StartDelayMs &&
         ShowDebugInfo == s.ShowDebugInfo;
 }
+
+/// <summary>
+/// One entry of a binding list — a key that acts on the open cascade (Controls
+/// → Mouse &amp; keyboard → Keys in the cascade) or a touchpad gesture (Controls
+/// → Touchpad gestures). <paramref name="Token"/> is the vocabulary the core
+/// parses ("Down", "PageUp", "F13"; "TwoDownRight", "OneTap");
+/// <paramref name="Enabled"/> false is a binding the user parked rather than
+/// removed, so switching it back on does not mean recording it again.
+/// </summary>
+/// <param name="Token">Key name in KeyboardHook::ParseHotkey's vocabulary, or a
+/// TouchpadHook gesture token.</param>
+/// <param name="Enabled">False = remembered in config.json, ignored by the core.</param>
+public sealed record Binding(string Token, bool Enabled);

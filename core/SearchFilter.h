@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The typed query behind type-to-filter, and the one question it answers: does
+// this window match?  Deliberately knows nothing about windows or the cascade,
+// so the mechanics of filtering stay in the controller.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include <string>

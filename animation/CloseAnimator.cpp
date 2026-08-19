@@ -1,10 +1,15 @@
+// ---------------------------------------------------------------------------
+// The close transition itself: the camera compensation that hides the rebuild,
+// the fall and fade of the dying tiles, and the reflow of everything left.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include <Windows.h>
 #include "CloseAnimator.h"
 #include <DirectXMath.h>
 #include <algorithm>
 
-// ---------------------------------------------------------------------------
 void CloseAnimator::ComputeBackSpawn()
 {
     // Spawn point for overflow refill: slightly past the last visible slot
@@ -31,7 +36,6 @@ void CloseAnimator::ComputeBackSpawn()
     m_backSpawn.alpha  = 0.0f;
 }
 
-// ---------------------------------------------------------------------------
 void CloseAnimator::Begin(FlipScene& scene,
                           const std::vector<TileSlot>& startSlots,
                           const std::vector<uint32_t>& dyingSlotIndices,
@@ -193,7 +197,6 @@ void CloseAnimator::Begin(FlipScene& scene,
     m_startQPC = now.QuadPart;
 }
 
-// ---------------------------------------------------------------------------
 void CloseAnimator::FinishImmediate(FlipScene& scene)
 {
     uint32_t n = scene.SlotCount();
@@ -213,7 +216,6 @@ void CloseAnimator::FinishImmediate(FlipScene& scene)
     m_justDone = true;
 }
 
-// ---------------------------------------------------------------------------
 void CloseAnimator::Cancel()
 {
     m_active   = false;
@@ -228,14 +230,12 @@ void CloseAnimator::Cancel()
     m_riseIn = false;
 }
 
-// ---------------------------------------------------------------------------
 bool CloseAnimator::JustFinished()
 {
     if (m_justDone) { m_justDone = false; return true; }
     return false;
 }
 
-// ---------------------------------------------------------------------------
 float CloseAnimator::GetMotionIntensity() const
 {
     if (!m_active) return 0.0f;
@@ -247,7 +247,6 @@ float CloseAnimator::GetMotionIntensity() const
     return 4.0f * p * (1.0f - p);
 }
 
-// ---------------------------------------------------------------------------
 void CloseAnimator::Tick(FlipScene& scene)
 {
     if (!m_active)

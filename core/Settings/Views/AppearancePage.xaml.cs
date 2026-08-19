@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The Appearance page: theme, visual preset, animation switches and the live
+// preview that shows what each of them does.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 

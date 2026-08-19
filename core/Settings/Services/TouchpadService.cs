@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The touchpad as the settings window sees it: whether one exists, a live
+// contact feed for the preview, and a copy of the core's own recogniser so the
+// preview fires exactly where the real gesture would.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -571,32 +578,44 @@ public static class TouchpadService
     private static double DeadZone(int smoothing) =>
         Math.Clamp(smoothing, 0, 100) / 100.0 * 0.0022;
 
-    /// <summary>Two or four fingers — never three, that one is Windows'.</summary>
-    private static int ActivateFingerCount(int gesture) => gesture is 3 or 4 ? 4 : 2;
-
-    /// <summary>X direction the opening stroke carries: "\" travels right.</summary>
-    private static int ActivateXSign(int gesture) => gesture is 1 or 3 ? +1 : -1;
-
-    /// <summary>Does this stroke draw the configured diagonal? sign −1 = reversed.</summary>
-    private static bool IsDiagonalStroke(int gesture, int sign, double dx, double dy,
-                                         double distance)
+    /// <summary>Does this stroke draw that diagonal? sign −1 = reversed.</summary>
+    private static bool IsDiagonalStroke(TouchpadGestures.Choice gesture, int sign,
+                                         double dx, double dy, double distance)
     {
         double ax = Math.Abs(dx), ay = Math.Abs(dy);
         double longer = Math.Max(ax, ay);
         if (longer <= 0) return false;
         if (Math.Min(ax, ay) < longer * DiagonalRatio) return false;
         if (Math.Sqrt(dx * dx + dy * dy) < distance) return false;
-        return dx * ActivateXSign(gesture) * sign > 0 && dy * sign > 0;
+        return dx * gesture.XSign * sign > 0 && dy * sign > 0;
     }
 
-    private static string DescribeGesture(int gesture) => gesture switch
+    /// <summary>
+    /// The first BOUND opening stroke this travel draws, or null. Mirrors the
+    /// core's MatchActivateStroke: the finger count is part of the match, not a
+    /// prior filter, because two- and four-finger diagonals can both be bound.
+    /// </summary>
+    private static TouchpadGestures.Choice? MatchActivate(
+        SettingsModel model, int sign, int contacts, double dx, double dy, double distance)
     {
-        1 => "Two fingers ↘",
-        2 => "Two fingers ↙",
-        3 => "Four fingers ↘",
-        4 => "Four fingers ↙",
-        _ => "",
-    };
+        foreach (var g in TouchpadGestures.Live(TouchpadGestures.Activate,
+                                                model.TouchpadActivateGestureList))
+        {
+            if (contacts != g.Fingers) continue;
+            if (IsDiagonalStroke(g, sign, dx, dy, distance)) return g;
+        }
+        return null;
+    }
+
+    /// <summary>Is a swipe by this many fingers bound to cycling?</summary>
+    private static bool CycleClaims(SettingsModel model, int contacts) =>
+        TouchpadGestures.Live(TouchpadGestures.Cycle, model.TouchpadCycleGestureList)
+                        .Any(g => g.Fingers == contacts);
+
+    /// <summary>Is this commit gesture bound?</summary>
+    private static bool CommitHas(SettingsModel model, string token) =>
+        model.TouchpadCommitGestureList
+             .Any(b => b.Enabled && string.Equals(b.Token, token, StringComparison.OrdinalIgnoreCase));
 
     private static void Recognise(IReadOnlyList<Point> contacts)
     {
@@ -607,8 +626,11 @@ public static class TouchpadService
 
         if (contacts.Count == 0)
         {
-            int tapFingers = model.TouchpadCommitGesture switch { 1 => 1, 2 => 2, _ => 0 };
-            if (_inSequence && !_fired && tapFingers != 0 && _maxFingers == tapFingers
+            // Both taps can be bound at once, so the touch that just lifted
+            // decides which one it was — exactly as the core does.
+            int tapFingers = _maxFingers == 1 && CommitHas(model, "OneTap") ? 1
+                           : _maxFingers == 2 && CommitHas(model, "TwoTap") ? 2 : 0;
+            if (_inSequence && !_fired && tapFingers != 0
                 && !_moved && now - _startTick <= TapMaxMs)
                 Raise(tapFingers == 1 ? "One-finger tap — commit"
                                       : "Two-finger tap — commit");
@@ -687,23 +709,21 @@ public static class TouchpadService
 
         if (_fired) return;
 
-        int gesture = model.TouchpadActivateGesture;
         bool horizontal = Math.Abs(_totalDx) > Math.Abs(_totalDy) * AxisBias;
         double swipe = SwipeThreshold(model.TouchpadSensitivity);
 
         // Commit: long, strongly vertical, and never once this touch has
         // already moved the stack — mirrors the core's guard exactly.
-        int commitFingers = model.TouchpadCommitGesture == 3 ? 2 : 0;
-        if (commitFingers != 0 && !_cycled && contacts.Count == commitFingers
+        if (CommitHas(model, "TwoDown") && !_cycled && contacts.Count == 2
             && _totalDy > Math.Abs(_totalDx) * CommitAxisBias
             && _totalDy >= swipe * CommitDistMul)
         {
             Raise("Two fingers down — commit");
-            _fired = true;
+            RetireStroke(model, now);
             return;
         }
 
-        if (contacts.Count == model.TouchpadCycleFingers && horizontal)
+        if (CycleClaims(model, contacts.Count) && horizontal)
         {
             double thr = StepThreshold(model.TouchpadSensitivity);
             if (!model.WindowSnap)
@@ -736,22 +756,42 @@ public static class TouchpadService
                 }
             }
         }
-        else if (gesture != 0 && contacts.Count == ActivateFingerCount(gesture))
+        else
         {
             // Same velocity boost as the core: a quick stroke fires sooner.
             double eff = swipe * Math.Clamp(1.0 - _speed * 12.0, 0.50, 1.0);
-            if (IsDiagonalStroke(gesture, +1, _totalDx, _totalDy, eff))
+            var opened = MatchActivate(model, +1, contacts.Count, _totalDx, _totalDy, eff);
+            if (opened != null)
             {
-                Raise($"{DescribeGesture(gesture)} — open CKFlip3D");
-                _fired = true;
+                Raise($"{opened.Label} — open CKFlip3D");
+                RetireStroke(model, now);
             }
             else if (model.TouchpadCancelSwipe
-                     && IsDiagonalStroke(gesture, -1, _totalDx, _totalDy, swipe))
+                     && MatchActivate(model, -1, contacts.Count, _totalDx, _totalDy, swipe) != null)
             {
                 Raise("Reversed stroke — cancel");
-                _fired = true;
+                RetireStroke(model, now);
             }
         }
+    }
+
+    /// <summary>
+    /// A gesture fired. Ordinarily the touch is finished until it lifts; with
+    /// Continuous gestures on, only the STROKE is retired and the next gesture
+    /// is measured from here. Mirrors TouchpadHook::RetireStroke.
+    /// </summary>
+    private static void RetireStroke(SettingsModel model, long now)
+    {
+        if (!model.TouchpadContinuous)
+        {
+            _fired = true;
+            return;
+        }
+        _totalDx = _totalDy = 0;
+        _stepAccum = 0;
+        _smoothDx = _smoothDy = 0;
+        _speed = 0;
+        _lastMoveTick = now;
     }
 
     private static void Raise(string text)

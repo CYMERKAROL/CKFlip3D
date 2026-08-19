@@ -1,13 +1,14 @@
-#pragma once
 // ---------------------------------------------------------------------------
-// Runtime-gated OutputDebugString wrapper.
+// Runtime-gated OutputDebugString wrapper.  Logging is tied to the
+// `showDebugInfo` config key (forced on in --safe-mode) so a release build
+// does not spray the debug stream.  It starts ENABLED, because anything that
+// logs before the config is read would otherwise be lost: App::Run and
+// ReloadConfig sync the flag right after each config read.
 //
-// Release builds used to emit an unconditional debug-stream firehose; these
-// logs are now gated on the existing `showDebugInfo` config key (forced on
-// in --safe-mode).  Defaults to ENABLED so any logging that happens before
-// the config is loaded behaves exactly as before — App::Run / ReloadConfig
-// sync the flag to cfg.showDebugInfo right after each config read.
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
 // ---------------------------------------------------------------------------
+#pragma once
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <atomic>

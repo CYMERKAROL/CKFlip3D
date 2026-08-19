@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The General page: startup behaviour, the launch shortcut, quality options,
+// and the state of the core process itself.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -152,7 +158,49 @@ public partial class GeneralPage : UserControl
         {
             StartupWarning.Visibility = Visibility.Collapsed;
         }
+
+        // Same courtesy for the launch shortcut: say up front that there is
+        // nothing to point it at, rather than failing on the click.
+        bool haveLauncher = CoreLocator.FindLauncherExe() != null;
+        LaunchShortcutButton.IsEnabled = haveLauncher;
+        LaunchShortcutWarning.Text = haveLauncher ? string.Empty
+            : "CKFlip3D.Launch.exe could not be located — the shortcut cannot be created. "
+              + "It ships with CKFlip3D 1.6 and later; reinstall to get it.";
+        LaunchShortcutWarning.Visibility = haveLauncher
+            ? Visibility.Collapsed : Visibility.Visible;
         _syncing = false;
+    }
+
+    // ---- Launch shortcut ----------------------------------------------------
+    // Not part of the Apply flow: this button writes a file and that is the
+    // whole of it. There is deliberately no "remove" here — once the shortcut
+    // is on the desktop it is an ordinary shortcut, and deleting it is what
+    // Explorer is for. A settings page offering to delete a file the user may
+    // have since moved, renamed or pinned would be claiming an ownership it
+    // does not have.
+
+    private void CreateLaunchShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        string? error = LaunchShortcutService.Create();
+        if (error == null)
+        {
+            LaunchShortcutNote.Text = "Created on your desktop as “CKFlip3D Cascade”. "
+                + "Drag it onto the taskbar to keep the cascade one click away.";
+            return;
+        }
+
+        DiagnosticsLog.Append(DiagnosticsLog.Code.LaunchShortcutFailed,
+            DiagSeverity.Warning, "The launch shortcut could not be created", error);
+
+        var body = new TextBlock
+        {
+            Text = "The launch shortcut could not be created:\n\n" + error,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 13,
+        };
+        if (TryFindResource("TextPrimaryBrush") is Brush b) body.Foreground = b;
+        if (Window.GetWindow(this) is MainWindow main)
+            main.ShowModal("Launch shortcut failed", body, ("OK", true, null));
     }
 
     // ---- Start delay row ---------------------------------------------------

@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Process entry point.  Claims the single-instance mutex, hands control to
+// App::Run, and releases the mutex on the way out.  Nothing else belongs here.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include "core/app.h"

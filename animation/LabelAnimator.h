@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Smoothing for the selected-window label that floats above the cascade.
+// Keeps the label from teleporting when tiles of different sizes swap through
+// the front slot, and fades it out while a navigation key is held down.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 /// Smooths the selected-window label's screen-space anchor.  Windows of

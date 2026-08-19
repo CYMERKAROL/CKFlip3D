@@ -1,10 +1,16 @@
+// ---------------------------------------------------------------------------
+// Per-slot hover lift: the exponential rise toward the hovered tile, the timed
+// fall that runs when the stack starts moving, and the rotation that keeps a
+// fall attached to the window it started on.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include <Windows.h>
 #include "HoverAnimator.h"
 #include <algorithm>
 #include <cmath>
 
-// ---------------------------------------------------------------------------
 void HoverAnimator::Reset()
 {
     m_lift.clear();
@@ -17,7 +23,6 @@ void HoverAnimator::Reset()
     m_qpcFreq  = 0;
 }
 
-// ---------------------------------------------------------------------------
 void HoverAnimator::EnsureFreq()
 {
     if (m_qpcFreq == 0) {
@@ -27,13 +32,11 @@ void HoverAnimator::EnsureFreq()
     }
 }
 
-// ---------------------------------------------------------------------------
 void HoverAnimator::SetTarget(int slot)
 {
     m_target = slot;
 }
 
-// ---------------------------------------------------------------------------
 void HoverAnimator::BeginDrop(bool animate)
 {
     // Nothing off the floor — nothing to bring down.  This is the branch every
@@ -63,7 +66,6 @@ void HoverAnimator::BeginDrop(bool animate)
     m_target   = -1;            // and it must not be re-raised mid-fall
 }
 
-// ---------------------------------------------------------------------------
 void HoverAnimator::Rotate(bool forward)
 {
     auto rotate = [forward](std::vector<float>& v) {
@@ -80,7 +82,6 @@ void HoverAnimator::Rotate(bool forward)
     m_target = -1;
 }
 
-// ---------------------------------------------------------------------------
 void HoverAnimator::Tick(uint32_t slotCount, bool animate)
 {
     if (m_lift.size() != slotCount) {

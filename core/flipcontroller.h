@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// The switcher session, start to finish.  Everything that has to agree with
+// everything else during those few seconds lives behind this one class: the
+// window list, the captures, the scene, the animators, and the render loop
+// that drives them.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -270,8 +278,6 @@ private:
     void UpdateSearchBox();
     void DrawSearchBox(ID3D11DeviceContext* ctx, float vpW, float vpH);
 
-    void HideDesktopIcons();
-    void RestoreDesktopIcons();
     /// Capture backing the wallpaper backdrop: the desktop tile's capture
     /// when the tile is enabled, or the dedicated m_wallpaperCapture when
     /// the desktop tile is disabled (config showDesktopTile = false).
@@ -415,6 +421,12 @@ private:
     int                          m_labelTheme     = 0;   // appTheme the texture was built for
     int                          m_labelTexW = 0;
     int                          m_labelTexH = 0;
+    // The texture was built while the window's icon was still being resolved
+    // off-thread, so it has to be rebuilt once an answer lands.  Paired with
+    // the resolver's generation counter so the rebuild happens exactly once
+    // per answer instead of once per frame.
+    bool                         m_labelIconPending = false;
+    unsigned                     m_labelIconGen     = 0;
     // Smooths the label anchor between the projected front-slot bounds of
     // successive frames — differently sized windows swapping through the
     // front slot glide instead of teleporting (animation/LabelAnimator).
@@ -469,14 +481,14 @@ private:
     };
     std::unordered_map<HWND, WindowMeta> m_windowMeta;
 
-    HWND                         m_iconListView   = nullptr;  // Desktop SysListView32
-    bool                         m_iconsWereVisible = false;  // Restore icons on dismiss
+    // (The desktop-icon hide/restore members are gone — see the note in
+    // flipcontroller.cpp for why nothing touches the shell's icon list now.)
     std::unique_ptr<WGCCapture>  m_taskbarCapture;            // Live WGC for Shell_TrayWnd
     HWND                         m_taskbarHwnd = nullptr;     // Shell_TrayWnd
     RECT                         m_taskbarRect{};              // OVERLAY-space taskbar rect
     std::vector<SecondaryTray>   m_secondaryTrays;
-    bool                         m_taskbarContentResolved = false; // v8.5: content-band UV crop resolved
-    float                        m_taskbarContentCenterY  = 0.5f;  // v8.5: UV.y centre of taskbar content band
+    bool                         m_taskbarContentResolved = false; // content-band UV crop resolved
+    float                        m_taskbarContentCenterY  = 0.5f;  // UV.y centre of taskbar content band
     TaskbarButtonLocator         m_taskbarLocator;             // UIA per-button rect lookup
     bool                         m_taskbarWasVisible = false;  // Was taskbar visible before hide
     bool                         m_taskbarDrawOnTop = false;   // Autohide taskbar overlays windows in DWM

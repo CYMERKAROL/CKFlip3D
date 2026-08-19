@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Editor for the exclusion list: programs whose windows never show up as tiles
+// in the cascade at all.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Where a minimized window's taskbar button actually sits on screen.  The
+// entry animation needs that rect so a minimized window emerges from its own
+// button instead of from nowhere, the way Win7 did it.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN

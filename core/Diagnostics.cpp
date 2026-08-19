@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Writing the diagnostics log.  Appends are line-at-a-time JSON, guarded so a
+// failed write can never turn into a failure of its own, and callable from any
+// thread including the hook thread and the unhandled-exception filter.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include "Diagnostics.h"
 
@@ -418,14 +425,12 @@ std::set<std::wstring>& OnceSeen()
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 std::wstring Diag::LogPath()
 {
     ResolvePaths();
     return g_logPath;
 }
 
-// ---------------------------------------------------------------------------
 void Diag::Report(const wchar_t* code, Sev sev, const wchar_t* message,
                   const wchar_t* detail, bool sticky)
 {
@@ -463,7 +468,6 @@ void Diag::Report(const wchar_t* code, Sev sev, const wchar_t* message,
     AppendLine(line);
 }
 
-// ---------------------------------------------------------------------------
 void Diag::ReportOnce(const wchar_t* code, Sev sev, const wchar_t* message,
                       const wchar_t* detail, bool sticky)
 {
@@ -477,7 +481,6 @@ void Diag::ReportOnce(const wchar_t* code, Sev sev, const wchar_t* message,
     Report(code, sev, message, detail, sticky);
 }
 
-// ---------------------------------------------------------------------------
 void Diag::ReportHr(const wchar_t* code, Sev sev, const wchar_t* message,
                     HRESULT hr, const wchar_t* detail)
 {
@@ -498,7 +501,6 @@ void Diag::ReportHr(const wchar_t* code, Sev sev, const wchar_t* message,
     Report(code, sev, message, buf);
 }
 
-// ---------------------------------------------------------------------------
 void Diag::ReportLastError(const wchar_t* code, Sev sev, const wchar_t* message,
                            const wchar_t* detail)
 {
@@ -511,7 +513,6 @@ void Diag::ReportLastError(const wchar_t* code, Sev sev, const wchar_t* message,
     Report(code, sev, message, buf);
 }
 
-// ---------------------------------------------------------------------------
 void Diag::BeginSession()
 {
     TrimIfLarge();
@@ -589,7 +590,6 @@ void Diag::BeginSession()
     }
 }
 
-// ---------------------------------------------------------------------------
 void Diag::ArmSession()
 {
     FILE* f = nullptr;
@@ -610,7 +610,6 @@ void Diag::ArmSession()
     }
 }
 
-// ---------------------------------------------------------------------------
 void Diag::NoteState(const wchar_t* state)
 {
     if (!state || !*state || !g_sessionLine[0])
@@ -627,7 +626,6 @@ void Diag::NoteState(const wchar_t* state)
     fclose(f);
 }
 
-// ---------------------------------------------------------------------------
 void Diag::EndSession()
 {
     DeleteFileW(MarkerPath());

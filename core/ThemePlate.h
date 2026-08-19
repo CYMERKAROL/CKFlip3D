@@ -22,6 +22,8 @@
 // Everything composes into a PREMULTIPLIED float BGRA canvas and is packed to
 // bytes at the end, so overlapping passes (plate, icon, glyph shadow, glyph)
 // blend correctly at any coverage instead of clipping at 8 bits per step.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
 // ---------------------------------------------------------------------------
 namespace ThemePlate {
 

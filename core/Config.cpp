@@ -1,13 +1,18 @@
+// ---------------------------------------------------------------------------
+// Reading and writing config.json.  A hand-rolled parser, deliberately: the
+// file is a flat set of key/value pairs this program writes itself, and a JSON
+// library would be a dependency the core does not otherwise need.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "Config.h"
 #include "Diagnostics.h"
 #include <Shlobj.h>
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 
 #pragma comment(lib, "shell32.lib")
-
-// Minimal JSON read/write — no external dependencies.
-// Only handles the flat key=value structure of AppConfig.
 
 std::wstring Config::GetConfigPath()
 {
@@ -128,9 +133,87 @@ std::string EscapeUtf8(const std::wstring& wide)
     return escaped;
 }
 
+/// The last '+'-separated token of a binding — its main key — or an empty
+/// string when that token cannot serve as a navigation key.
+///
+/// Bare modifiers and mouse buttons are refused: neither can be an entry in a
+/// navigation list (the hook keeps its own re-press cycling for them), and
+/// seeding one would only produce an entry the parser later drops.
+std::wstring NavTokenOfBinding(const std::wstring& combo)
+{
+    size_t plus = combo.find_last_of(L'+');
+    std::wstring tok = (plus == std::wstring::npos) ? combo : combo.substr(plus + 1);
+
+    size_t b = tok.find_first_not_of(L" \t");
+    size_t e = tok.find_last_not_of(L" \t");
+    if (b == std::wstring::npos) return {};
+    tok = tok.substr(b, e - b + 1);
+
+    std::wstring lower;
+    lower.reserve(tok.size());
+    for (wchar_t c : tok) lower += static_cast<wchar_t>(towlower(c));
+
+    static const wchar_t* kNotKeys[] = {
+        L"ctrl", L"control", L"shift", L"alt", L"win", L"windows", L"super",
+        L"meta", L"lbutton", L"rbutton", L"mbutton", L"middlebutton",
+        L"xbutton1", L"xbutton2", L"mouse4", L"mouse5",
+    };
+    for (const wchar_t* bad : kNotKeys)
+        if (lower == bad) return {};
+
+    return tok;
+}
+
+/// Switch every entry of a ';'-separated binding list OFF, keeping the entries
+/// themselves ('!' prefix — see AppConfig::navForwardKeys).  Entries that are
+/// already parked are left as they are rather than gaining a second '!'.
+std::wstring ParkNavKeys(const std::wstring& list)
+{
+    std::wstring out;
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t end = list.find(L';', start);
+        if (end == std::wstring::npos) end = list.size();
+
+        std::wstring tok = list.substr(start, end - start);
+        size_t b = tok.find_first_not_of(L" \t");
+        size_t e = tok.find_last_not_of(L" \t");
+        tok = (b == std::wstring::npos) ? std::wstring() : tok.substr(b, e - b + 1);
+
+        if (!tok.empty()) {
+            if (!out.empty()) out += L';';
+            if (tok[0] != L'!') out += L'!';
+            out += tok;
+        }
+
+        if (end == list.size()) break;
+        start = end + 1;
+    }
+    return out;
+}
+
+/// Does this ';'-separated binding list carry at least one entry that is not
+/// parked?  "Delete" does, "!Delete" does not, and neither does "".
+bool HasLiveEntry(const std::wstring& list)
+{
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t end = list.find(L';', start);
+        if (end == std::wstring::npos) end = list.size();
+
+        std::wstring tok = list.substr(start, end - start);
+        size_t b = tok.find_first_not_of(L" \t");
+        if (b != std::wstring::npos && tok[b] != L'!')
+            return true;
+
+        if (end == list.size()) break;
+        start = end + 1;
+    }
+    return false;
+}
+
 } // namespace
 
-// ---------------------------------------------------------------------------
 AppConfig Config::Load()
 {
     AppConfig cfg;
@@ -182,14 +265,79 @@ AppConfig Config::Load()
         FindInt(json, "startDelayMs", static_cast<int>(cfg.startDelayMs)));
     cfg.ignoreFullscreen = FindBool(json, "ignoreFullscreen", cfg.ignoreFullscreen);
     cfg.mouseWheelCycle  = FindBool(json, "mouseWheelCycle",  cfg.mouseWheelCycle);
-    cfg.keyboardNav      = FindBool(json, "keyboardNav",      cfg.keyboardNav);
     cfg.ignoredApps      = FindString(json, "ignoredApps",    cfg.ignoredApps);
     cfg.excludedApps     = FindString(json, "excludedApps",   cfg.excludedApps);
     cfg.activationHotkey = FindString(json, "activationHotkey", cfg.activationHotkey);
-    cfg.commitHotkey     = FindString(json, "commitHotkey",     cfg.commitHotkey);
-    cfg.cancelHotkey     = FindString(json, "cancelHotkey",     cfg.cancelHotkey);
-    cfg.closeHotkey      = FindString(json, "closeHotkey",      cfg.closeHotkey);
     cfg.hotkeyToggleMode = FindBool(json, "hotkeyToggleMode", cfg.hotkeyToggleMode);
+
+    // ---- Commit / cancel / close: one key each, until Build 3 --------------
+    // Same migration shape as the navigation lists below: read the list, and
+    // when the file has none, seed it from the single key that file DOES carry
+    // so an update changes nothing the user can feel.  Only when the key is
+    // ABSENT — once the lists have been written they are the truth.
+    {
+        auto seeded = [&](const char* listKey, const char* legacyKey,
+                          std::wstring& target) {
+            const bool hadList =
+                json.find(std::string("\"") + listKey + "\"") != std::string::npos;
+            target = FindString(json, listKey, target);
+            if (!hadList)
+                target = FindString(json, legacyKey, target);
+            return hadList;
+        };
+
+        seeded("commitKeys", "commitHotkey", cfg.commitKeys);
+        seeded("cancelKeys", "cancelHotkey", cfg.cancelKeys);
+
+        // The close key's old master switch (`closeKeyEnabled`) said exactly
+        // what an empty — or wholly parked — list says, so it is gone the way
+        // `keyboardNav` went.  A file that still carries it OFF meant "no close
+        // key", and that has to keep meaning that: park the entry rather than
+        // handing back a Delete somebody switched off.  Parked and not deleted,
+        // so the Settings page shows it ready to come back.
+        if (!seeded("closeKeys", "closeHotkey", cfg.closeKeys)
+            && !FindBool(json, "closeKeyEnabled", true))
+            cfg.closeKeys = ParkNavKeys(cfg.closeKeys);
+    }
+
+    // ---- Navigation keys, and the 1.5 file that has none of them ----------
+    // Read AFTER activationHotkey, because a file written before 1.6 carries no
+    // navigation lists at all and the defaults alone would not describe it:
+    // back then the ACTIVATION key cycled the stack as a side effect of opening
+    // it, whatever that key happened to be.  So the lists are seeded from THIS
+    // file's hotkey — Win+Tab gives the shipped Tab, Ctrl+Alt+F gives F — and
+    // someone updating finds the switcher behaving exactly as it did, with
+    // every key now listed and removable.
+    //
+    // Seeded only when the key is ABSENT.  Once 1.6 has written the lists they
+    // are the truth, changes of hotkey included: a key the user took off the
+    // list must not come back because they later rebound the hotkey to it.
+    {
+        const bool hadNavKeys = json.find("\"navForwardKeys\"") != std::string::npos;
+        cfg.navForwardKeys = FindString(json, "navForwardKeys", cfg.navForwardKeys);
+        cfg.navBackKeys    = FindString(json, "navBackKeys",    cfg.navBackKeys);
+        if (!hadNavKeys) {
+            const std::wstring main = NavTokenOfBinding(cfg.activationHotkey);
+            // Empty when the hotkey is a bare modifier or a mouse button; those
+            // keep cycling through the hook's own re-press path, so the lists
+            // get the arrows alone rather than an entry that cannot work.
+            cfg.navForwardKeys = main.empty() ? L"Down;Right" : main + L";Down;Right";
+            cfg.navBackKeys    = main.empty() ? L"Up;Left" : L"Shift+" + main + L";Up;Left";
+        }
+
+        // Legacy `keyboardNav` (1.5 and earlier): one switch over the four
+        // hard-wired arrows.  1.6 replaced it with the two lists, where every
+        // key can be removed or parked on its own — so the old switch had
+        // become a second way to say something the lists already say.  A file
+        // that still carries it OFF meant "no navigation keys", and that has to
+        // keep meaning that: park every entry rather than handing somebody back
+        // arrows they switched off.  Parked, not deleted, so the Navigation
+        // keys page shows them ready to be switched back on.
+        if (!FindBool(json, "keyboardNav", true)) {
+            cfg.navForwardKeys = ParkNavKeys(cfg.navForwardKeys);
+            cfg.navBackKeys    = ParkNavKeys(cfg.navBackKeys);
+        }
+    }
     cfg.pointerInCascade   = FindBool(json, "pointerInCascade",   cfg.pointerInCascade);
     cfg.mouseSelect        = FindBool(json, "mouseSelect",        cfg.mouseSelect);
     cfg.mouseSelectButton  = FindInt(json,  "mouseSelectButton",  cfg.mouseSelectButton);
@@ -197,7 +345,6 @@ AppConfig Config::Load()
     cfg.mouseDragButton    = FindInt(json,  "mouseDragButton",    cfg.mouseDragButton);
     cfg.closeFromCascade   = FindBool(json, "closeFromCascade",   cfg.closeFromCascade);
     cfg.mouseCloseButton   = FindInt(json,  "mouseCloseButton",   cfg.mouseCloseButton);
-    cfg.closeKeyEnabled    = FindBool(json, "closeKeyEnabled",    cfg.closeKeyEnabled);
     cfg.searchEnabled      = FindBool(json, "searchEnabled",      cfg.searchEnabled);
     cfg.searchBox          = FindBool(json, "searchBox",          cfg.searchBox);
     cfg.searchMatchProcess = FindBool(json, "searchMatchProcess", cfg.searchMatchProcess);
@@ -208,14 +355,58 @@ AppConfig Config::Load()
     cfg.searchScale = static_cast<uint32_t>(
         FindInt(json, "searchScale", static_cast<int>(cfg.searchScale)));
     cfg.touchpadNav             = FindBool(json, "touchpadNav",             cfg.touchpadNav);
-    cfg.touchpadCycleFingers    = FindInt(json,  "touchpadCycleFingers",    cfg.touchpadCycleFingers);
     cfg.touchpadReverse         = FindBool(json, "touchpadReverse",         cfg.touchpadReverse);
     cfg.touchpadSensitivity     = FindInt(json,  "touchpadSensitivity",     cfg.touchpadSensitivity);
-    cfg.touchpadActivateGesture = FindInt(json,  "touchpadActivateGesture", cfg.touchpadActivateGesture);
-    cfg.touchpadCommitGesture   = FindInt(json,  "touchpadCommitGesture",   cfg.touchpadCommitGesture);
     cfg.touchpadSmoothing       = FindInt(json,  "touchpadSmoothing",       cfg.touchpadSmoothing);
     cfg.touchpadCancelSwipe     = FindBool(json, "touchpadCancelSwipe",     cfg.touchpadCancelSwipe);
+    cfg.touchpadContinuous      = FindBool(json, "touchpadContinuous",      cfg.touchpadContinuous);
     cfg.windowSnap              = FindBool(json, "windowSnap",              cfg.windowSnap);
+
+    // ---- Touchpad gestures: one apiece, until Build 3 ----------------------
+    // Each list replaces a single integer, and each integer's 0 meant "off" —
+    // which is what an empty list says now.  Seeded from the integer only when
+    // the list is absent, exactly like the key lists above.
+    {
+        auto hasKey = [&](const char* key) {
+            return json.find(std::string("\"") + key + "\"") != std::string::npos;
+        };
+
+        if (hasKey("touchpadActivateGestures")) {
+            cfg.touchpadActivateGestures =
+                FindString(json, "touchpadActivateGestures", cfg.touchpadActivateGestures);
+        } else {
+            switch (FindInt(json, "touchpadActivateGesture", 1)) {
+            case 0:  cfg.touchpadActivateGestures = L"";              break;
+            case 2:  cfg.touchpadActivateGestures = L"TwoDownLeft";   break;
+            case 3:  cfg.touchpadActivateGestures = L"FourDownRight"; break;
+            case 4:  cfg.touchpadActivateGestures = L"FourDownLeft";  break;
+            default: cfg.touchpadActivateGestures = L"TwoDownRight";  break;
+            }
+        }
+
+        // Two or four fingers only.  A config written before three-finger
+        // gestures were dropped folds onto the nearest surviving choice
+        // instead of leaving the user with a binding that never fires.
+        if (hasKey("touchpadCycleGestures")) {
+            cfg.touchpadCycleGestures =
+                FindString(json, "touchpadCycleGestures", cfg.touchpadCycleGestures);
+        } else {
+            cfg.touchpadCycleGestures =
+                FindInt(json, "touchpadCycleFingers", 2) >= 4 ? L"FourSwipe" : L"TwoSwipe";
+        }
+
+        if (hasKey("touchpadCommitGestures")) {
+            cfg.touchpadCommitGestures =
+                FindString(json, "touchpadCommitGestures", cfg.touchpadCommitGestures);
+        } else {
+            switch (FindInt(json, "touchpadCommitGesture", 1)) {
+            case 0:  cfg.touchpadCommitGestures = L"";        break;
+            case 2:  cfg.touchpadCommitGestures = L"TwoTap";  break;
+            case 3:  cfg.touchpadCommitGestures = L"TwoDown"; break;
+            default: cfg.touchpadCommitGestures = L"OneTap";  break;
+            }
+        }
+    }
     cfg.showDebugInfo = FindBool(json, "showDebugInfo", cfg.showDebugInfo);
     cfg.appTheme      = FindInt(json,  "appTheme",      cfg.appTheme);
 
@@ -247,16 +438,8 @@ AppConfig Config::Load()
     if (cfg.backgroundBlur > 100) cfg.backgroundBlur = 100;
     if (cfg.perfProfile < -1) cfg.perfProfile = -1;
     if (cfg.perfProfile > 2)  cfg.perfProfile = 2;
-    // Two or four fingers only.  A config written before three-finger
-    // gestures were dropped folds onto the nearest surviving choice instead
-    // of leaving the user with a binding that never fires.
-    cfg.touchpadCycleFingers = cfg.touchpadCycleFingers >= 4 ? 4 : 2;
     if (cfg.touchpadSensitivity < 1)   cfg.touchpadSensitivity = 1;
     if (cfg.touchpadSensitivity > 100) cfg.touchpadSensitivity = 100;
-    if (cfg.touchpadActivateGesture < 0) cfg.touchpadActivateGesture = 0;
-    if (cfg.touchpadActivateGesture > 4) cfg.touchpadActivateGesture = 4;
-    if (cfg.touchpadCommitGesture < 0) cfg.touchpadCommitGesture = 0;
-    if (cfg.touchpadCommitGesture > 3) cfg.touchpadCommitGesture = 3;  // was 4 = three down
     if (cfg.touchpadSmoothing < 0)   cfg.touchpadSmoothing = 0;
     if (cfg.touchpadSmoothing > 100) cfg.touchpadSmoothing = 100;
     if (static_cast<int>(cfg.startDelayMs) < 1) cfg.startDelayMs = 1;
@@ -265,9 +448,6 @@ AppConfig Config::Load()
     if (cfg.mouseSelectButton < 0 || cfg.mouseSelectButton > 5) cfg.mouseSelectButton = 1;
     if (cfg.mouseDragButton   < 0 || cfg.mouseDragButton   > 5) cfg.mouseDragButton   = 2;
     if (cfg.mouseCloseButton  < 0 || cfg.mouseCloseButton  > 5) cfg.mouseCloseButton  = 3;
-    if (cfg.commitHotkey.empty()) cfg.commitHotkey = L"Enter";
-    if (cfg.cancelHotkey.empty()) cfg.cancelHotkey = L"Escape";
-    if (cfg.closeHotkey.empty())  cfg.closeHotkey  = L"Delete";
     if (cfg.searchPosX > 100) cfg.searchPosX = 100;
     if (cfg.searchPosY > 100) cfg.searchPosY = 100;
     if (cfg.searchScale < 50)  cfg.searchScale = 50;
@@ -288,9 +468,6 @@ AppConfig Config::Load()
     if (raw.startDelayMs != cfg.startDelayMs)
         clamped(L"startDelayMs", static_cast<long>(raw.startDelayMs),
                 static_cast<long>(cfg.startDelayMs));
-    if (raw.touchpadCycleFingers != cfg.touchpadCycleFingers)
-        clamped(L"touchpadCycleFingers", raw.touchpadCycleFingers,
-                cfg.touchpadCycleFingers);
 
     // Combinations the Settings app refuses to save, which say nothing about
     // how the file got this way — an older build wrote it, or it was edited by
@@ -303,6 +480,17 @@ AppConfig Config::Load()
                      L"\"searchEnabled\" needs \"hotkeyToggleMode\": releasing a "
                      L"hotkey with a modifier commits immediately, so the rest of "
                      L"the word reaches Windows as shortcuts");
+    // A cascade with neither a commit nor a cancel key can only be closed with
+    // the mouse or the touchpad — and with those off too, not at all.  The
+    // Settings page keeps one live entry on each list, so a file that says
+    // otherwise was hand-edited and its author deserves to hear about it.
+    if (!HasLiveEntry(cfg.commitKeys) && !HasLiveEntry(cfg.cancelKeys))
+        Diag::Report(Diag::Code::ConfigConflict, Diag::Sev::Warning,
+                     L"No key can close the cascade",
+                     L"\"commitKeys\" and \"cancelKeys\" are both empty (or wholly "
+                     L"switched off), so once the cascade is open only the mouse "
+                     L"and the touchpad can end the session");
+
     if (!cfg.windowSnap && !cfg.pointerInCascade)
         Diag::Report(Diag::Code::ConfigConflict, Diag::Sev::Warning,
                      L"Free stack movement is on, but the mouse is kept out of the cascade",
@@ -313,7 +501,6 @@ AppConfig Config::Load()
     return cfg;
 }
 
-// ---------------------------------------------------------------------------
 void Config::Save(const AppConfig& cfg)
 {
     std::wstring path = GetConfigPath();
@@ -361,13 +548,14 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"startDelayMs\": %u,\n",  cfg.startDelayMs);
     fprintf(f, "  \"ignoreFullscreen\": %s,\n", cfg.ignoreFullscreen ? "true" : "false");
     fprintf(f, "  \"mouseWheelCycle\": %s,\n",  cfg.mouseWheelCycle  ? "true" : "false");
-    fprintf(f, "  \"keyboardNav\": %s,\n",      cfg.keyboardNav      ? "true" : "false");
+    fprintf(f, "  \"navForwardKeys\": \"%s\",\n", EscapeUtf8(cfg.navForwardKeys).c_str());
+    fprintf(f, "  \"navBackKeys\": \"%s\",\n",    EscapeUtf8(cfg.navBackKeys).c_str());
     fprintf(f, "  \"ignoredApps\": \"%s\",\n",  EscapeUtf8(cfg.ignoredApps).c_str());
     fprintf(f, "  \"excludedApps\": \"%s\",\n", EscapeUtf8(cfg.excludedApps).c_str());
     fprintf(f, "  \"activationHotkey\": \"%s\",\n", EscapeUtf8(cfg.activationHotkey).c_str());
-    fprintf(f, "  \"commitHotkey\": \"%s\",\n",     EscapeUtf8(cfg.commitHotkey).c_str());
-    fprintf(f, "  \"cancelHotkey\": \"%s\",\n",     EscapeUtf8(cfg.cancelHotkey).c_str());
-    fprintf(f, "  \"closeHotkey\": \"%s\",\n",      EscapeUtf8(cfg.closeHotkey).c_str());
+    fprintf(f, "  \"commitKeys\": \"%s\",\n",       EscapeUtf8(cfg.commitKeys).c_str());
+    fprintf(f, "  \"cancelKeys\": \"%s\",\n",       EscapeUtf8(cfg.cancelKeys).c_str());
+    fprintf(f, "  \"closeKeys\": \"%s\",\n",        EscapeUtf8(cfg.closeKeys).c_str());
     fprintf(f, "  \"hotkeyToggleMode\": %s,\n", cfg.hotkeyToggleMode ? "true" : "false");
     fprintf(f, "  \"pointerInCascade\": %s,\n",   cfg.pointerInCascade  ? "true" : "false");
     fprintf(f, "  \"mouseSelect\": %s,\n",        cfg.mouseSelect       ? "true" : "false");
@@ -376,7 +564,6 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"mouseDragButton\": %d,\n",    cfg.mouseDragButton);
     fprintf(f, "  \"closeFromCascade\": %s,\n",   cfg.closeFromCascade  ? "true" : "false");
     fprintf(f, "  \"mouseCloseButton\": %d,\n",   cfg.mouseCloseButton);
-    fprintf(f, "  \"closeKeyEnabled\": %s,\n",    cfg.closeKeyEnabled   ? "true" : "false");
     fprintf(f, "  \"searchEnabled\": %s,\n",      cfg.searchEnabled      ? "true" : "false");
     fprintf(f, "  \"searchBox\": %s,\n",          cfg.searchBox          ? "true" : "false");
     fprintf(f, "  \"searchMatchProcess\": %s,\n", cfg.searchMatchProcess ? "true" : "false");
@@ -384,13 +571,17 @@ void Config::Save(const AppConfig& cfg)
     fprintf(f, "  \"searchPosY\": %u,\n",         cfg.searchPosY);
     fprintf(f, "  \"searchScale\": %u,\n",        cfg.searchScale);
     fprintf(f, "  \"touchpadNav\": %s,\n",             cfg.touchpadNav             ? "true" : "false");
-    fprintf(f, "  \"touchpadCycleFingers\": %d,\n",    cfg.touchpadCycleFingers);
+    fprintf(f, "  \"touchpadActivateGestures\": \"%s\",\n",
+            EscapeUtf8(cfg.touchpadActivateGestures).c_str());
+    fprintf(f, "  \"touchpadCycleGestures\": \"%s\",\n",
+            EscapeUtf8(cfg.touchpadCycleGestures).c_str());
+    fprintf(f, "  \"touchpadCommitGestures\": \"%s\",\n",
+            EscapeUtf8(cfg.touchpadCommitGestures).c_str());
     fprintf(f, "  \"touchpadReverse\": %s,\n",         cfg.touchpadReverse         ? "true" : "false");
     fprintf(f, "  \"touchpadSensitivity\": %d,\n",     cfg.touchpadSensitivity);
-    fprintf(f, "  \"touchpadActivateGesture\": %d,\n", cfg.touchpadActivateGesture);
-    fprintf(f, "  \"touchpadCommitGesture\": %d,\n",   cfg.touchpadCommitGesture);
     fprintf(f, "  \"touchpadSmoothing\": %d,\n",       cfg.touchpadSmoothing);
     fprintf(f, "  \"touchpadCancelSwipe\": %s,\n",     cfg.touchpadCancelSwipe     ? "true" : "false");
+    fprintf(f, "  \"touchpadContinuous\": %s,\n",      cfg.touchpadContinuous      ? "true" : "false");
     fprintf(f, "  \"windowSnap\": %s,\n",              cfg.windowSnap              ? "true" : "false");
     fprintf(f, "  \"showDebugInfo\": %s,\n",  cfg.showDebugInfo ? "true" : "false");
     // Settings-app-owned key — persisted here too so a core-side save

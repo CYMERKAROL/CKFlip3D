@@ -1,15 +1,21 @@
+// ---------------------------------------------------------------------------
+// Building the Cover Flow row: slot poses, per-tile lean, and the camera that
+// frames them.  The spacing is solved against the projected width of each tile
+// rather than assumed, so the row holds its shape across aspect ratios.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include "CoverFlowLayout.hpp"
 #include <algorithm>
 #include <cmath>
 
 // ---------------------------------------------------------------------------
-// Cover Flow layout constants. 
-// frame scaled up to the program's default of 10 windows: a flat centre
-// tile facing the camera, side tiles leaning gently outward, light
-// shingle overlap on the sides (inner tile over outer) and a slight
-// recession per step.  Everything width-like is derived adaptively from
-// the viewport aspect; the outermost tiles may bleed off the screen edge
+// Cover Flow layout constants, tuned at the program's default of 10 windows:
+// a flat centre tile facing the camera, side tiles leaning gently outward,
+// light shingle overlap on the sides (inner tile over outer) and a slight
+// recession per step.  Everything width-like is derived adaptively from the
+// viewport aspect, so the outermost tiles may bleed off the screen edge.
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -175,7 +181,6 @@ inline float TileAspectScale(float viewportAspect)
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 int CoverFlowLayout::SlotOffset(uint32_t i, uint32_t visible)
 {
     if (visible <= 1 || i == 0) return 0;
@@ -185,7 +190,6 @@ int CoverFlowLayout::SlotOffset(uint32_t i, uint32_t visible)
     return static_cast<int>(i) - static_cast<int>(visible);
 }
 
-// ---------------------------------------------------------------------------
 CoverFlowLayout::Result CoverFlowLayout::Build(const SceneConfig& cfg,
                                                uint32_t visible,
                                                float viewportAspect)
@@ -310,7 +314,6 @@ CoverFlowLayout::Result CoverFlowLayout::Build(const SceneConfig& cfg,
     return r;
 }
 
-// ---------------------------------------------------------------------------
 void CoverFlowLayout::RelayoutX(const SceneConfig& cfg,
                                 std::vector<TileSlot>& slots,
                                 float viewportAspect, float camEyeZ)

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Installing the hooks and routing what they post.  HandleMessage runs on the
+// message loop, well away from the hook callbacks, so the work a trigger sets
+// off never happens inside the low-level hook's time budget.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #include "hotkeymanager.h"
 #include "keyboardhook.h"
 #include "touchpadhook.h"

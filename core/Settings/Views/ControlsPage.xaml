@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Controls page layout: summary rows that report what is bound where and
+     open the sub-page that edits it.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.ControlsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -55,7 +61,7 @@
                         <StackPanel Margin="0,0,20,0">
                             <TextBlock Style="{StaticResource SettingLabelText}" Text="Ignore in fullscreen applications"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="When a fullscreen app (game, video, presentation) is in the foreground, the hotkey is passed through to Windows instead of opening the cascade — nothing gets blocked."/>
+                                       Text="Passes hotkeys to Windows while a full-screen app is active."/>
                         </StackPanel>
                         <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                                   IsChecked="{Binding IgnoreFullscreen}"/>
@@ -93,20 +99,13 @@
                                   IsChecked="{Binding MouseWheelCycle}"/>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Arrow keys navigation"/>
-                            <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Arrow keys cycle windows while the cascade is open."/>
-                        </StackPanel>
-                        <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
-                                  IsChecked="{Binding KeyboardNav}"/>
-                    </Grid>
-                    <Rectangle Style="{StaticResource RowSeparator}"/>
+                    <!-- The keys that step through the stack are NOT here.  They
+                         used to be one "Arrow keys navigation" switch over four
+                         hard-wired keys; they are now a list per direction where
+                         each key can be removed or parked on its own (Input →
+                         Mouse & keyboard → Navigation keys), and a master switch
+                         beside that list would only be a second way to say
+                         "none of them". -->
                     <Grid x:Name="TouchpadNavRow">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -132,7 +131,7 @@
                     <TextBlock VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12"
                                TextWrapping="Wrap" Margin="0,0,16,0"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="Restore the default trigger behaviour and clear the ignore list."/>
+                               Text="Restore the default Controls settings and clear the ignore list."/>
                     <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                             Content="Restore default bindings" Click="RestoreDefaults_Click"/>
                 </Grid>

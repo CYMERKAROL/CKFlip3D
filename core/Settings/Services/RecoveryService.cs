@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Undoing what a crashed session left behind: uncloak every window, bring the
+// taskbar back, repair the desktop icons.  Written straight against Win32 so
+// it still works when the core is dead or hung and cannot be asked politely.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -8,7 +15,8 @@ namespace CKFlip3D.Settings.Services;
 /// Recovery actions implemented directly against Win32 so they work even when
 /// the core process is dead or hung — no IPC channel required. They mirror the
 /// core's own teardown logic (capture/windowcloaker.cpp ForceUncloakEverything,
-/// flipcontroller ShowRealTaskbar / RestoreDesktopIcons).
+/// flipcontroller ShowRealTaskbar). The desktop-icon repair no longer mirrors
+/// anything the core does — see RestoreDesktopIcons.
 /// </summary>
 public static class RecoveryService
 {
@@ -161,16 +169,19 @@ public static class RecoveryService
     }
 
     /// <summary>
-    /// Re-shows the desktop icon list view if a flip left it hidden —
+    /// Re-shows the desktop icon list view if something left it hidden —
     /// unless the user hides icons by preference (then hidden IS the
     /// correct state and showing the list view would "switch icons on").
+    ///
+    /// The current core never hides the icons, so this cannot be undoing its
+    /// damage. It stays for the machines where an older core died mid-session
+    /// and left them hidden with no other way back.
     /// </summary>
     public static bool RestoreDesktopIcons()
     {
         if (UserPrefersIconsHidden()) return false;
 
-        // SHELLDLL_DefView can be a child of Progman or a WorkerW
-        // (same lookup the core uses in HideDesktopIcons).
+        // SHELLDLL_DefView can be a child of Progman or a WorkerW.
         IntPtr defView = IntPtr.Zero;
         IntPtr progman = FindWindowW("Progman", null);
         if (progman != IntPtr.Zero)

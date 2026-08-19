@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.6
+
+### Keys in the cascade
+
+- New sub-page **Controls → Mouse & keyboard → Keys in the cascade**, collecting all five keyboard bindings — **Next window**, **Previous window**, **Commit**, **Cancel** and **Close window** — as editable **lists** rather than one key each. Press a key to add it, switch one off without losing it, remove it with the X, or restore the shipped set.
+- Every binding can now hold several keys: `Enter` **and** `Space` to commit, `Delete` **and** `Backspace` to close.
+- **Tab and Shift+Tab are now ordinary entries** on those lists. They used to cycle purely as a side effect of being the key that opens the cascade, which is what made them the only navigation keys nobody could change.
+- A key already taken by another list is refused, so the page tells you what is holding it. Commit and cancel will not give up their last live entry — they are the ways out of a cascade, and the page that would fix it is behind it.
+- The **keyboard navigation** and **close key** switches are gone: an empty (or wholly parked) list says exactly what they said.
+- Changing the activation hotkey carries its navigation entry along, so rebinding can never silently leave the new key unable to step.
+- **Restore defaults** on Controls now resets the whole category — all five key lists and every touchpad gesture setting, not just the rows on screen.
+
+### Touchpad gestures
+
+- Activation, cycle and commit gestures are **lists** too, with the same add / park / remove row as the keys. Two hands do not always want the same stroke.
+- New **Gesture Chaining** *(default off)* — a touch that fires a gesture used to be finished until the fingers lifted. On, only the stroke is retired, so one motion can open the cascade and walk through it without leaving the pad.
+
+### Startup
+
+- New **General → Startup → Create launch shortcut** — writes a desktop shortcut that **opens the 3D cascade**. It runs as the ordinary user and asks a running CKFlip3D to show the cascade; if none is running it starts one instead.
+- A cascade opened this way holds itself open regardless of **Toggle activation**: a click is already over by the time the cascade appears, so there is no key release to commit on.
+
+### Performance
+
+- **A quarter of the frame's GPU work removed.** The opaque backdrop is now written by the clear itself instead of a full-screen blend laid over it — 368 → 274 µs of GPU per frame. It scales with the virtual screen, so it is worth most at 4K and across multiple monitors.
+- Quad draws send only what changed, instead of re-binding the whole pipeline for each of the forty-odd quads in a frame: tile pass 12.97 → 7.51 µs, reflection pass 18.14 → 14.22 µs.
+- Camera matrices are built once a frame rather than once per tile.
+- **Window icons no longer block the render thread.** The worst frame in an ordinary cycling session was 83 ms, effectively all of it a first-time stock-icon lookup that was then thrown away. It is fetched once now, on a worker, and kept — **worst frame 83 → 21 ms**.
+- None of this raises the frame rate on hardware that already keeps up. What it buys is headroom on hardware that does not, where **Auto performance tune** answers a missed budget by switching motion blur, antialiasing and live preview off — cheaper frames are how those stay on.
+
+### Settings
+
+- **Touchpad scrolling** is measured in the right unit at last: one finger stroke covers 1.6 screens instead of 0.8, so a long page takes one stroke rather than two. A notched mouse wheel is deliberately untouched — one notch moves exactly what it always moved.
+- A stray sample the other way no longer throws the page backwards mid-stroke: a reversal now has to clear a full notch **and** hold, which costs a deliberate reversal about 20 ms to avoid the twitching.
+- The wheel is aimed at the innermost list under the pointer, so the app lists on **Ignored applications** and the **Exclusion list** scroll like the pages do instead of jumping three items per report.
+- **Major amount of hints rewritten.** The paragraphs under settings were rewritten to be more accurate, easier to understand, and more consistent. 
+- The **Customize...** dropdowns under *Selected window label* and *Animations* now close with the feature they belong to, instead of staying on screen over a feature that is no longer there.
+- **Toggle activation** sits under the key bindings rather than among them — it is a switch over how the keys behave, not a key.
+
+### Fixes
+
+- Dismissing the cascade no longer flashes a desktop with its icons missing. CKFlip3D used to hide the shell's icon list for the duration of a session; it never changed what the cascade drew, and asking Explorer to put the icons back was a request that landed after the overlay had already lifted. The Recovery page keeps its repair for configurations left hidden by an older build.
+
 ## 1.5
 
 **The classic cascade is unchanged.** Every new look is a preset you opt into, and the default preset renders exactly as 1.2 did. The new input paths are opt-in too, so upgrading never silently changes the switcher you already know.

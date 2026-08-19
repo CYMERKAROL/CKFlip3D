@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Recording an activation hotkey by actually pressing it.  While capture is
+// running the keyboard is swallowed, Windows key included, so a Win combo can
+// be recorded without the Start menu answering first.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 
@@ -376,6 +383,96 @@ public static class HotkeyService
             _ => $"0x{vk:X2}",
         };
     }
+
+    // ---- Token → VK (the inverse of KeyNameOf) ------------------------------
+
+    /// <summary>
+    /// The virtual-key code a MAIN-key token stands for, or 0 for anything that
+    /// is not one (a mouse button, a modifier name, nonsense).
+    ///
+    /// Needed because the same key has several spellings that all parse: the
+    /// defaults ship as "Enter" / "Escape" / "Delete" while a capture writes
+    /// what KeyNameOf produces, which for a few keys is the raw "0x0D" form.
+    /// Comparing the STRINGS would therefore miss a genuine collision — someone
+    /// binding a navigation key to their own cancel key and finding the cascade
+    /// no longer closes. Comparing the codes cannot.
+    ///
+    /// Mirrors KeyboardHook::ParseHotkey's main-key table (hook/keyboardhook.cpp);
+    /// the two are one contract and have to move together.
+    /// </summary>
+    public static uint TokenToVk(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return 0;
+        string t = token.Trim().ToLowerInvariant();
+
+        if (t.Length == 1)
+        {
+            char c = t[0];
+            if (c is >= 'a' and <= 'z') return (uint)(c - 'a' + 'A');
+            if (c is >= '0' and <= '9') return c;
+            return 0;
+        }
+        if (t.Length >= 2 && t[0] == 'f' && char.IsDigit(t[1])
+            && int.TryParse(t.AsSpan(1), out int fn) && fn is >= 1 and <= 24)
+            return (uint)(0x70 + fn - 1);
+        if (t.StartsWith("0x", StringComparison.Ordinal)
+            && uint.TryParse(t.AsSpan(2), System.Globalization.NumberStyles.HexNumber,
+                             System.Globalization.CultureInfo.InvariantCulture, out uint hv)
+            && hv is > 0 and < 0xFF)
+            return hv;
+
+        return t switch
+        {
+            "tab" => 0x09,
+            "space" => 0x20,
+            "enter" or "return" => 0x0D,
+            "esc" or "escape" => 0x1B,
+            "backspace" => 0x08,
+            "delete" or "del" => 0x2E,
+            "insert" or "ins" => 0x2D,
+            "home" => 0x24,
+            "end" => 0x23,
+            "pageup" or "pgup" => 0x21,
+            "pagedown" or "pgdn" => 0x22,
+            "left" => 0x25,
+            "up" => 0x26,
+            "right" => 0x27,
+            "down" => 0x28,
+            "capslock" => 0x14,
+            "numlock" => 0x90,
+            "scrolllock" => 0x91,
+            "printscreen" or "prtsc" => 0x2C,
+            "pause" => 0x13,
+            "apps" => 0x5D,
+            "plus" => 0xBB,
+            "minus" => 0xBD,
+            "comma" => 0xBC,
+            "period" => 0xBE,
+            "semicolon" => 0xBA,
+            "slash" => 0xBF,
+            "grave" or "tilde" => 0xC0,
+            "lbracket" => 0xDB,
+            "backslash" => 0xDC,
+            "rbracket" => 0xDD,
+            "quote" => 0xDE,
+            "numpad0" => 0x60, "numpad1" => 0x61, "numpad2" => 0x62,
+            "numpad3" => 0x63, "numpad4" => 0x64, "numpad5" => 0x65,
+            "numpad6" => 0x66, "numpad7" => 0x67, "numpad8" => 0x68,
+            "numpad9" => 0x69,
+            "multiply" => 0x6A,
+            "add" => 0x6B,
+            "subtract" => 0x6D,
+            "decimal" => 0x6E,
+            "divide" => 0x6F,
+            _ => 0,
+        };
+    }
+
+    /// <summary>The VK the combination ENDS in — its main key — or 0.</summary>
+    public static uint MainKeyVk(string? combo) =>
+        string.IsNullOrWhiteSpace(combo)
+            ? 0
+            : TokenToVk(combo.Split('+', StringSplitOptions.TrimEntries)[^1]);
 
     // ---- Problematic-combination classification ----------------------------
 

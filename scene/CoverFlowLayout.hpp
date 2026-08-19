@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The Cover Flow preset: a centred carousel instead of the Win7 cascade.  Pure
+// geometry, with no state of its own, so FlipScene can swap between the two
+// layouts without anything downstream noticing which one it got.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include "FlipScene.hpp"

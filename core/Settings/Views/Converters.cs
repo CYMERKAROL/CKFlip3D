@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Small binding converters shared by the settings pages, for the cases where a
+// slider's units and the stored value's units are not the same thing.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Globalization;
 using System.Windows.Data;
 

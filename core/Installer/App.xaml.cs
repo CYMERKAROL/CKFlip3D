@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Startup for the setup executable: which of its two modes this run is, and
+// the single-instance guard.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.IO;
 using System.Windows;

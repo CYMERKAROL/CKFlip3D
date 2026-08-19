@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Picking the cascade's monitor by clicking it.  The displays are drawn to
+// scale in their real arrangement, which is a good deal easier to answer than
+// "monitor 2".
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;

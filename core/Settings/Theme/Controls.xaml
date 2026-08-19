@@ -1,12 +1,17 @@
-<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<!-- =========================================================================
+     Every control the settings pages are built from: buttons, switches,
+     sliders, combo boxes, list items, scroll viewers.  All of the chrome is
+     drawn procedurally from brush keys, so a theme swap re-skins the lot.
 
-    <!-- ====================================================================
-         Aero-styled control templates. All chrome is drawn procedurally.
-         Glass recipe (see issueresources docs): matte dark base + top-half
-         sheen + 1px bright rim; hover lights the same button up instead of
-         recoloring it; pressed physically depresses with a short animation.
-         ==================================================================== -->
+     The glass recipe throughout: matte dark base, top-half sheen, 1px bright
+     rim.  Hover lights the same button up rather than recolouring it, and
+     pressed physically depresses it with a short animation.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:views="clr-namespace:CKFlip3D.Settings.Views">
 
     <Style x:Key="AeroFocusVisual">
         <Setter Property="Control.Template">
@@ -647,7 +652,11 @@
                                     <Border Height="12" VerticalAlignment="Top" Margin="1,1,1,0"
                                             CornerRadius="3,3,0,0" Background="{DynamicResource CardHeaderBandBrush}"
                                             IsHitTestVisible="False"/>
-                                    <ScrollViewer MaxHeight="240" Margin="2">
+                                    <!-- Its own tree, so the page above never
+                                         sees this wheel: the popup has to ask
+                                         for the proportional handling itself. -->
+                                    <ScrollViewer MaxHeight="240" Margin="2"
+                                                  views:SmoothScroll.Enabled="True">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
                                 </Grid>
@@ -736,6 +745,10 @@
     </Style>
 
     <Style x:Key="AeroScrollViewer" TargetType="ScrollViewer">
+        <!-- Wheel deltas honoured rather than counted — see SmoothScroll.
+             On the STYLE, so every settings page gets it from the one place
+             they all already share. -->
+        <Setter Property="views:SmoothScroll.Enabled" Value="True"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollViewer">

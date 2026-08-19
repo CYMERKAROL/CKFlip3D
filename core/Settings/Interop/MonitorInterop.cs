@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Enumerating the monitors, and describing each one the way a person would:
+// resolution, orientation, and the aspect ratio under the name it is sold by.
+// Used by the multi-monitor pages to let the user point at a display.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 
 namespace CKFlip3D.Settings.Interop;

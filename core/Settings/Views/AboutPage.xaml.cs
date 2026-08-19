@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// The About page: version, author, project link, and the licence text shown in
+// the window's own modal rather than in a browser.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;

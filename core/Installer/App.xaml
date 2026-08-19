@@ -1,3 +1,9 @@
+<!-- =========================================================================
+     Application resources for the setup app: the theme and the control set it
+     merges in before the first window opens.
+
+     Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+     ========================================================================= -->
 <Application x:Class="CKFlip3D.Installer.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"

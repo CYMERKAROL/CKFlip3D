@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// What counts as a trigger and what the user is allowed to bind to it.  The
+// combination is parsed from a config string, so a binding is data rather than
+// something baked into the hook procedure.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -48,7 +55,6 @@ enum MouseButtonId : int {
 struct TriggerOptions {
     bool ignoreFullscreen = false;   // Pass the hotkey through over fullscreen apps
     bool mouseWheelCycle  = true;    // Wheel cycles the cascade while active
-    bool keyboardNav      = true;    // Arrow keys cycle while active
     // Toggle semantics for combo bindings: releasing the combo modifier
     // no longer commits — the session stays open until Enter/Escape,
     // exactly like a single-key binding.  Ignored when the binding has no
@@ -80,11 +86,6 @@ struct TriggerOptions {
     // Close the hovered window with the mouse.  A pointer feature, so
     // pointerInCascade gates it along with everything else the mouse does.
     bool closeFromCascade = true;
-    // The same action from the KEYBOARD (closeHotkey).  Its OWN switch: the key
-    // acts on the selection when nothing is hovered, so it is useful with every
-    // mouse feature off — and someone who wants the click but not the key (or
-    // the other way round) can have either.
-    bool closeKeyEnabled  = true;
     int  closeButton      = kMouseMiddle;
 
     // Type-to-filter (Settings → Search).  Off = printable keys are
@@ -93,13 +94,32 @@ struct TriggerOptions {
 
     std::vector<std::wstring> ignoredApps;  // exe names or full paths (lowercase)
     std::wstring activationHotkey = L"Win+Tab";  // see ParseHotkey
-    // Commit / cancel / close bindings — same syntax as activationHotkey.
-    // Only the MAIN key is honoured (a modifier-qualified binding would fight
-    // the activation combination that is still being held).
-    std::wstring commitHotkey = L"Enter";
-    std::wstring cancelHotkey = L"Escape";
-    std::wstring closeHotkey  = L"Delete";
+    // ---- The five in-cascade key LISTS ------------------------------------
+    // ';'-separated token lists in the same vocabulary as the hotkey above —
+    // a bare key, or Shift+key, and nothing else, because any other modifier
+    // would have to be pressed alongside a combination that may still be held.
+    // A '!' prefix means the binding is kept but switched off.  Up to
+    // kMaxBindingKeys per list survive; see SetOptions.  Empty is legitimate
+    // and means the action has no key at all.
+    //
+    // navForwardKeys / navBackKeys hold EVERY key that steps through the stack,
+    // the activation hotkey's own key included — that is why the defaults name
+    // Tab.
+    std::wstring commitKeys     = L"Enter";
+    std::wstring cancelKeys     = L"Escape";
+    std::wstring closeKeys      = L"Delete";
+    std::wstring navForwardKeys = L"Tab;Down;Right";
+    std::wstring navBackKeys    = L"Shift+Tab;Up;Left";
 };
+
+/// How many keys one binding list can hold.
+///
+/// Seven because that is what fits in the SINGLE word the hook reads per
+/// keystroke: seven VK bytes (bits 0-55) plus one "needs Shift" bit each (bits
+/// 56-62).  A list the hook could catch half-updated — half the keys the user
+/// just removed, half the ones they added — is worse than a ceiling nobody
+/// reaches; three per direction is the shipped configuration.
+constexpr int kMaxBindingKeys = 7;
 
 /// Update trigger options (thread-safe; callable from the UI/main thread).
 void SetOptions(const TriggerOptions& opts);
@@ -112,6 +132,21 @@ void SetOptions(const TriggerOptions& opts);
 /// WM_FLIP_* itself, exactly like the hook's own branches do.
 bool IsSessionActive();
 void SetSessionActive(bool active);
+
+/// Make the RUNNING session hold itself open, whatever "Toggle activation" is
+/// set to — releasing a modifier stops committing, and the cascade waits for
+/// the commit or cancel key.
+///
+/// For sessions nobody is holding anything for.  The launch shortcut opens the
+/// cascade from a click on the desktop or the taskbar: there is no hotkey down,
+/// so the classic "release commits" rule has nothing to release, and the first
+/// unrelated Win or Alt the user let go of would commit a window they had not
+/// chosen.  (Search raises the same latch from the other side — see the typed
+/// character in the hook.)
+///
+/// Call AFTER raising the session: SetSessionActive resets per-session state,
+/// which includes this latch.
+void LatchToggleSession();
 
 /// Identity of the session currently running (0 = none has ever run).
 ///

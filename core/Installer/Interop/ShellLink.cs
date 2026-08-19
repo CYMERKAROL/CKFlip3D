@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Writing .lnk shortcuts straight through the shell's IShellLinkW.  No
+// PowerShell and no WScript, which matters in an elevated installer where
+// spawning a script host is both slow and a thing to explain.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
@@ -5,10 +12,6 @@ using System.Text;
 
 namespace CKFlip3D.Installer.Interop;
 
-/// <summary>
-/// Creates .lnk shortcuts through the Shell's IShellLinkW COM interface —
-/// no WScript/PowerShell dependency, works from an elevated installer.
-/// </summary>
 public static class ShellLink
 {
     /// <summary>Create (or overwrite) a shortcut at <paramref name="lnkPath"/>.</summary>

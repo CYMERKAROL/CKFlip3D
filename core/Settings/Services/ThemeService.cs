@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Switching the window's theme at runtime.  Every theme is a dictionary of the
+// same brush keys, so swapping the one at the front of the merged list re-skins
+// the live UI without rebuilding a single control.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;

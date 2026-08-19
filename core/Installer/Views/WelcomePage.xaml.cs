@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// First page of the installer.  Nothing has happened yet, so all it does is
+// hand the user on to the options.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 

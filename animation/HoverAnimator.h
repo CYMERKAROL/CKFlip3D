@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The lift under the mouse pointer.  A pure draw-time offset per slot, so it
+// layers on top of whatever the cycle, close or entry animators are doing
+// without ever touching the scene they own.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include <vector>

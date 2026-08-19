@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Turning real window rects into world-space tiles.  Screen pixels go in, a
+// point on the flat plane comes out, solved by inverse-projecting the rect
+// corners through the very camera that renders the cascade.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX
 #include "FlatStackBuilder.h"
 
@@ -9,7 +16,6 @@ using namespace DirectX;
 
 namespace FlatStackBuilder {
 
-// ---------------------------------------------------------------------------
 RECT ResolveSourceRect(const WindowInfo& w, float desktopW, float desktopH)
 {
     // 1. Live WindowInfo.rect when valid (non-zero, non-empty).
@@ -63,7 +69,7 @@ void BuildStackRects(const std::vector<WindowInfo>& windows,
     outHandoffRects.resize(n);
     outStackRects.resize(n);
 
-    // Resolve raw rects first (the handoff set — unmodified, spec §7.2).
+    // Resolve raw rects first (the handoff set, unmodified).
     for (size_t i = 0; i < n; ++i) {
         outHandoffRects[i] = ResolveSourceRect(windows[i], desktopW, desktopH);
     }
@@ -282,7 +288,6 @@ static void RefineSlotToScreenBounds(float& cx, float& cy,
     scaleY = params[3];
 }
 
-// ---------------------------------------------------------------------------
 std::vector<uint32_t> DepthRanks(const std::vector<TileSlot>& slots)
 {
     const size_t n = slots.size();
@@ -300,7 +305,6 @@ std::vector<uint32_t> DepthRanks(const std::vector<TileSlot>& slots)
     return rank;
 }
 
-// ---------------------------------------------------------------------------
 std::vector<TileSlot> BuildFlatSlotsFromRects(
     const std::vector<RECT>& stackRects,
     const FlipScene& scene,

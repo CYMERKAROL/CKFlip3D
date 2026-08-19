@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Everything the cascade listens to from a hand on the desk: the combination
+// that opens it, the keys that commit, cancel and close, and the in-cascade
+// mouse buttons.  Grouped in one place so each choice is made knowing the rest.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -50,7 +57,6 @@ public partial class MouseKeyboardPage : UserControl
                            or nameof(Models.SettingsModel.MouseDragEnabled)
                            or nameof(Models.SettingsModel.MouseDragButton)
                            or nameof(Models.SettingsModel.CloseFromCascade)
-                           or nameof(Models.SettingsModel.CloseKeyEnabled)
                            or nameof(Models.SettingsModel.MouseCloseButton)
                            or nameof(Models.SettingsModel.WindowSnap)
                            or null)
@@ -69,11 +75,6 @@ public partial class MouseKeyboardPage : UserControl
 
         SyncToggleMode();
 
-        // The close KEY now carries its OWN switch, on its own row.  Nothing
-        // here may disable that row: the switch lives inside it, and greying
-        // the row out would make the binding impossible to turn back on.  The
-        // key-picker button alone follows the switch, through its XAML binding.
-
         // Dragging the stack only exists while Window snap is off (General →
         // Cascade), so say so rather than offering a binding that does
         // nothing.
@@ -81,11 +82,17 @@ public partial class MouseKeyboardPage : UserControl
         DragRow.IsEnabled = dragLive;
         DragRow.Opacity = dragLive ? 1.0 : 0.55;
         DragHint.Text = dragLive
-            ? "Hold this button and move to scrub the stack freely, letting it settle onto the nearest window when you let go."
+            ? "Hold and drag to move the cascade freely (requires Window snap to be off)."
             : "Only used while Window snap is off (General → Cascade). With snapping on, every input steps one whole window at a time.";
 
         UpdateConflictWarning();
         _syncing = false;
+    }
+
+    private void ManageCascadeKeys_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is MainWindow main)
+            main.PushSubPage(new CascadeKeysPage(), "Keys in the cascade");
     }
 
     /// <summary>
@@ -198,11 +205,8 @@ public partial class MouseKeyboardPage : UserControl
             ToggleModeCheck.IsEnabled = true;
             ToggleModeCheck.IsChecked = App.Settings.HotkeyToggleMode;
             ToggleModeRow.Opacity = 1.0;
-            ToggleModeHint.Text = "Keeps the cascade open after the hotkey is released "
-                + "— commit, cancel, and keep cycling with the main key. Off restores the "
-                + "classic hold-to-keep-open behaviour. Typing into Search switches a "
-                + "session to this on its own, so a word can be typed without the "
-                + "modifier release closing the cascade mid-way.";
+            ToggleModeHint.Text = "Keeps the cascade open after releasing the key "
+                + "instead of holding it.";
         }
     }
 
@@ -222,26 +226,8 @@ public partial class MouseKeyboardPage : UserControl
                    allowReserved: false,
                    assign: ConfirmAndAssignActivation);
 
-    private void ChangeCommit_Click(object sender, RoutedEventArgs e) =>
-        CaptureKey("Set commit key",
-                   "Press the key that should switch to the selected window. "
-                   + "Use Cancel below to keep the current one.",
-                   allowReserved: true,
-                   assign: combo => App.Settings.CommitHotkey = combo);
-
-    private void ChangeCancel_Click(object sender, RoutedEventArgs e) =>
-        CaptureKey("Set cancel key",
-                   "Press the key that should close the cascade without switching. "
-                   + "Use Cancel below to keep the current one.",
-                   allowReserved: true,
-                   assign: combo => App.Settings.CancelHotkey = combo);
-
-    private void ChangeCloseKey_Click(object sender, RoutedEventArgs e) =>
-        CaptureKey("Set close-window key",
-                   "Press the key that should close the window you are pointing at. "
-                   + "Use Cancel below to keep the current one.",
-                   allowReserved: true,
-                   assign: combo => App.Settings.CloseHotkey = combo);
+    // Commit, cancel and close are captured on the Keys in the cascade page —
+    // they are lists now, and the page that owns a list owns its editor.
 
     // ---- Mouse-button capture ----------------------------------------------
 
@@ -341,7 +327,7 @@ public partial class MouseKeyboardPage : UserControl
         string? warning = HotkeyService.GetWarning(combo);
         if (warning == null)
         {
-            App.Settings.ActivationHotkey = combo;
+            AssignActivation(combo);
             return;
         }
 
@@ -354,18 +340,32 @@ public partial class MouseKeyboardPage : UserControl
             Foreground = (Brush)main.FindResource("TextPrimaryBrush"),
         };
         main.ShowModal("Use this combination?", body,
-            ("Use anyway", true, () => App.Settings.ActivationHotkey = combo),
+            ("Use anyway", true, () => AssignActivation(combo)),
             ("Cancel", false, null));
+    }
+
+    /// <summary>
+    /// Assign the activation hotkey, and take its navigation entry with it.
+    ///
+    /// The hotkey's own key is an ordinary entry on the Navigation keys lists
+    /// (which is what makes Tab removable), so rebinding Win+Tab to Ctrl+Alt+F
+    /// would otherwise leave F opening the cascade and doing nothing once it is
+    /// open. Repointing keeps stepping working without adding a warning to read
+    /// — and leaves a user who deliberately removed Tab with nothing added back.
+    /// </summary>
+    private static void AssignActivation(string combo)
+    {
+        string previous = App.Settings.ActivationHotkey;
+        App.Settings.ActivationHotkey = combo;
+        App.Settings.RepointNavKeysToHotkey(previous, App.Settings.ActivationHotkey);
     }
 
     private void RestoreDefaults_Click(object sender, RoutedEventArgs e)
     {
+        // Straight assignment, no repointing: the navigation lists are reset to
+        // their own defaults a few lines down, which already name Tab.
         App.Settings.ActivationHotkey = "Win+Tab";
         App.Settings.HotkeyToggleMode = false;
-        App.Settings.CommitHotkey = "Enter";
-        App.Settings.CancelHotkey = "Escape";
-        App.Settings.CloseHotkey = "Delete";
-        App.Settings.CloseKeyEnabled = true;
         // Off by default: the pointer bindings are opt-in, so "restore
         // defaults" must restore them to opt-in rather than switch them on.
         // If Window snap is currently off, this leaves the settings in the
@@ -379,5 +379,13 @@ public partial class MouseKeyboardPage : UserControl
         App.Settings.MouseCloseButton = 3;
         App.Settings.MouseDragEnabled = true;
         App.Settings.MouseDragButton = 2;
+        // The key lists live one page in, but they are reached from here, so
+        // their defaults belong in this button too — the arrows, Enter, Escape
+        // and Delete, all switched on.
+        App.Settings.NavForwardKeys = Models.SettingsModel.DefaultNavForwardKeys;
+        App.Settings.NavBackKeys = Models.SettingsModel.DefaultNavBackKeys;
+        App.Settings.CommitKeys = Models.SettingsModel.DefaultCommitKeys;
+        App.Settings.CancelKeys = Models.SettingsModel.DefaultCancelKeys;
+        App.Settings.CloseKeys = Models.SettingsModel.DefaultCloseKeys;
     }
 }

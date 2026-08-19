@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Reading the touchpad directly.  Raw HID reports come in on a worker thread,
+// get decoded against the device's own descriptor, and turn into contacts the
+// gesture recogniser can follow across a frame.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 #define NOMINMAX   // windef.h's min/max macros vs std::min in the frame walker
 #include "touchpadhook.h"
 #include "keyboardhook.h"
@@ -14,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cwchar>       // _wcsicmp for the gesture token vocabulary
 
 #pragma comment(lib, "hid.lib")
 
@@ -103,13 +111,14 @@ std::atomic<bool> g_workerReady{false};
 // registers once SetOptions arrives with the config's touchpadNav, so a user
 // who wants no gestures never has raw input registered at all.
 std::atomic<bool> g_optEnabled{false};
-std::atomic<int>  g_optCycleFingers{2};
+std::atomic<unsigned> g_optActivateMask{GestureBit(kActivateTwoBack)};
+std::atomic<unsigned> g_optCycleMask{GestureBit(kCycleTwo)};
+std::atomic<unsigned> g_optCommitMask{GestureBit(kCommitOneTap)};
 std::atomic<bool> g_optReverse{false};
 std::atomic<int>  g_optSensitivity{50};
 std::atomic<int>  g_optSmoothing{35};
-std::atomic<int>  g_optActivateGesture{kActivateTwoBack};
-std::atomic<int>  g_optCommitGesture{kCommitOneTap};
 std::atomic<bool> g_optCancelSwipe{true};
+std::atomic<bool> g_optContinuous{false};
 std::atomic<bool> g_optWindowSnap{true};
 std::atomic<bool> g_registered{false};   // raw-input device registered?
 
@@ -359,6 +368,32 @@ GestureState g_g;
 
 void ResetGesture() { g_g = GestureState{}; }
 
+/// A gesture has just fired.  What happens to the fingers still on the pad?
+///
+/// Ordinarily: nothing more.  The touch is closed for business (`fired`) until
+/// it lifts, and that is what keeps the tail of an opening diagonal — the
+/// centimetre the hand travels before it registers that the cascade is up —
+/// from immediately stepping the stack it just opened.
+///
+/// With CONTINUOUS gestures the same touch stays live and only the STROKE is
+/// retired: the travel totals, the step accumulator and the filter state go
+/// back to zero, so the next gesture is measured from here rather than from
+/// where the finger landed.  That is what lets one motion open the cascade and
+/// then walk through it without lifting — and it is also why the option warns
+/// about misinput, because a stroke that wanders can now say two things.
+void RetireStroke()
+{
+    if (!g_optContinuous.load(std::memory_order_relaxed)) {
+        g_g.fired = true;
+        return;
+    }
+    g_g.totalDx = g_g.totalDy = 0.0f;
+    g_g.stepAccum = 0.0f;
+    g_g.smoothDx = g_g.smoothDy = 0.0f;
+    g_g.speed = 0.0f;
+    g_g.lastMoveMs = GetTickCount64();
+}
+
 int ActivateFingerCount(int gesture)
 {
     return (gesture == kActivateFourBack || gesture == kActivateFourFwd) ? 4 : 2;
@@ -389,6 +424,32 @@ bool IsDiagonalStroke(int gesture, int sign, float dx, float dy, float distance)
         && dy * static_cast<float>(sign) > 0.0f;
 }
 
+/// The first gesture in `mask` this stroke draws, or kActivateOff.
+///
+/// The finger count is part of the match, not a prior filter: two-finger and
+/// four-finger diagonals can both be bound, and only one of them can be what
+/// the hand on the pad is doing right now.
+int MatchActivateStroke(unsigned mask, int sign, int count,
+                        float dx, float dy, float distance)
+{
+    for (int g = kActivateTwoBack; g <= kActivateFourFwd; ++g) {
+        if (!(mask & GestureBit(g)))
+            continue;
+        if (count != ActivateFingerCount(g))
+            continue;
+        if (IsDiagonalStroke(g, sign, dx, dy, distance))
+            return g;
+    }
+    return kActivateOff;
+}
+
+/// Does the cycle set claim a swipe by this many fingers?
+bool CycleClaims(unsigned mask, int count)
+{
+    return (count == 2 && (mask & GestureBit(kCycleTwo)))
+        || (count == 4 && (mask & GestureBit(kCycleFour)));
+}
+
 void PostCommit()
 {
     // Foreign, for the same reason a mouse click is: the keyboard hook never
@@ -409,10 +470,12 @@ void EndSequence(ULONGLONG now)
     if (g_g.scrubbed)
         PostMessageW(g_hwndNotify, g_msgScrubEnd, 0, 0);
 
-    // Tap commit: a short, still press of the configured finger count.
-    const int commit = g_optCommitGesture.load(std::memory_order_relaxed);
-    const int tapFingers = (commit == kCommitOneTap) ? 1
-                         : (commit == kCommitTwoTap) ? 2 : 0;
+    // Tap commit: a short, still press of a bound finger count.  Both taps can
+    // be bound at once, so the touch itself decides which one this was.
+    const unsigned commitMask = g_optCommitMask.load(std::memory_order_relaxed);
+    const int tapFingers =
+        (g_g.maxFingers == 1 && (commitMask & GestureBit(kCommitOneTap))) ? 1
+      : (g_g.maxFingers == 2 && (commitMask & GestureBit(kCommitTwoTap))) ? 2 : 0;
 
     // ...unless the pointer path already owns this tap.
     //
@@ -444,7 +507,6 @@ void EndSequence(ULONGLONG now)
     if (!g_g.fired
         && tapFingers != 0
         && !tapIsPointerClick
-        && g_g.maxFingers == tapFingers
         && !g_g.moved
         && (now - g_g.startMs) <= kTapMaxMs
         && KeyboardHook::IsSessionActive())
@@ -546,9 +608,9 @@ void ProcessFrame(const Contact* contacts, int count)
     if (g_g.fired)
         return;
 
-    const int  gesture      = g_optActivateGesture.load(std::memory_order_relaxed);
-    const int  commit       = g_optCommitGesture.load(std::memory_order_relaxed);
-    const int  cycleFingers = g_optCycleFingers.load(std::memory_order_relaxed);
+    const unsigned activateMask = g_optActivateMask.load(std::memory_order_relaxed);
+    const unsigned commitMask   = g_optCommitMask.load(std::memory_order_relaxed);
+    const unsigned cycleMask    = g_optCycleMask.load(std::memory_order_relaxed);
     const bool reverse      = g_optReverse.load(std::memory_order_relaxed);
     const bool snap         = g_optWindowSnap.load(std::memory_order_relaxed);
     const bool horizontal   = std::fabs(g_g.totalDx) > std::fabs(g_g.totalDy) * kAxisBias;
@@ -559,18 +621,17 @@ void ProcessFrame(const Contact* contacts, int count)
         // strongly vertical travel, and never once this same touch has
         // started moving the stack — otherwise a sideways swipe that drifts
         // down picks a window the user was only passing.
-        const int commitFingers = (commit == kCommitTwoDown) ? 2 : 0;
-        if (commitFingers != 0
+        if ((commitMask & GestureBit(kCommitTwoDown))
             && !g_g.cycled
-            && count == commitFingers
+            && count == 2
             && g_g.totalDy > std::fabs(g_g.totalDx) * kCommitAxisBias
             && g_g.totalDy >= swipe * kCommitDistMul) {
             PostCommit();
-            g_g.fired = true;
+            RetireStroke();
             return;
         }
 
-        if (count == cycleFingers && horizontal) {
+        if (CycleClaims(cycleMask, count) && horizontal) {
             // Swiping left carries the row left, so the next window arrives
             // from the right — the same direction sense as the wheel.
             const float thr = StepThreshold();
@@ -600,35 +661,35 @@ void ProcessFrame(const Contact* contacts, int count)
                     g_g.cycled   = true;
                 }
             }
-        } else if (gesture != kActivateOff
-                   && g_optCancelSwipe.load(std::memory_order_relaxed)
-                   && count == ActivateFingerCount(gesture)
-                   && IsDiagonalStroke(gesture, -1, g_g.totalDx, g_g.totalDy, swipe)) {
-            // The opening stroke drawn backwards = Escape.  Foreign, like the
-            // tap commit: a cascade opened by holding Win and cancelled with
-            // a gesture still owes that modifier's release a defusal, and the
-            // keyboard hook never saw the gesture.
+        } else if (g_optCancelSwipe.load(std::memory_order_relaxed)
+                   && MatchActivateStroke(activateMask, -1, count,
+                                          g_g.totalDx, g_g.totalDy, swipe)
+                      != kActivateOff) {
+            // ANY bound opening stroke drawn backwards = Escape.  Foreign, like
+            // the tap commit: a cascade opened by holding Win and cancelled
+            // with a gesture still owes that modifier's release a defusal, and
+            // the keyboard hook never saw the gesture.
             KeyboardHook::EndSessionForeign();
             PostMessageW(g_hwndNotify, g_msgEscape, 0, 0);
-            g_g.fired = true;
+            RetireStroke();
         }
-    } else if (gesture != kActivateOff
-               && count == ActivateFingerCount(gesture)) {
+    } else {
         // Fast strokes fire at a shorter distance — the gesture should feel
         // as immediate as the hotkey does.
         const float eff = swipe * std::clamp(1.0f - g_g.speed * 12.0f, 0.50f, 1.0f);
-        if (IsDiagonalStroke(gesture, +1, g_g.totalDx, g_g.totalDy, eff)) {
+        if (MatchActivateStroke(activateMask, +1, count,
+                                g_g.totalDx, g_g.totalDy, eff) != kActivateOff) {
             // Same contract as the keyboard hook's activation branch, filters
             // included: "Ignore in fullscreen applications" and the
             // ignored-apps list gate the gesture exactly as they gate the
             // hotkey.
             if (KeyboardHook::ShouldIgnoreActivation()) {
-                g_g.fired = true;   // don't retry mid-stroke
+                g_g.fired = true;   // don't retry mid-stroke, continuous or not
                 return;
             }
             KeyboardHook::SetSessionActive(true);
             PostMessageW(g_hwndNotify, g_msgActivate, 0, 0);
-            g_g.fired = true;
+            RetireStroke();
         }
     }
 }
@@ -896,7 +957,80 @@ std::vector<HANDLE> EnumerateTouchpads()
     return found;
 }
 
+// ---------------------------------------------------------------------------
+// Token lists → gesture masks
+// ---------------------------------------------------------------------------
+// One walker for all three lists; the caller supplies the vocabulary.  Same
+// shape as the key lists the keyboard hook parses ('!' parks an entry, blanks
+// are skipped, unknown tokens are counted rather than fatal) because they are
+// the same idea and a user editing config.json by hand should only have to
+// learn it once.
+struct GestureToken { const wchar_t* name; int gesture; };
+
+unsigned ParseGestureList(const std::wstring& list, const GestureToken* vocab,
+                          size_t vocabCount, unsigned* dropped)
+{
+    unsigned mask = 0;
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t end = list.find(L';', start);
+        if (end == std::wstring::npos) end = list.size();
+
+        std::wstring tok = list.substr(start, end - start);
+        size_t b = tok.find_first_not_of(L" \t");
+        size_t e = tok.find_last_not_of(L" \t");
+        tok = (b == std::wstring::npos) ? std::wstring() : tok.substr(b, e - b + 1);
+
+        if (!tok.empty() && tok[0] != L'!') {
+            bool matched = false;
+            for (size_t i = 0; i < vocabCount && !matched; ++i) {
+                if (_wcsicmp(tok.c_str(), vocab[i].name) == 0) {
+                    mask |= GestureBit(vocab[i].gesture);
+                    matched = true;
+                }
+            }
+            if (!matched && dropped) ++*dropped;
+        }
+
+        if (end == list.size()) break;
+        start = end + 1;
+    }
+    return mask;
+}
+
 } // anonymous namespace
+
+unsigned ParseActivateList(const std::wstring& list, unsigned* dropped)
+{
+    static const GestureToken kVocab[] = {
+        { L"TwoDownRight",  kActivateTwoBack  },
+        { L"TwoDownLeft",   kActivateTwoFwd   },
+        { L"FourDownRight", kActivateFourBack },
+        { L"FourDownLeft",  kActivateFourFwd  },
+    };
+    return ParseGestureList(list, kVocab, std::size(kVocab), dropped);
+}
+
+unsigned ParseCycleList(const std::wstring& list, unsigned* dropped)
+{
+    // Two or four fingers only — three belongs to Windows (see ActivateGesture),
+    // so there is no token for it and a config that names one is simply dropped.
+    static const GestureToken kVocab[] = {
+        { L"TwoSwipe",  kCycleTwo  },
+        { L"FourSwipe", kCycleFour },
+    };
+    return ParseGestureList(list, kVocab, std::size(kVocab), dropped);
+}
+
+unsigned ParseCommitList(const std::wstring& list, unsigned* dropped)
+{
+    static const GestureToken kVocab[] = {
+        { L"OneTap",  kCommitOneTap  },
+        { L"TwoTap",  kCommitTwoTap  },
+        { L"TwoDown", kCommitTwoDown },
+    };
+    return ParseGestureList(list, kVocab, std::size(kVocab), dropped);
+}
 
 // ===========================================================================
 // Public API
@@ -1008,21 +1142,16 @@ void Uninstall()
 
 void SetOptions(const Options& opts)
 {
-    // Two or four fingers only — three belongs to Windows (see ActivateGesture).
-    // A config written by an older build can still say three; fold it onto two
-    // rather than refusing to cycle at all.
-    g_optCycleFingers.store(opts.cycleFingers >= 4 ? 4 : 2,
-                            std::memory_order_relaxed);
+    g_optActivateMask.store(opts.activateMask, std::memory_order_relaxed);
+    g_optCycleMask.store(opts.cycleMask, std::memory_order_relaxed);
+    g_optCommitMask.store(opts.commitMask, std::memory_order_relaxed);
     g_optReverse.store(opts.reverse, std::memory_order_relaxed);
     g_optSensitivity.store(std::clamp(opts.sensitivity, 1, 100),
                            std::memory_order_relaxed);
     g_optSmoothing.store(std::clamp(opts.smoothing, 0, 100),
                          std::memory_order_relaxed);
-    g_optActivateGesture.store(std::clamp(opts.activateGesture, 0, 4),
-                               std::memory_order_relaxed);
-    g_optCommitGesture.store(std::clamp(opts.commitGesture, 0, 3),
-                             std::memory_order_relaxed);
     g_optCancelSwipe.store(opts.cancelSwipe, std::memory_order_relaxed);
+    g_optContinuous.store(opts.continuous, std::memory_order_relaxed);
     g_optWindowSnap.store(opts.windowSnap, std::memory_order_relaxed);
     g_optEnabled.store(opts.enabled, std::memory_order_relaxed);
 

@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// The glass backdrop behind the settings window, through the undocumented
+// SetWindowCompositionAttribute.  Because that API is undocumented, every step
+// down the chain (acrylic, blur-behind, plain translucent gradient) is a
+// supported outcome rather than a failure.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -5,11 +13,6 @@ using System.Windows.Media;
 
 namespace CKFlip3D.Settings.Interop;
 
-/// <summary>
-/// Enables a DWM blur/acrylic backdrop behind the window via the undocumented
-/// SetWindowCompositionAttribute API (works on Windows 10 and 11).
-/// Falls back gracefully: acrylic -> blur-behind -> plain translucent gradient.
-/// </summary>
 public static class AeroGlass
 {
     private enum AccentState

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// The DWM acrylic backdrop behind the setup window, with a graceful walk down
+// to plain blur and then to opaque on machines that will not do it.  A copy of
+// the Settings app helper, so the Installer folder stands on its own.
+//
+// Copyright © 2026 Karol Cymerman (CYMERKAROL) — https://github.com/CYMERKAROL/CKFlip3D
+// ---------------------------------------------------------------------------
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -5,11 +12,6 @@ using System.Windows.Media;
 
 namespace CKFlip3D.Installer.Interop;
 
-/// <summary>
-/// Copy of the Settings app glass helper (core\Settings\Interop\AeroGlass.cs)
-/// so the Installer folder stays self-contained. Enables a DWM blur/acrylic
-/// backdrop behind the window; falls back acrylic -> blur-behind -> opaque.
-/// </summary>
 public static class AeroGlass
 {
     private enum AccentState
