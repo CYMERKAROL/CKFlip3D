@@ -32,7 +32,7 @@
 
 ### Settings
 
-- **Touchpad scrolling** is measured in the right unit at last: one finger stroke covers 1.6 screens instead of 0.8, so a long page takes one stroke rather than two. A notched mouse wheel is deliberately untouched — one notch moves exactly what it always moved.
+- **Touchpad scrolling** corrected to avoid oversensitivity.
 - A stray sample the other way no longer throws the page backwards mid-stroke: a reversal now has to clear a full notch **and** hold, which costs a deliberate reversal about 20 ms to avoid the twitching.
 - The wheel is aimed at the innermost list under the pointer, so the app lists on **Ignored applications** and the **Exclusion list** scroll like the pages do instead of jumping three items per report.
 - **Major amount of hints rewritten.** The paragraphs under settings were rewritten to be more accurate, easier to understand, and more consistent. 
