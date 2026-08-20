@@ -96,8 +96,10 @@ struct TriggerOptions {
     std::wstring activationHotkey = L"Win+Tab";  // see ParseHotkey
     // ---- The five in-cascade key LISTS ------------------------------------
     // ';'-separated token lists in the same vocabulary as the hotkey above —
-    // a bare key, or Shift+key, and nothing else, because any other modifier
-    // would have to be pressed alongside a combination that may still be held.
+    // a key or a mouse button, on its own or under any combination of
+    // Ctrl/Shift/Alt/Win.  A modifier ON ITS OWN is the one thing that cannot
+    // be an entry: the hook answers modifier keys before any binding is
+    // consulted, and in hold mode releasing one ends the session.
     // A '!' prefix means the binding is kept but switched off.  Up to
     // kMaxBindingKeys per list survive; see SetOptions.  Empty is legitimate
     // and means the action has no key at all.
@@ -114,12 +116,12 @@ struct TriggerOptions {
 
 /// How many keys one binding list can hold.
 ///
-/// Seven because that is what fits in the SINGLE word the hook reads per
-/// keystroke: seven VK bytes (bits 0-55) plus one "needs Shift" bit each (bits
-/// 56-62).  A list the hook could catch half-updated — half the keys the user
-/// just removed, half the ones they added — is worse than a ceiling nobody
-/// reaches; three per direction is the shipped configuration.
-constexpr int kMaxBindingKeys = 7;
+/// Five because that is what fits in the SINGLE word the hook reads per
+/// keystroke: five 12-bit entries, each a VK byte plus a four-bit
+/// Ctrl/Shift/Alt/Win mask.  A list the hook could catch half-updated — half
+/// the keys the user just removed, half the ones they added — is worse than a
+/// ceiling nobody reaches; three per direction is the shipped configuration.
+constexpr int kMaxBindingKeys = 5;
 
 /// Update trigger options (thread-safe; callable from the UI/main thread).
 void SetOptions(const TriggerOptions& opts);

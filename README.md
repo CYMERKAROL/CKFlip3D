@@ -8,7 +8,7 @@
 
 A lightweight, GPU-accelerated 3D window switcher for Windows 11. Features live window previews, smooth animations, and customizable 3D layouts.
 
-`v1.6` · Windows 11 · C++20 / Direct3D 11 · WPF Settings & Installer (.NET 10) · PolyForm Noncommercial 1.0.0
+`v1.6.1` · Windows 11 · C++20 / Direct3D 11 · WPF Settings & Installer (.NET 10) · PolyForm Noncommercial 1.0.0
 
 </div>
 

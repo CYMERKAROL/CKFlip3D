@@ -45,9 +45,9 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
-                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Keys in the cascade"/>
+                            <TextBlock Style="{StaticResource SettingLabelText}" Text="Cascade Keybindings"/>
                             <TextBlock Style="{StaticResource SettingHintText}"
-                                       Text="Configure navigation, commit, cancel, and close keys. Click customize to edit bindings."/>
+                                       Text="Set key bindings for navigating, selecting, and closing windows inside the cascade."/>
                         </StackPanel>
                         <Button Grid.Column="1" Style="{StaticResource AeroButton}"
                                 VerticalAlignment="Center" MinWidth="130"

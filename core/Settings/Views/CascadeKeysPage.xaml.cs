@@ -43,7 +43,8 @@ public partial class CascadeKeysPage : UserControl
     /// </summary>
     private sealed class KeyList
     {
-        public required string Role;            // "moves forward", "commits" …
+        /// <summary>Card header, and what another list calls this one.</summary>
+        public required string Name;
         public required string AddTitle;
         public required string AddPrompt;
         public required ObservableCollection<BindingItem> Items;
@@ -64,14 +65,19 @@ public partial class CascadeKeysPage : UserControl
     {
         InitializeComponent();
 
+        // One prompt for all five: the dialog title already says which action
+        // is being bound, so repeating it costs a line and says nothing.
+        const string prompt = "Press a key or mouse button to set the binding. "
+                            + "Hold Ctrl, Shift, Alt, or Win for combinations. "
+                            + "Press Cancel to exit.";
+
         _lists =
         [
             new KeyList
             {
-                Role = "moves the stack forward",
+                Name = "Next window",
                 AddTitle = "Add a key that moves forward",
-                AddPrompt = "Press the key that should move to the NEXT window while the "
-                          + "cascade is open. A single key, or Shift with a key. Esc cancels.",
+                AddPrompt = prompt,
                 Items = new ObservableCollection<BindingItem>(),
                 Read = () => App.Settings.NavForwardKeyList,
                 Write = keys => App.Settings.SetNavForwardKeyList(keys),
@@ -79,11 +85,9 @@ public partial class CascadeKeysPage : UserControl
             },
             new KeyList
             {
-                Role = "moves the stack back",
+                Name = "Previous window",
                 AddTitle = "Add a key that moves back",
-                AddPrompt = "Press the key that should move to the PREVIOUS window while the "
-                          + "cascade is open. A single key, or Shift with a key — Shift+Tab "
-                          + "is the classic one. Esc cancels.",
+                AddPrompt = prompt,
                 Items = new ObservableCollection<BindingItem>(),
                 Read = () => App.Settings.NavBackKeyList,
                 Write = keys => App.Settings.SetNavBackKeyList(keys),
@@ -91,10 +95,9 @@ public partial class CascadeKeysPage : UserControl
             },
             new KeyList
             {
-                Role = "commits the selection",
-                AddTitle = "Add a commit key",
-                AddPrompt = "Press the key that should switch to the selected window. "
-                          + "A single key, or Shift with a key. Esc cancels.",
+                Name = "Confirm",
+                AddTitle = "Add a confirm key",
+                AddPrompt = prompt,
                 Items = new ObservableCollection<BindingItem>(),
                 Read = () => App.Settings.CommitKeyList,
                 Write = keys => App.Settings.SetCommitKeyList(keys),
@@ -103,10 +106,9 @@ public partial class CascadeKeysPage : UserControl
             },
             new KeyList
             {
-                Role = "cancels the cascade",
+                Name = "Cancel",
                 AddTitle = "Add a cancel key",
-                AddPrompt = "Press the key that should close the cascade without switching. "
-                          + "A single key, or Shift with a key. Esc cancels.",
+                AddPrompt = prompt,
                 Items = new ObservableCollection<BindingItem>(),
                 Read = () => App.Settings.CancelKeyList,
                 Write = keys => App.Settings.SetCancelKeyList(keys),
@@ -115,10 +117,9 @@ public partial class CascadeKeysPage : UserControl
             },
             new KeyList
             {
-                Role = "closes a window",
+                Name = "Close window",
                 AddTitle = "Add a close-window key",
-                AddPrompt = "Press the key that should close the window you are pointing at. "
-                          + "A single key, or Shift with a key. Esc cancels.",
+                AddPrompt = prompt,
                 Items = new ObservableCollection<BindingItem>(),
                 Read = () => App.Settings.CloseKeyList,
                 Write = keys => App.Settings.SetCloseKeyList(keys),
@@ -159,6 +160,9 @@ public partial class CascadeKeysPage : UserControl
             LoadFromModel();
         else if (e.PropertyName is nameof(SettingsModel.SearchEnabled))
             UpdateSearchClash();
+        else if (e.PropertyName is nameof(SettingsModel.ActivationHotkey)
+                                or nameof(SettingsModel.HotkeyToggleMode))
+            UpdateHotkeyClash();
     }
 
     // ---- Model → lists ------------------------------------------------------
@@ -193,6 +197,10 @@ public partial class CascadeKeysPage : UserControl
     private void OnItemChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_loading || sender is not BindingItem item) return;
+        // The switch is the only edit a row can make. Warning is written BY
+        // this page a moment later, and treating it as one would commit the
+        // lists again for every mark that appeared.
+        if (e.PropertyName != nameof(BindingItem.Enabled)) return;
 
         KeyList? owner = _lists.FirstOrDefault(l => l.Items.Contains(item));
         if (owner is { KeepOne: true } && !item.Enabled
@@ -201,9 +209,8 @@ public partial class CascadeKeysPage : UserControl
             _loading = true;              // the correction is not an edit
             item.Enabled = true;
             _loading = false;
-            ShowRefusal($"“{item.Token}” is the only key that {owner.Role}. "
-                      + "Add another one first — a cascade with no way out is not "
-                      + "something these settings can save.");
+            ShowRefusal($"“{item.Token}” is the only key left for {owner.Name}. "
+                      + "Add another one first, or the cascade has no way out.");
             return;
         }
         Commit();
@@ -234,23 +241,100 @@ public partial class CascadeKeysPage : UserControl
                   + "Remove one to add another."
                 : string.Empty;
         }
+        UpdateHotkeyClash();
         UpdateSearchClash();
     }
 
-    /// <summary>The key half of an entry, ignoring any Shift prefix.</summary>
-    private static uint KeyVk(string token) => HotkeyService.MainKeyVk(token);
+    /// <summary>The key or button half of an entry, its modifiers aside.</summary>
+    private static uint KeyVk(string token) => HotkeyService.MainBindingVk(token);
 
-    /// <summary>Does this entry need Shift held?</summary>
-    private static bool NeedsShift(string token) =>
-        token.Split('+', StringSplitOptions.TrimEntries)
-             .SkipLast(1)
-             .Any(p => string.Equals(p, "Shift", StringComparison.OrdinalIgnoreCase));
+    /// <summary>The modifiers this entry needs held with it.</summary>
+    private static uint Mods(string token) => HotkeyService.ModsOf(token);
+
+    /// <summary>
+    /// The modifiers the activation hotkey holds down, or none when nothing is
+    /// being held: a hotkey with no modifier is inherently toggle, and Toggle
+    /// activation makes every combination behave that way.
+    /// </summary>
+    private static uint HeldByHotkey() =>
+        App.Settings.HotkeyToggleMode ? 0 : HotkeyService.ModsOf(App.Settings.ActivationHotkey);
+
+    /// <summary>
+    /// A binding that asks for a modifier the hotkey is already holding cannot
+    /// fire: the core discounts those, because a combination keeps them down
+    /// for the whole session and counting them would turn every forward step
+    /// into a backward one. Said out loud rather than refused, because Toggle
+    /// activation is one switch away and the binding is fine the moment it is
+    /// on.
+    ///
+    /// The same pass marks a row that IS the activation hotkey, which is a
+    /// different fault with a different answer: the hotkey moved onto it, or
+    /// the config was edited by hand. Apply is gone until one of the two gives.
+    /// </summary>
+    private void UpdateHotkeyClash()
+    {
+        uint held = HeldByHotkey();
+        string hotkey = App.Settings.ActivationHotkey;
+        var blocked = new List<string>();
+
+        // Every row is visited, not just the ones that clash: a mark left on a
+        // row that has since been freed (Toggle activation switched on, hotkey
+        // rebound) would be the page stating something untrue.
+        foreach (var list in _lists)
+        foreach (var item in list.Items)
+        {
+            item.Warning = string.Empty;
+            if (!item.Enabled) continue;
+
+            // The exact hotkey is refused on the way in, so a row carrying it
+            // arrived some other way: a hand-edited config, or the hotkey being
+            // pointed at it afterwards.  Marked rather than corrected — the
+            // lists belong to the user — and Apply is gone until it is dealt
+            // with (SettingsModel.ActivationBindingClash).
+            if (App.Settings.ClashesWithActivation(item.Token))
+            {
+                item.Warning = $"This binding is the activation hotkey. {hotkey} "
+                             + "opens the cascade, so it cannot also act on it.";
+                continue;
+            }
+
+            uint shared = Mods(item.Token) & held;
+            if (shared == 0) continue;
+
+            blocked.Add(item.Token);
+            item.Warning = $"This binding will not fire. {hotkey} holds "
+                         + $"{ModNames(shared)} down for the whole session. "
+                         + "Turn on Toggle activation to use it.";
+        }
+
+        HotkeyClashText.Text = blocked.Count == 0 ? string.Empty
+            : $"{string.Join(", ", blocked)} will not fire. {hotkey} holds "
+            + $"{ModNames(held)} down for the whole session. Turn on Toggle "
+            + "activation to use them.";
+        HotkeyClash.Visibility = blocked.Count == 0
+            ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private static string ModNames(uint mods)
+    {
+        var names = new List<string>(4);
+        if ((mods & HotkeyService.ModCtrl) != 0) names.Add("Ctrl");
+        if ((mods & HotkeyService.ModShift) != 0) names.Add("Shift");
+        if ((mods & HotkeyService.ModAlt) != 0) names.Add("Alt");
+        if ((mods & HotkeyService.ModWin) != 0) names.Add("Win");
+        return names.Count <= 1 ? string.Concat(names)
+            : string.Join(" and ", string.Join(", ", names.SkipLast(1)), names[^1]);
+    }
 
     /// <summary>
     /// A bound key that also TYPES something is claimed here first, so with
     /// Search on that character can never reach the query. Said out loud rather
     /// than refused: the key works perfectly well for someone who does not use
     /// Search, and Search is off by default.
+    ///
+    /// Only bindings with NO modifier are worth saying it about. Anything held
+    /// with the key is a combination the user reached for deliberately, and one
+    /// they cannot type by accident while filtering the stack.
     /// </summary>
     private void UpdateSearchClash()
     {
@@ -261,13 +345,12 @@ public partial class CascadeKeysPage : UserControl
         }
 
         string typing = string.Join(", ", _lists.SelectMany(l => l.Items)
-            .Where(i => i.Enabled && Types(KeyVk(i.Token)))
+            .Where(i => i.Enabled && Mods(i.Token) == 0 && Types(KeyVk(i.Token)))
             .Select(i => i.Token));
 
         SearchClashText.Text = typing.Length == 0 ? string.Empty
-            : $"{typing} would normally type into the search field. While Search is on, "
-              + "these bindings are claimed first, so those characters cannot be typed "
-              + "to filter the stack.";
+            : $"{typing} cannot be typed into the search field. Bindings are claimed "
+              + "before typing, so those characters will not filter the stack.";
         SearchClash.Visibility = typing.Length == 0
             ? Visibility.Collapsed : Visibility.Visible;
 
@@ -289,9 +372,8 @@ public partial class CascadeKeysPage : UserControl
 
         if (owner.KeepOne && owner.Items.Count(i => i.Enabled) <= 1 && item.Enabled)
         {
-            ShowRefusal($"“{item.Token}” is the only key that {owner.Role}. "
-                      + "Add another one first — a cascade with no way out is not "
-                      + "something these settings can save.");
+            ShowRefusal($"“{item.Token}” is the only key left for {owner.Name}. "
+                      + "Add another one first, or the cascade has no way out.");
             return;
         }
 
@@ -325,21 +407,28 @@ public partial class CascadeKeysPage : UserControl
 
         var (body, display) = MakeCaptureBody(target.AddPrompt);
 
-        // allowReservedKeys stays FALSE: Esc is the way out of this dialog and
-        // Enter is how a modal is accepted, so letting the capture take them
-        // would trap the user in the dialog they are trying to leave. Both are
-        // already bound by default anyway, and a key that is bound is refused.
-        HotkeyService.StartCapture(
-            onPreview: text => display.Text = text,
-            onCaptured: combo => Dispatcher.BeginInvoke(() =>
-            {
-                main.CloseModal();
-                TryAdd(target, combo);
-            }),
-            onCancelled: () => Dispatcher.BeginInvoke(main.CloseModal),
-            allowReservedKeys: false);
-
         main.ShowModal(target.AddTitle, body, ("Cancel", false, HotkeyService.StopCapture));
+
+        // The way out is the Cancel button, never a key: Esc and Enter are the
+        // cascade's own cancel and commit keys, and a picker that swallowed
+        // them could not bind the very keys it exists to rebind. The button
+        // strip goes over as a dead zone, so it keeps taking clicks while a
+        // click anywhere else is a binding. Measuring it needs the modal laid
+        // out, so arming waits for the layout pass ShowModal just queued.
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            HotkeyService.StartCapture(
+                onPreview: text => display.Text = text,
+                onCaptured: combo => Dispatcher.BeginInvoke(() =>
+                {
+                    main.CloseModal();
+                    TryAdd(target, combo);
+                }),
+                onCancelled: () => Dispatcher.BeginInvoke(main.CloseModal),
+                allowReservedKeys: true,
+                deadZoneScreen: main.ModalButtonsScreenRect(),
+                allowBareModifiers: false);
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void TryAdd(KeyList target, string combo)
@@ -360,34 +449,29 @@ public partial class CascadeKeysPage : UserControl
     /// <summary>
     /// Reason this key cannot join the list, or null.
     ///
-    /// The bar is EXACT collision, not overlap. Win+Tab and a bare Tab share a
-    /// key and are still two different presses — refusing the second because of
-    /// the first would take Tab away from the very list it belongs on. What is
-    /// refused is a binding that is the same press as one already spoken for:
-    /// an entry on another list here, or a bare key that IS the whole
-    /// activation hotkey.
+    /// What is refused is a press already spoken for — by another list here, or
+    /// by the activation hotkey itself — and a binding the core cannot route at
+    /// all. A press the hotkey merely makes awkward, by holding a modifier it
+    /// also asks for, is a warning instead (see UpdateHotkeyClash): the answer
+    /// there is a switch on another page, not a binding the user may not have.
     /// </summary>
     private string? WhyNot(KeyList target, string combo)
     {
         if (string.IsNullOrWhiteSpace(combo))
             return "Nothing was recorded. Try again.";
 
-        string[] parts = combo.Split('+', StringSplitOptions.TrimEntries);
-        uint vk = HotkeyService.TokenToVk(parts[^1]);
-        bool shift = NeedsShift(combo);
+        uint vk = KeyVk(combo);
+        uint mods = Mods(combo);
+
+        if (HotkeyService.IsBareModifier(combo))
+            return $"“{combo}” cannot be bound on its own. The cascade answers "
+                 + "modifier keys before any binding. Press it together with a key "
+                 + "or a mouse button instead.";
 
         if (vk == 0)
-            return $"“{combo}” is not a key the cascade can bind. Mouse buttons have "
-                 + "their own settings on the Mouse & keyboard page.";
+            return $"“{combo}” is not something the cascade can bind.";
 
-        // Shift, and nothing else. The others would have to be held alongside a
-        // hotkey that is itself a combination.
-        if (parts.Length > (shift ? 2 : 1))
-            return $"“{combo}” uses a modifier other than Shift. Only Shift is free "
-                 + "here — the rest may already be held down as part of the hotkey "
-                 + "that opened the cascade.";
-
-        bool Same(BindingItem i) => KeyVk(i.Token) == vk && NeedsShift(i.Token) == shift;
+        bool Same(BindingItem i) => KeyVk(i.Token) == vk && Mods(i.Token) == mods;
 
         if (target.Items.Any(Same))
             return $"“{combo}” is already on this list.";
@@ -395,29 +479,20 @@ public partial class CascadeKeysPage : UserControl
         foreach (var other in _lists)
         {
             if (ReferenceEquals(other, target) || !other.Items.Any(Same)) continue;
-            return $"“{combo}” already {other.Role}. One key does one job — remove it "
-                 + "there first if it belongs here instead.";
+            return $"“{combo}” is already bound to {other.Name}. Remove it from that "
+                 + "action first if you want to assign it here.";
         }
 
-        // Exact 1:1 with the binding that opens the cascade.
-        if (!shift && IsWholeBinding(App.Settings.ActivationHotkey, vk))
-            return $"“{combo}” is the whole activation hotkey. Pressing it would open "
-                 + "the cascade rather than act on it.";
+        // The press that opens the cascade is as spoken for as one already on a
+        // list here, navigation included.
+        if (App.Settings.ClashesWithActivation(combo))
+            return $"“{combo}” is already the activation hotkey. Change it on the "
+                 + "Mouse & keyboard page first if you want to assign it here.";
 
         if (target.Items.Count >= SettingsModel.MaxBindingKeys)
             return $"One list holds at most {SettingsModel.MaxBindingKeys} keys.";
 
         return null;
-    }
-
-    /// <summary>
-    /// Is <paramref name="binding"/> exactly this bare key — no modifiers?
-    /// "Win+Tab" is not Tab; "Escape" is Escape.
-    /// </summary>
-    private static bool IsWholeBinding(string binding, uint vk)
-    {
-        string[] parts = (binding ?? "").Split('+', StringSplitOptions.TrimEntries);
-        return parts.Length == 1 && HotkeyService.TokenToVk(parts[0]) == vk;
     }
 
     private void ShowRefusal(string text)
@@ -433,7 +508,7 @@ public partial class CascadeKeysPage : UserControl
             MaxWidth = 420,
             Foreground = (Brush)main.FindResource("TextPrimaryBrush"),
         };
-        main.ShowModal("That key is taken", body, ("OK", true, null));
+        main.ShowModal("Binding not applied", body, ("OK", true, null));
     }
 
     /// <summary>Same capture dialog body as the other binding pickers.</summary>
@@ -488,6 +563,23 @@ public sealed class BindingItem : INotifyPropertyChanged
             if (_enabled == value) return;
             _enabled = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+        }
+    }
+
+    /// <summary>
+    /// Why this binding cannot reach the cascade as things stand, or "" when it
+    /// can. Drives the amber mark on the row and its tooltip; the page rewrites
+    /// it whenever the lists or the activation hotkey change.
+    /// </summary>
+    private string _warning = "";
+    public string Warning
+    {
+        get => _warning;
+        set
+        {
+            if (_warning == value) return;
+            _warning = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Warning)));
         }
     }
 

@@ -101,15 +101,25 @@ public static class HotkeyService
     // through to the UI).
     private static bool _allowReservedKeys;
 
-    // Mouse-button-only capture (the in-cascade bindings).  Here a BARE left
+    // Mouse-button-only capture (the pointer bindings).  Here a BARE left
     // click is exactly what the user may be trying to bind, so it can no
     // longer be allowed through to the UI — which would leave the modal's
     // Cancel button unclickable.  The caller therefore hands over that
     // button's screen rectangle as a dead zone: clicks inside it are ignored
     // by the capture and reach WPF normally, clicks anywhere else are the
-    // binding.  Esc still cancels.
+    // binding.
+    //
+    // The dead zone is not tied to mouse-only capture: a capture that takes
+    // keys AND buttons (the cascade key lists) needs exactly the same way out,
+    // and once there is one, Esc is free to be a binding like any other key.
     private static bool _mouseOnly;
     private static RECT _deadZone;
+
+    // Releasing the last held modifier with nothing combined normally FINISHES
+    // the capture as a bare-modifier binding ("Win").  The cascade lists have
+    // no use for one — the hook answers modifier keys before it consults any
+    // binding — so there it only resets the prompt.
+    private static bool _bareModifiers = true;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
@@ -133,20 +143,17 @@ public static class HotkeyService
                                                Action onCancelled,
                                                Rect deadZoneScreen)
     {
-        StartCapture(onPreview, onCaptured, onCancelled);
+        StartCapture(onPreview, onCaptured, onCancelled,
+                     deadZoneScreen: deadZoneScreen);
         _mouseOnly = true;
-        _deadZone = new RECT
-        {
-            Left = (int)Math.Round(deadZoneScreen.Left),
-            Top = (int)Math.Round(deadZoneScreen.Top),
-            Right = (int)Math.Round(deadZoneScreen.Right),
-            Bottom = (int)Math.Round(deadZoneScreen.Bottom),
-        };
     }
+
+    private static bool HasDeadZone =>
+        _deadZone.Right > _deadZone.Left && _deadZone.Bottom > _deadZone.Top;
 
     private static bool InDeadZone()
     {
-        if (_deadZone.Right <= _deadZone.Left || _deadZone.Bottom <= _deadZone.Top)
+        if (!HasDeadZone)
             return false;
         if (!GetCursorPos(out POINT p))
             return false;
@@ -154,11 +161,21 @@ public static class HotkeyService
             && p.Y >= _deadZone.Top && p.Y < _deadZone.Bottom;
     }
 
-    /// <summary>Begin capturing. Callbacks arrive on the UI thread.</summary>
+    /// <summary>
+    /// Begin capturing. Callbacks arrive on the UI thread.
+    ///
+    /// <paramref name="deadZoneScreen"/> is a screen rectangle — normally the
+    /// modal's button strip — where clicks are left alone. Passing one is what
+    /// makes a BARE left click bindable, because the Cancel button underneath
+    /// keeps working; without it a bare left click is only a candidate
+    /// alongside modifiers, so it can keep driving the UI.
+    /// </summary>
     public static void StartCapture(Action<string> onPreview,
                                     Action<string> onCaptured,
                                     Action onCancelled,
-                                    bool allowReservedKeys = false)
+                                    bool allowReservedKeys = false,
+                                    Rect deadZoneScreen = default,
+                                    bool allowBareModifiers = true)
     {
         if (_capturing) StopCapture();
 
@@ -166,6 +183,14 @@ public static class HotkeyService
         _onCaptured = onCaptured;
         _onCancelled = onCancelled;
         _allowReservedKeys = allowReservedKeys;
+        _bareModifiers = allowBareModifiers;
+        _deadZone = deadZoneScreen.IsEmpty ? default : new RECT
+        {
+            Left = (int)Math.Round(deadZoneScreen.Left),
+            Top = (int)Math.Round(deadZoneScreen.Top),
+            Right = (int)Math.Round(deadZoneScreen.Right),
+            Bottom = (int)Math.Round(deadZoneScreen.Bottom),
+        };
         _ctrl = _shift = _alt = _win = false;
         _multiMods = false;
         _capturing = true;
@@ -187,6 +212,7 @@ public static class HotkeyService
         _onCaptured = null;
         _onCancelled = null;
         _allowReservedKeys = false;
+        _bareModifiers = true;
         _mouseOnly = false;
         _deadZone = default;
         _capturing = false;
@@ -264,7 +290,7 @@ public static class HotkeyService
             // multi-modifier hold just resets the prompt.
             if (isUp && heldCount == 0)
             {
-                if (_multiMods)
+                if (_multiMods || !_bareModifiers)
                 {
                     _multiMods = false;
                     _onPreview?.Invoke("…");
@@ -302,21 +328,21 @@ public static class HotkeyService
 
         int msg = (int)wParam;
 
-        // Mouse-only capture: leave the dead zone (the modal's own buttons)
-        // alone so Cancel keeps working, and take everything else as-is —
-        // including a bare left click, which is a perfectly ordinary binding
-        // for picking a window.
-        if (_mouseOnly && msg == WM_LBUTTONDOWN && InDeadZone())
+        // Leave the dead zone (the modal's own buttons) alone so Cancel keeps
+        // working, and take everything else as-is — including a bare left
+        // click, which is a perfectly ordinary binding for picking a window.
+        if (msg == WM_LBUTTONDOWN && InDeadZone())
             return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 
         string? btn = null;
         switch (msg)
         {
             case WM_LBUTTONDOWN:
-                // In the activation capture a bare left click keeps driving
-                // the UI (Cancel button); it is only a candidate when
-                // combined with modifiers.
-                if (_mouseOnly || _ctrl || _shift || _alt || _win) btn = "LButton";
+                // Without a dead zone a bare left click keeps driving the UI
+                // (Cancel button); it is only a candidate when combined with
+                // modifiers.
+                if (_mouseOnly || HasDeadZone || _ctrl || _shift || _alt || _win)
+                    btn = "LButton";
                 break;
             case WM_RBUTTONDOWN: btn = "RButton"; break;
             case WM_MBUTTONDOWN: btn = "MButton"; break;
@@ -346,6 +372,10 @@ public static class HotkeyService
         {
             0x09 => "Tab",
             0x20 => "Space",
+            // Reached only by a capture that opted into the reserved keys;
+            // without names here they would be recorded as "0x0D" / "0x1B".
+            0x0D => "Enter",
+            0x1B => "Escape",
             0x08 => "Backspace",
             0x2E => "Delete",
             0x2D => "Insert",
@@ -473,6 +503,67 @@ public static class HotkeyService
         string.IsNullOrWhiteSpace(combo)
             ? 0
             : TokenToVk(combo.Split('+', StringSplitOptions.TrimEntries)[^1]);
+
+    // ---- Mouse buttons and modifiers as part of a binding ------------------
+
+    /// <summary>The VK a MOUSE-button token stands for, or 0.</summary>
+    public static uint MouseTokenToVk(string? token) =>
+        (token ?? "").Trim().ToLowerInvariant() switch
+        {
+            "lbutton" => 0x01,
+            "rbutton" => 0x02,
+            "mbutton" or "middlebutton" => 0x04,
+            "xbutton1" or "mouse4" => 0x05,
+            "xbutton2" or "mouse5" => 0x06,
+            _ => 0,
+        };
+
+    /// <summary>Anything the cascade can bind — key or mouse button — or 0.</summary>
+    public static uint BindingTokenToVk(string? token)
+    {
+        uint vk = TokenToVk(token);
+        return vk != 0 ? vk : MouseTokenToVk(token);
+    }
+
+    /// <summary>The VK the combination ends in, mouse buttons included, or 0.</summary>
+    public static uint MainBindingVk(string? combo) =>
+        string.IsNullOrWhiteSpace(combo)
+            ? 0
+            : BindingTokenToVk(combo.Split('+', StringSplitOptions.TrimEntries)[^1]);
+
+    public const uint ModCtrl = 1, ModShift = 2, ModAlt = 4, ModWin = 8;
+
+    /// <summary>The modifier bit this token names, or 0 when it names a key.</summary>
+    public static uint ModifierBitOf(string? token) =>
+        (token ?? "").Trim().ToLowerInvariant() switch
+        {
+            "ctrl" or "control" => ModCtrl,
+            "shift" => ModShift,
+            "alt" => ModAlt,
+            "win" or "windows" or "super" or "meta" => ModWin,
+            _ => 0,
+        };
+
+    /// <summary>
+    /// The modifiers a combination asks to be held, its main key aside.
+    /// "Ctrl+Shift+F" → Ctrl|Shift; "F" and a bare "Ctrl" → none.
+    /// </summary>
+    public static uint ModsOf(string? combo)
+    {
+        if (string.IsNullOrWhiteSpace(combo)) return 0;
+        uint mods = 0;
+        foreach (string part in combo.Split('+', StringSplitOptions.TrimEntries).SkipLast(1))
+            mods |= ModifierBitOf(part);
+        return mods;
+    }
+
+    /// <summary>A combination that is nothing but a modifier ("Ctrl", "Win").</summary>
+    public static bool IsBareModifier(string? combo)
+    {
+        if (string.IsNullOrWhiteSpace(combo)) return false;
+        string[] parts = combo.Split('+', StringSplitOptions.TrimEntries);
+        return parts.Length == 1 && ModifierBitOf(parts[0]) != 0;
+    }
 
     // ---- Problematic-combination classification ----------------------------
 

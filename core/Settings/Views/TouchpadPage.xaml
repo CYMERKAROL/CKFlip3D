@@ -158,13 +158,13 @@
                         </DockPanel>
                     </Grid>
                     <Rectangle Style="{StaticResource RowSeparator}"/>
-                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Commit gesture"/>
+                    <TextBlock Style="{StaticResource SettingLabelText}" Text="Confirm gesture"/>
                     <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
                                Text="Gesture used to confirm selection and switch to the highlighted window."/>
                     <ItemsControl x:Name="CommitList" ItemTemplate="{StaticResource GestureRow}"/>
                     <TextBlock x:Name="CommitEmpty" Style="{StaticResource SettingHintText}"
                                FontStyle="Italic" Visibility="Collapsed"
-                               Text="No gesture commits. The commit key and the mouse still do."/>
+                               Text="No gesture confirms. The confirm key and the mouse still do."/>
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>

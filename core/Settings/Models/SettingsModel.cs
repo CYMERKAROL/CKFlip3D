@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using CKFlip3D.Settings.Services;
 
 namespace CKFlip3D.Settings.Models;
 
@@ -287,7 +288,7 @@ public sealed class SettingsModel : INotifyPropertyChanged
         set { Set(ref _windowSnap, value); RaiseWindowSnapSatisfied(); }
     }
 
-    // ---- Keys in the cascade (Mouse & keyboard → Keys in the cascade) -------
+    // ---- Cascade Keybindings (Mouse & keyboard → Cascade Keybindings) -------
     // Five lists: the two navigation directions and the three bindings that used
     // to be one key apiece (commit, cancel, close). The stored form is one
     // string per list so the whole model stays snapshot/compare-able the way
@@ -295,7 +296,7 @@ public sealed class SettingsModel : INotifyPropertyChanged
     // string back.
 
     /// <summary>Matches KeyboardHook::kMaxBindingKeys — what one packed word holds.</summary>
-    public const int MaxBindingKeys = 7;
+    public const int MaxBindingKeys = 5;
 
     /// <summary>Shipped bindings — keep in step with core/Config.h.</summary>
     public const string DefaultNavForwardKeys = "Tab;Down;Right";
@@ -311,6 +312,55 @@ public sealed class SettingsModel : INotifyPropertyChanged
     public string CommitKeys { get => _commitKeys; set => Set(ref _commitKeys, value ?? ""); }
     public string CancelKeys { get => _cancelKeys; set => Set(ref _cancelKeys, value ?? ""); }
     public string CloseKeys  { get => _closeKeys;  set => Set(ref _closeKeys, value ?? ""); }
+
+    // ---- One press, one job -------------------------------------------------
+
+    /// <summary>
+    /// Is this binding the very press that opens the cascade?
+    ///
+    /// EXACT, and nothing looser: same key or button, same modifiers. Win+Tab
+    /// and a bare Tab are two different presses, and the shipped configuration
+    /// is precisely that pair, so sharing a key cannot be the bar. Nor can
+    /// sharing a modifier, which only makes a binding awkward, never doubled.
+    ///
+    /// No list is exempt, navigation included. One press does one job, and the
+    /// press that opens the cascade already has its job.
+    /// </summary>
+    public bool ClashesWithActivation(string? token)
+    {
+        uint vk = HotkeyService.MainBindingVk(token);
+        return vk != 0
+            && HotkeyService.MainBindingVk(_activationHotkey) == vk
+            && HotkeyService.ModsOf(_activationHotkey) == HotkeyService.ModsOf(token);
+    }
+
+    /// <summary>
+    /// The cascade action bound to the activation hotkey itself, or null.
+    ///
+    /// Both pickers refuse this combination, and it is still reachable: pointing
+    /// the hotkey at a key a list already holds is one move, and rebinding the
+    /// hotkey carries the navigation entries onto its new key besides. So the
+    /// last word is here, where Apply can see it however it was arrived at.
+    ///
+    /// Blocking the save rather than correcting anything, for the reason
+    /// WindowSnapSatisfied gives: the bindings belong to the user, and Revert is
+    /// already the way back.
+    /// </summary>
+    public string? ActivationBindingClash
+    {
+        get
+        {
+            if (Holds(_navForwardKeys)) return "Next window";
+            if (Holds(_navBackKeys))    return "Previous window";
+            if (Holds(_commitKeys))     return "Confirm";
+            if (Holds(_cancelKeys))     return "Cancel";
+            if (Holds(_closeKeys))      return "Close window";
+            return null;
+
+            bool Holds(string list) =>
+                ParseBindings(list).Any(b => ClashesWithActivation(b.Token));
+        }
+    }
 
     public List<Binding> NavForwardKeyList => ParseBindings(_navForwardKeys);
     public List<Binding> NavBackKeyList    => ParseBindings(_navBackKeys);
@@ -361,11 +411,19 @@ public sealed class SettingsModel : INotifyPropertyChanged
     /// Ctrl+Alt+F leaves F stepping the stack exactly as Tab did, and someone
     /// who had already REMOVED Tab has nothing to carry, so nothing comes back.
     ///
+    /// A hotkey with no modifiers is the exception, and the body says why.
+    ///
     /// Called when the user assigns a hotkey, never while loading: on load the
     /// lists in the file are the truth.
     /// </summary>
     public void RepointNavKeysToHotkey(string? oldCombo, string? newCombo)
     {
+        // A hotkey with NO modifiers would be repointed onto as a bare token,
+        // which is the hotkey itself — the one binding no list may hold (see
+        // ClashesWithActivation).  Nothing to point at, then: the lists keep the
+        // keys they already name, all of which still step.
+        if (HotkeyService.ModsOf(newCombo) == 0) return;
+
         string oldKey = MainToken(oldCombo);
         string newKey = MainToken(newCombo);
         if (oldKey.Length == 0 || newKey.Length == 0
@@ -585,9 +643,10 @@ public sealed class SettingsModel : INotifyPropertyChanged
 
 /// <summary>
 /// One entry of a binding list — a key that acts on the open cascade (Controls
-/// → Mouse &amp; keyboard → Keys in the cascade) or a touchpad gesture (Controls
+/// → Mouse &amp; keyboard → Cascade Keybindings) or a touchpad gesture (Controls
 /// → Touchpad gestures). <paramref name="Token"/> is the vocabulary the core
-/// parses ("Down", "PageUp", "F13"; "TwoDownRight", "OneTap");
+/// parses ("Down", "PageUp", "F13", "Ctrl+W", "MButton"; "TwoDownRight",
+/// "OneTap");
 /// <paramref name="Enabled"/> false is a binding the user parked rather than
 /// removed, so switching it back on does not mean recording it again.
 /// </summary>

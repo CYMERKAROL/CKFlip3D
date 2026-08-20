@@ -276,7 +276,7 @@
                                 </StackPanel>
                                 <TextBlock Margin="4,0,0,0"
                                            FontFamily="Segoe UI" FontSize="10.5"
-                                           Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.6"/>
+                                           Foreground="{DynamicResource FooterTextBrush}" Text="CKFlip3D • 1.6.1"/>
                             </StackPanel>
                         </Grid>
 

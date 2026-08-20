@@ -92,7 +92,7 @@ public partial class MouseKeyboardPage : UserControl
     private void ManageCascadeKeys_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is MainWindow main)
-            main.PushSubPage(new CascadeKeysPage(), "Keys in the cascade");
+            main.PushSubPage(new CascadeKeysPage(), "Cascade Keybindings");
     }
 
     /// <summary>
@@ -226,7 +226,7 @@ public partial class MouseKeyboardPage : UserControl
                    allowReserved: false,
                    assign: ConfirmAndAssignActivation);
 
-    // Commit, cancel and close are captured on the Keys in the cascade page —
+    // Commit, cancel and close are captured on the Cascade Keybindings page —
     // they are lists now, and the page that owns a list owns its editor.
 
     // ---- Mouse-button capture ----------------------------------------------
@@ -319,6 +319,15 @@ public partial class MouseKeyboardPage : UserControl
         return (body, display);
     }
 
+    /// <summary>
+    /// Assign the hotkey, asking first if the combination is a known shortcut.
+    ///
+    /// A combination that a cascade binding already holds is deliberately NOT
+    /// refused here.  It is one of two ways into that state, repointing the
+    /// navigation lists being the other, and no picker can see that one coming.
+    /// So the rule lives where both are visible: SettingsModel.
+    /// ActivationBindingClash takes Apply away until one of the two moves.
+    /// </summary>
     private void ConfirmAndAssignActivation(string combo)
     {
         if (Window.GetWindow(this) is not MainWindow main)

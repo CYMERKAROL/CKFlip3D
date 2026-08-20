@@ -566,11 +566,16 @@ public partial class MainWindow : Window
         // LEAVES rather than greys out, so the bar reads as "there is nothing
         // to press here yet" instead of "press harder".  Revert stays — it is
         // the way back out — and the message says which setting is holding it.
-        bool ok = App.Settings.WindowSnapSatisfied;
+        string? clash = App.Settings.ActivationBindingClash;
+        bool ok = App.Settings.WindowSnapSatisfied && clash == null;
         ApplyButton.Visibility = ok ? Visibility.Visible : Visibility.Collapsed;
-        ApplyBarText.Text = ok
-            ? "You have unsaved changes. Apply to update CKFlip3D."
-            : "Window snap can only be off with “Let the mouse act on the stack” on.";
+        ApplyBarText.Text =
+            !App.Settings.WindowSnapSatisfied
+                ? "Window snap can only be off with “Let the mouse act on the stack” on."
+            : clash != null
+                ? $"{App.Settings.ActivationHotkey} opens the cascade and is also bound "
+                  + $"to {clash}. Change one of them, or revert."
+                : "You have unsaved changes. Apply to update CKFlip3D.";
     }
 
     private void BtnApply_Click(object sender, RoutedEventArgs e)

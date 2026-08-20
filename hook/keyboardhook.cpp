@@ -160,8 +160,9 @@ std::atomic<bool>  g_optSearchEnabled{false};
 // ---------------------------------------------------------------------------
 // Every in-cascade key binding (config commitKeys / cancelKeys / closeKeys /
 // navForwardKeys / navBackKeys) — up to kMaxBindingKeys per list in ONE word:
-// seven VK bytes in bits 0-55, and each slot's "needs Shift" flag in bits
-// 56-62.
+// five 12-bit entries, each a VK byte (bits 0-7 of the entry, keyboard key or
+// mouse button alike) beside the Ctrl/Shift/Alt/Win mask that has to be held
+// with it (bits 8-11).
 //
 // Packed for the same reason g_hkSpec and g_session are: the hook thread reads
 // this on every keystroke of an open session while the app thread rewrites it
@@ -169,50 +170,76 @@ std::atomic<bool>  g_optSearchEnabled{false};
 // Half of an old list beside half of a new one would, for one keystroke, be a
 // set of bindings the user never chose — most visibly a key they had just
 // removed still stepping the stack.  One store changes the whole list.
-constexpr int kBindShiftBit = 56;
+constexpr int      kBindSlotBits = 12;
+constexpr int      kBindModShift = 8;
+constexpr uint64_t kBindSlotMask = 0xFFFull;
+constexpr uint64_t kBindVkMask   = 0xFFull;
 
-constexpr uint64_t PackBindKey(unsigned vk, bool needShift, int slot) noexcept
+constexpr uint64_t PackBindKey(unsigned vk, uint8_t mods, int slot) noexcept
 {
-    return ((static_cast<uint64_t>(vk) & 0xFFull) << (slot * 8))
-         | (needShift ? (uint64_t{1} << (kBindShiftBit + slot)) : 0);
+    return ((static_cast<uint64_t>(vk) & kBindVkMask)
+            | (static_cast<uint64_t>(mods & 0x0F) << kBindModShift))
+           << (slot * kBindSlotBits);
 }
 
 // Seeded with the same defaults TriggerOptions carries, so a hook that somehow
 // fires before the first SetOptions still behaves like the shipped build.
-std::atomic<uint64_t> g_optCommitKeys{ PackBindKey(VK_RETURN, false, 0) };
-std::atomic<uint64_t> g_optCancelKeys{ PackBindKey(VK_ESCAPE, false, 0) };
-std::atomic<uint64_t> g_optCloseKeys { PackBindKey(VK_DELETE, false, 0) };
+std::atomic<uint64_t> g_optCommitKeys{ PackBindKey(VK_RETURN, 0, 0) };
+std::atomic<uint64_t> g_optCancelKeys{ PackBindKey(VK_ESCAPE, 0, 0) };
+std::atomic<uint64_t> g_optCloseKeys { PackBindKey(VK_DELETE, 0, 0) };
 std::atomic<uint64_t> g_optNavForward{
-    PackBindKey(VK_TAB, false, 0) | PackBindKey(VK_DOWN, false, 1)
-        | PackBindKey(VK_RIGHT, false, 2) };
+    PackBindKey(VK_TAB, 0, 0) | PackBindKey(VK_DOWN, 0, 1)
+        | PackBindKey(VK_RIGHT, 0, 2) };
 std::atomic<uint64_t> g_optNavBack{
-    PackBindKey(VK_TAB, true, 0) | PackBindKey(VK_UP, false, 1)
-        | PackBindKey(VK_LEFT, false, 2) };
+    PackBindKey(VK_TAB, kModShift, 0) | PackBindKey(VK_UP, 0, 1)
+        | PackBindKey(VK_LEFT, 0, 2) };
 
-// Membership test for a packed list.  Zero never matches: it is the empty
-// slot, and an unbound key must not answer for one.
-inline bool BindKeysContain(uint64_t packed, DWORD vk, bool needShift) noexcept
+/// How well does this list claim the key that was just pressed?  -1 = not at
+/// all, otherwise the number of modifiers the matching entry asked for.
+///
+/// An entry matches when its modifiers are a SUBSET of the ones the user is
+/// holding, so a plain entry keeps working whatever else is down — that is
+/// what keeps Shift+Down stepping forward.  The score is what then settles a
+/// key that is on two lists: the more specific entry wins, so Shift+Tab goes
+/// back while bare Tab goes forward.  Zero never matches: it is the empty
+/// slot, and an unbound key must not answer for one.
+inline int BindKeyMatch(uint64_t packed, DWORD vk, uint8_t heldMods) noexcept
 {
-    if (vk == 0 || vk > 0xFF) return false;
+    if (vk == 0 || vk > 0xFF) return -1;
+    int best = -1;
     for (int i = 0; i < kMaxBindingKeys; ++i) {
-        if (((packed >> (i * 8)) & 0xFFull) != vk) continue;
-        const bool slotShift = ((packed >> (kBindShiftBit + i)) & 1) != 0;
-        if (slotShift == needShift) return true;
+        const uint64_t entry = (packed >> (i * kBindSlotBits)) & kBindSlotMask;
+        if ((entry & kBindVkMask) != vk) continue;
+        const uint8_t mods = static_cast<uint8_t>((entry >> kBindModShift) & 0x0F);
+        if ((mods & static_cast<uint8_t>(~heldMods)) != 0) continue;
+        int score = 0;
+        for (uint8_t m = mods; m != 0; m &= static_cast<uint8_t>(m - 1)) ++score;
+        if (score > best) best = score;
     }
+    return best;
+}
+
+inline bool BindingClaims(uint64_t packed, DWORD vk, uint8_t heldMods) noexcept
+{
+    return BindKeyMatch(packed, vk, heldMods) >= 0;
+}
+
+inline bool BindKeysContainExact(uint64_t packed, unsigned vk, uint8_t mods) noexcept
+{
+    const uint64_t want = (static_cast<uint64_t>(vk) & kBindVkMask)
+                        | (static_cast<uint64_t>(mods & 0x0F) << kBindModShift);
+    for (int i = 0; i < kMaxBindingKeys; ++i)
+        if (((packed >> (i * kBindSlotBits)) & kBindSlotMask) == want) return true;
     return false;
 }
 
-/// Does this list claim the key that was just pressed?
-///
-/// Shift-qualified entries are consulted first and only while Shift is
-/// actually FREE — a combination that contains Shift keeps it down for the
-/// whole session, so treating that as "the user is holding Shift" would turn
-/// every forward step into a backward one.  Plain entries then match whatever
-/// the Shift state is, which is what keeps Shift+Down stepping forward.
-inline bool BindingClaims(uint64_t packed, DWORD vk, bool shiftFree) noexcept
+inline bool BindKeysUseVk(uint64_t packed, unsigned vk) noexcept
 {
-    return (shiftFree && BindKeysContain(packed, vk, true))
-        || BindKeysContain(packed, vk, false);
+    if (vk == 0) return false;
+    for (int i = 0; i < kMaxBindingKeys; ++i)
+        if ((((packed >> (i * kBindSlotBits)) & kBindSlotMask) & kBindVkMask) == vk)
+            return true;
+    return false;
 }
 
 // THIS session holds itself open, whatever the permanent setting says.
@@ -462,6 +489,34 @@ bool ToggleSemantics()
         || g_toggleLatched.load(std::memory_order_relaxed);
 }
 
+// Modifiers the USER is holding for the binding being pressed right now.  In
+// hold semantics the activation combination's own are down for the whole
+// session — releasing one is what commits — so counting them would turn every
+// forward step into a backward one the moment the hotkey contained Shift.
+uint8_t UserModMask(uint8_t comboMods)
+{
+    uint8_t held = 0;
+    if (ModBitDown(kModCtrl))  held |= kModCtrl;
+    if (ModBitDown(kModShift)) held |= kModShift;
+    if (ModBitDown(kModAlt))   held |= kModAlt;
+    if (ModBitDown(kModWin))   held |= kModWin;
+    return ToggleSemantics() ? held
+                             : static_cast<uint8_t>(held & ~comboMods);
+}
+
+bool IsModifierVk(unsigned vk) noexcept
+{
+    switch (vk) {
+    case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL:
+    case VK_SHIFT:   case VK_LSHIFT:   case VK_RSHIFT:
+    case VK_MENU:    case VK_LMENU:    case VK_RMENU:
+    case VK_LWIN:    case VK_RWIN:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // A session is beginning: nothing from the last one carries over.
 void BeginSessionState()
 {
@@ -653,12 +708,11 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 
     // ---- Extra navigation while session is active ------------------------
     if (active) {
-        // Shift only counts when it is FREE — see BindingClaims.  Read once
-        // here rather than per list: every binding below asks the same
-        // question, and GetAsyncKeyState on the hook thread is not free.
-        const bool shiftFree = !(modMask & kModShift)
-            && ((GetAsyncKeyState(VK_LSHIFT) & 0x8000)
-             || (GetAsyncKeyState(VK_RSHIFT) & 0x8000));
+        // What the user is holding, the activation combination aside — see
+        // UserModMask.  Read once here rather than per list: every binding
+        // below asks the same question, and GetAsyncKeyState on the hook
+        // thread is not free.
+        const uint8_t userMods = UserModMask(modMask);
 
         // Commit the current selection (Enter by default, see commitKeys).
         // Required for bindings with no hold modifier (bare key / mouse
@@ -667,7 +721,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // doesn't pop afterwards.
         if (isDown
             && BindingClaims(g_optCommitKeys.load(std::memory_order_relaxed),
-                             kb->vkCode, shiftFree)) {
+                             kb->vkCode, userMods)) {
             DropSession();
             // Suppress the upcoming combo-modifier release only while one
             // is actually still held — in toggle mode the modifiers are
@@ -688,7 +742,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // the part that stops the Start menu popping over the cascade.
         if (isDown
             && BindingClaims(g_optCancelKeys.load(std::memory_order_relaxed),
-                             kb->vkCode, shiftFree)) {
+                             kb->vkCode, userMods)) {
             DropSession();
             g_suppressNextModRelease = (modMask != 0) && AnyComboModDown(modMask);
             ResetWheelState();
@@ -702,7 +756,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
         // feature off, and an empty closeKeys list is how it is switched off.
         if (isDown
             && BindingClaims(g_optCloseKeys.load(std::memory_order_relaxed),
-                             kb->vkCode, shiftFree)) {
+                             kb->vkCode, userMods)) {
             if (g_msg.closeSelected != 0)
                 PostMessage(g_hwndNotify, g_msg.closeSelected, 0, 0);
             return 1;
@@ -730,15 +784,15 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
             const uint64_t fwd  = g_optNavForward.load(std::memory_order_relaxed);
             const uint64_t back = g_optNavBack.load(std::memory_order_relaxed);
 
-            // Shift-qualified entries are consulted first and only while Shift
-            // is actually held; the plain ones then match whatever the Shift
-            // state is.  That is what keeps Shift+Tab going backwards without
-            // making Shift+Down — which has always stepped forward — stop.
+            // The more specific entry wins — see BindKeyMatch.  That is what
+            // keeps Shift+Tab going backwards without making Shift+Down —
+            // which has always stepped forward — stop.
+            const int fwdScore  = BindKeyMatch(fwd,  navVk, userMods);
+            const int backScore = BindKeyMatch(back, navVk, userMods);
+
             int dir = 0;   // +1 forward, -1 back
-            if (shiftFree && BindKeysContain(back, navVk, true))       dir = -1;
-            else if (shiftFree && BindKeysContain(fwd, navVk, true))   dir = +1;
-            else if (BindKeysContain(fwd, navVk, false))               dir = +1;
-            else if (BindKeysContain(back, navVk, false))              dir = -1;
+            if (fwdScore >= 0 && fwdScore >= backScore) dir = +1;
+            else if (backScore >= 0)                    dir = -1;
 
             if (dir != 0) {
                 if (isDown)
@@ -957,6 +1011,66 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
                 PostMessage(g_hwndNotify, g_msg.scrub, 0,
                             static_cast<LPARAM>(fixed));
             return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+        }
+    }
+
+    // ---- Mouse buttons on the in-cascade key lists -----------------------
+    // LAST of the mouse branches deliberately: picking, closing and dragging
+    // are the pointer's own bindings, so a button carrying both keeps doing
+    // what it already did.
+    {
+        bool btnDown = false;
+        const unsigned btnVk = MouseButtonVk(wParam, ms, btnDown);
+        if (btnVk != 0) {
+            const uint8_t userMods = UserModMask(modMask);
+
+            if (BindingClaims(g_optCommitKeys.load(std::memory_order_relaxed),
+                              btnVk, userMods)) {
+                if (btnDown) {
+                    DropSession();
+                    g_suppressNextModRelease =
+                        (modMask != 0) && AnyComboModDown(modMask);
+                    ResetWheelState();
+                    PostMessage(g_hwndNotify, g_msg.dismiss, 0, 0);
+                }
+                return 1;
+            }
+
+            if (BindingClaims(g_optCancelKeys.load(std::memory_order_relaxed),
+                              btnVk, userMods)) {
+                if (btnDown) {
+                    DropSession();
+                    g_suppressNextModRelease =
+                        (modMask != 0) && AnyComboModDown(modMask);
+                    ResetWheelState();
+                    PostMessage(g_hwndNotify, g_msg.escape, 0, 0);
+                }
+                return 1;
+            }
+
+            if (BindingClaims(g_optCloseKeys.load(std::memory_order_relaxed),
+                              btnVk, userMods)) {
+                if (btnDown && g_msg.closeSelected != 0)
+                    PostMessage(g_hwndNotify, g_msg.closeSelected, 0, 0);
+                return 1;
+            }
+
+            const int fwdScore = BindKeyMatch(
+                g_optNavForward.load(std::memory_order_relaxed), btnVk, userMods);
+            const int backScore = BindKeyMatch(
+                g_optNavBack.load(std::memory_order_relaxed), btnVk, userMods);
+
+            int dir = 0;
+            if (fwdScore >= 0 && fwdScore >= backScore) dir = +1;
+            else if (backScore >= 0)                    dir = -1;
+
+            if (dir != 0) {
+                PostMessage(g_hwndNotify,
+                            btnDown ? (dir > 0 ? g_msg.cycle : g_msg.cycleBack)
+                                    : g_msg.cycleStop,
+                            0, 0);
+                return 1;
+            }
         }
     }
 
@@ -1381,9 +1495,16 @@ bool ShouldIgnoreActivation()
 
 bool PointerOwnsLeftClick()
 {
-    return g_optPointerInCascade.load(std::memory_order_relaxed)
+    if (g_optPointerInCascade.load(std::memory_order_relaxed)
         && g_optMouseSelect.load(std::memory_order_relaxed)
-        && g_optSelectButton.load(std::memory_order_relaxed) == kMouseLeft;
+        && g_optSelectButton.load(std::memory_order_relaxed) == kMouseLeft)
+        return true;
+
+    return BindKeysUseVk(g_optCommitKeys.load(std::memory_order_relaxed), VK_LBUTTON)
+        || BindKeysUseVk(g_optCancelKeys.load(std::memory_order_relaxed), VK_LBUTTON)
+        || BindKeysUseVk(g_optCloseKeys.load(std::memory_order_relaxed),  VK_LBUTTON)
+        || BindKeysUseVk(g_optNavForward.load(std::memory_order_relaxed), VK_LBUTTON)
+        || BindKeysUseVk(g_optNavBack.load(std::memory_order_relaxed),    VK_LBUTTON);
 }
 
 void SuspendActivation(unsigned ms)
@@ -1425,10 +1546,10 @@ void AbortSessionIfIdle(uint64_t epoch)
 // in-cascade bindings (commit, cancel, close, forward, back).
 //
 // Entries use the ordinary binding vocabulary ("Down", "PageUp", "Shift+Tab",
-// "0x21") — a bare key, or SHIFT plus a key, and no other modifier.  Shift is
-// the exception because it is the one modifier a hand is free to add while the
-// activation combination is still held; Ctrl, Alt and Win would each have to
-// fight the combination itself.  A leading '!' means the binding is parked —
+// "Ctrl+W", "MButton", "0x21") — a key or a mouse button, under any
+// combination of Ctrl/Shift/Alt/Win.  A modifier ON ITS OWN is refused: the
+// hook answers modifier keys before it consults any binding, so such an entry
+// could only ever look bound.  A leading '!' means the binding is parked —
 // remembered in config.json, skipped here — so switching one off in the
 // Settings list does not throw the key away.
 //
@@ -1453,16 +1574,14 @@ static uint64_t PackBindKeyList(const std::wstring& list, unsigned& dropped)
         if (!tok.empty() && tok[0] != L'!') {
             HotkeySpec spec;
             const bool usable = ParseHotkey(tok, spec)
-                             && (spec.modMask == 0 || spec.modMask == kModShift)
-                             && !spec.mainIsMouse
+                             && !IsModifierVk(spec.mainVk)
                              && spec.mainVk != 0 && spec.mainVk <= 0xFF;
-            const bool needShift = usable && (spec.modMask == kModShift);
             if (!usable) {
                 ++dropped;
             } else if (slot >= kMaxBindingKeys) {
                 ++dropped;          // past what one packed word holds
-            } else if (!BindKeysContain(packed, spec.mainVk, needShift)) {
-                packed |= PackBindKey(spec.mainVk, needShift, slot++);
+            } else if (!BindKeysContainExact(packed, spec.mainVk, spec.modMask)) {
+                packed |= PackBindKey(spec.mainVk, spec.modMask, slot++);
             }
             // A duplicate is not "dropped": the key still navigates.
         }
@@ -1527,10 +1646,11 @@ void SetOptions(const TriggerOptions& opts)
         if (dropped != 0) {
             wchar_t detail[256];
             _snwprintf_s(detail, _countof(detail), _TRUNCATE,
-                L"%u key binding(s) in config.json are not a single keyboard "
-                L"key with no modifiers (Shift aside), or there were more than "
-                L"%d in one list; those entries do nothing and the rest still "
-                L"work (Controls → Mouse & keyboard → Keys in the cascade)",
+                L"%u key binding(s) in config.json name nothing the cascade can "
+                L"bind — a modifier on its own cannot be one — or there were "
+                L"more than %d in one list; those entries do nothing and the "
+                L"rest still work (Controls → Mouse & keyboard → Cascade "
+                L"Keybindings)",
                 dropped, kMaxBindingKeys);
             Diag::Report(Diag::Code::BindingUnparsable, Diag::Sev::Warning,
                          L"Some key bindings could not be understood", detail);

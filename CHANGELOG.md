@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.6.1
+
+### Cascade Keybindings
+
+- **Keys in the cascade** renamed to **Cascade Keybindings** (Controls → Mouse & keyboard).
+- **Any modifier combination can be bound.** The five lists used to take a bare key or Shift plus a key; Ctrl, Alt and Win now count for as much, alone or in any combination, so `Ctrl+W` can close the window under the pointer and `Alt+Q` can cancel the cascade.
+- **Mouse buttons are bindable too** — left, right, middle and the two side buttons, on their own or under modifiers. The pointer's own bindings come first, so a button already set to pick, close or drag keeps doing exactly that.
+- **Escape and Enter can be rebound.** The picker used to hold both back, because they were how a dialog was cancelled and accepted — which left the cascade's two most obvious keys as the only ones nobody could move. The **Cancel** button is now the way out of the picker, so every key on the keyboard is recordable, that pair included.
+- **A modifier on its own** (`Ctrl`, `Win`) is the one thing that cannot be an entry: the cascade answers modifier keys before it consults any binding, so such an entry could only ever look bound.
+- **The press that opens the cascade cannot also act on it.** Binding the activation hotkey itself is refused on all five lists, exactly as a key another list already holds is. Only the identical press counts: `Win+Tab` and a bare `Tab` stay two different bindings, which is what the shipped configuration has always been. Arriving at the same collision from the other side, by pointing the hotkey at a binding, takes **Apply** away instead, with the Apply bar naming both, since **Revert** is already the way back.
+- **A binding that merely shares a modifier with the hotkey is flagged, not refused.** A combination holds its modifiers down for the whole session, so a binding asking for one of the same modifiers cannot fire while the cascade is opened by holding. The row is marked in amber and says so, and turning on **Toggle activation** clears it.
+- Rebinding the hotkey no longer carries the navigation entries onto a **single-key** hotkey. That key already opens the cascade, so it cannot be a binding as well, and the keys the lists already name go on stepping untouched.
+- The **Search** warning now concerns only bindings with no modifier. Anything held with a key is a combination reached for deliberately, not a character that could go missing from a query.
+- **Each list now holds five keys rather than seven.** The whole list reaches the core as one indivisible value so a keystroke can never meet it half-updated, and full modifier masks cost room inside it. Lists ship with three. A configuration carrying six or seven in one list keeps them on the page, but only the first five act.
+
+### Settings
+
+- **Commit** is **Confirm** now throughout the interface — the card, the dialog that records the key, and **Confirm gesture** on the Touchpad page. Nothing changes in `config.json`.
+- Refusals name the action the way its card does. `Enter` being taken now reads "already bound to Confirm" instead of "already commits the selection", and the dialog is titled **Binding not applied**.
+- One prompt for all five pickers. The dialog title already says which action is being bound, so the body no longer repeats it.
+- Hints on **Cascade Keybindings**, **Mouse & keyboard** and **Touchpad gestures** shortened.
+
 ## 1.6
 
 ### Keys in the cascade

@@ -107,9 +107,9 @@ struct AppConfig {
     // entry here, removable like the arrows.
     //
     // Each list is ';'-separated and uses the same token names as
-    // activationHotkey (KeyboardHook::ParseHotkey): a bare key, or SHIFT plus a
-    // key, Shift being the one modifier a hand is free to add while the
-    // activation combination is still held.
+    // activationHotkey (KeyboardHook::ParseHotkey): a key or a mouse button,
+    // on its own or under any combination of Ctrl/Shift/Alt/Win.  A modifier
+    // on its own is the one thing that cannot be an entry.
     //
     // A token prefixed with '!' is REMEMBERED BUT OFF, so a binding can be
     // parked without being retyped later.  Anything unparsable is skipped.
@@ -142,7 +142,8 @@ struct AppConfig {
     // CANCEL it, and the ones that CLOSE the hovered (or selected) window.
     //
     // LISTS, in exactly the form navForwardKeys uses: ';'-separated tokens, a
-    // bare key or Shift+key each, '!' for "kept but switched off".  They were
+    // key or a mouse button under any modifiers, '!' for "kept but switched
+    // off".  They were
     // one key apiece until 1.6 Build 3, which is the only reason they ever
     // read as single strings — someone who commits with Enter AND with Space,
     // or closes with both Delete and Backspace, was writing that binding twice

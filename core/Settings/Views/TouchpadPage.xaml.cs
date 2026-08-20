@@ -108,7 +108,7 @@ public partial class TouchpadPage : UserControl
             },
             new GestureList
             {
-                PickTitle = "Add a commit gesture",
+                PickTitle = "Add a confirm gesture",
                 PickPrompt = "Select a swipe gesture to confirm selection and switch "
                            + "to the highlighted window.",
                 Vocabulary = TouchpadGestures.Commit,

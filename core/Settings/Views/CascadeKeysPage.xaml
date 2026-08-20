@@ -6,11 +6,14 @@
      ========================================================================= -->
 <UserControl x:Class="CKFlip3D.Settings.Views.CascadeKeysPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:CKFlip3D.Settings.Views">
 
     <UserControl.Resources>
-        <!-- One binding: the key, a switch that parks it without throwing it
-             away, and the X that does throw it away. -->
+        <v:StringToVisibilityConverter x:Key="StringVis"/>
+        <!-- One binding: the key, the amber mark when it cannot reach the
+             cascade as things stand, a switch that parks it without throwing
+             it away, and the X that does throw it away. -->
         <DataTemplate x:Key="BindingRow">
             <Grid Margin="0,3">
                 <Grid.ColumnDefinitions>
@@ -18,11 +21,24 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Border CornerRadius="4" Padding="10,5" HorizontalAlignment="Left"
-                        Background="{DynamicResource InsetFieldBrush}"
-                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
-                    <TextBlock Style="{StaticResource MonoValueText}" Text="{Binding Token}"/>
-                </Border>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Border CornerRadius="4" Padding="10,5"
+                            Background="{DynamicResource InsetFieldBrush}"
+                            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                        <TextBlock Style="{StaticResource MonoValueText}" Text="{Binding Token}"/>
+                    </Border>
+                    <!-- Background is what makes the triangle hoverable: a Path
+                         with no Fill only takes hits on its stroke, so the
+                         tooltip would be a game of aim. -->
+                    <Border Background="Transparent" Padding="8,0,2,0" VerticalAlignment="Center"
+                            ToolTip="{Binding Warning}"
+                            Visibility="{Binding Warning, Converter={StaticResource StringVis}}">
+                        <Path Width="13" Height="12" Stroke="#FFE8A33D" StrokeThickness="1.3"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              StrokeLineJoin="Round"
+                              Data="M6.5,1.2 L12.2,11 H0.8 Z M6.5,4.8 V7.6 M6.5,9.2 V9.7"/>
+                    </Border>
+                </StackPanel>
                 <CheckBox Grid.Column="1" Style="{StaticResource AeroToggle}"
                           VerticalAlignment="Center" Margin="12,0,10,0"
                           ToolTip="Off keeps the key on the list but stops it acting."
@@ -38,14 +54,24 @@
                   Padding="24,4,16,20">
         <StackPanel>
 
-            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Keys in the cascade">
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Cascade Keybindings">
                 <StackPanel>
                     <TextBlock FontFamily="Segoe UI" FontSize="12" TextWrapping="Wrap"
                                Foreground="{DynamicResource TextSecondaryBrush}"
-                               Text="Customize navigation, selection, and close hotkeys used while the cascade is active."/>
-                    <!-- Not a refusal, unlike a key that is already bound
-                         elsewhere: this one only costs a character in the
-                         search field, and only while Search is on. -->
+                               Text="Set key bindings for navigating, selecting, and closing windows inside the cascade."/>
+                    <!-- Warnings, never refusals: both describe a binding that
+                         is perfectly legal and simply will not reach the
+                         cascade in the CURRENT configuration, so the answer is
+                         to say so, not to take the choice away. -->
+                    <StackPanel x:Name="HotkeyClash" Orientation="Horizontal"
+                                Visibility="Collapsed" Margin="0,12,0,0">
+                        <Path Width="13" Height="12" Margin="0,1,7,0" VerticalAlignment="Top"
+                              Stroke="#FFE8A33D" StrokeThickness="1.3"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                              Data="M6.5,1.2 L12.2,11 H0.8 Z M6.5,4.8 V7.6 M6.5,9.2 V9.7"/>
+                        <TextBlock x:Name="HotkeyClashText" FontFamily="Segoe UI" FontSize="11"
+                                   TextWrapping="Wrap" MaxWidth="450" Foreground="#FFE8A33D"/>
+                    </StackPanel>
                     <StackPanel x:Name="SearchClash" Orientation="Horizontal"
                                 Visibility="Collapsed" Margin="0,12,0,0">
                         <Path Width="13" Height="12" Margin="0,1,7,0" VerticalAlignment="Top"
@@ -65,7 +91,7 @@
                     <ItemsControl x:Name="ForwardList" ItemTemplate="{StaticResource BindingRow}"/>
                     <TextBlock x:Name="ForwardEmpty" Style="{StaticResource SettingHintText}"
                                FontStyle="Italic" Visibility="Collapsed"
-                               Text="No key moves forward. The stack can still be stepped with the activation key, the wheel and the touchpad."/>
+                               Text="No key moves forward. The activation key, the wheel and the touchpad still step the stack."/>
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -87,7 +113,7 @@
                     <ItemsControl x:Name="BackList" ItemTemplate="{StaticResource BindingRow}"/>
                     <TextBlock x:Name="BackEmpty" Style="{StaticResource SettingHintText}"
                                FontStyle="Italic" Visibility="Collapsed"
-                               Text="No key moves back. Holding Shift with a forward key still reverses the activation binding."/>
+                               Text="No key moves back. Shift with a forward key still reverses it."/>
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -102,14 +128,14 @@
                 </StackPanel>
             </HeaderedContentControl>
 
-            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Commit">
+            <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Confirm">
                 <StackPanel>
                     <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
-                               Text="Confirms the selection, switches to the focused window, and closes the cascade."/>
+                               Text="Switches to the selected window and closes the cascade."/>
                     <ItemsControl x:Name="CommitList" ItemTemplate="{StaticResource BindingRow}"/>
                     <TextBlock x:Name="CommitEmpty" Style="{StaticResource SettingHintText}"
                                FontStyle="Italic" Visibility="Collapsed"
-                               Text="No key commits. Only the mouse and the touchpad can pick a window."/>
+                               Text="No key confirms. Only the mouse and touchpad can pick a window."/>
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -127,7 +153,7 @@
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Cancel">
                 <StackPanel>
                     <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
-                               Text="Closes the cascade without switching windows (or clears an active search)."/>
+                               Text="Closes the cascade without switching windows, or clears an active search."/>
                     <ItemsControl x:Name="CancelList" ItemTemplate="{StaticResource BindingRow}"/>
                     <TextBlock x:Name="CancelEmpty" Style="{StaticResource SettingHintText}"
                                FontStyle="Italic" Visibility="Collapsed"
@@ -149,11 +175,11 @@
             <HeaderedContentControl Style="{StaticResource SettingsCard}" Header="Close window">
                 <StackPanel>
                     <TextBlock Style="{StaticResource SettingHintText}" Margin="0,0,0,8"
-                               Text="Closes the window you are pointing at, or the selected one when the pointer is elsewhere."/>
+                               Text="Closes the window under the pointer, or the selected one."/>
                     <ItemsControl x:Name="CloseList" ItemTemplate="{StaticResource BindingRow}"/>
                     <TextBlock x:Name="CloseEmpty" Style="{StaticResource SettingHintText}"
                                FontStyle="Italic" Visibility="Collapsed"
-                               Text="No key closes windows. This is how the close key is switched off; the close mouse button has its own setting."/>
+                               Text="No key closes windows. The close mouse button has its own setting."/>
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
